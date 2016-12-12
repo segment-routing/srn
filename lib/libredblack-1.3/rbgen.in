@@ -1,0 +1,179 @@
+#!@PATH_PYTHON_PROG@
+#
+# $Id: rbgen.in,v 1.3 2003/10/24 01:31:21 damo Exp $
+#
+# rbgen -- generate a redblack customized search library
+#
+# $Log: rbgen.in,v $
+# Revision 1.3  2003/10/24 01:31:21  damo
+# Patches from Eric Raymond: %prefix is implemented.  Various other small
+# changes avoid stepping on global namespaces and improve the documentation.
+#
+# Revision 1.2  2003/10/23 04:18:47  damo
+# Fixed up the rbgen stuff ready for the 1.3 release
+#
+# Revision 1.1  2002/08/26 03:11:40  damo
+# Fixed up a bunch of compiler warnings when compiling example4
+#
+# Tidies up the Makefile.am & Specfile.
+#
+# Renamed redblack to rbgen
+#
+#
+
+import sys, string, os
+
+fpin = sys.stdin
+lineno = 0
+
+def error(msg, warning=0):
+    sys.stderr.write('"%s", line %d: %s\n\n' % (fpin.name, lineno, msg))
+    if not warning:
+        raise SyntaxError
+
+def startswith(line, prefix):
+    return line[:len(prefix)] == prefix
+
+def include(file, fpout):
+    try:
+        fp = open(file)
+        fpout.write(fp.read())
+        fp.close()
+    except IOError:
+        error("missing skeleton file %s!" % file)
+
+def redblack(filename, lines):
+    rb_type = rb_cmp = rb_alloc = rb_free = rb_access = None
+    rb_prefix = "rb"
+    sbrk = static = 0
+    global lineno
+
+    ext = string.find(filename, ".rb")
+    if ext == -1:
+        sys.stderr.write("redblack: extension on %s doesn't look right.\n" % filename)
+        raise SyntaxError
+    else:
+        outfile = filename[:ext] + ".c"
+    fpin = open(filename, "r")
+    fpout = open(outfile, "w")
+
+    if lines:
+        fpout.write('#line 1 "%s"\n' % filename)
+    while 1:
+        line = fpin.readline()
+        lineno = lineno + 1
+        if not line:
+            break
+        if startswith(line, "%%rbgen"):
+            fpout.write("/* rbgen generated code begins here */\n")
+            fpout.write("/* rbgen: $Id: rbgen.in,v 1.3 2003/10/24 01:31:21 damo Exp $ */\n")
+            while 1:
+                line = fpin.readline()
+                lineno = lineno + 1
+                if not line:
+                    break
+                comment = string.find(line, "//")
+                if comment > -1:
+                    line = line[:comment] + "\n"
+                if line[0] == "\n":
+                    continue
+                elif startswith(line, "%%rbgen"):
+		    fpout.write("#define RB_CUSTOMIZE\n")
+                    if not rb_type:
+                        error("%type directive is required.")
+                    else:
+                        fpout.write("#define %sdata_t %s\n" % (rb_prefix, rb_type))
+                    if not rb_cmp:
+                        error("%cmp directive is required.")
+                    else:
+                        fpout.write("#define RB_CMP(s, t) %s(s, t)\n" % rb_cmp)
+                    if rb_alloc:
+                        fpout.write("#define RB_ALLOC %s\n" % rb_alloc)
+                    if rb_free:
+                        fpout.write("#define RB_FREE %s\n"% rb_free)
+                    if rb_prefix:
+                        fpout.write("#define RB_ENTRY(name) %s##name\n" % rb_prefix)
+                    if rb_access is None or rb_access == "pointer":
+                        fpout.write("#undef RB_INLINE\n")
+                    elif rb_access == "inline":
+                        fpout.write("#define RB_INLINE\n")
+                    for func in rb_omit:
+                        fpout.write("#define no_%s\n" % func)
+                    if static:
+                        fpout.write("#define RB_STATIC static\n")
+                    else:
+                        fpout.write("#define RB_STATIC\n")
+                    if sbrk:
+                        fpout.write("#define RB_USE_SBRK\n")
+                    if lines:
+                        fpout.write('#line 1 "%s"\n' % outfile)
+                    include(h_skel, fpout)
+                    include(c_skel, fpout)
+                    fpout.write("/* rbgen generated code ends here */\n")
+                    if lines:
+                        fpout.write('#line %d "%s"\n' % (lineno, filename))
+                    fpout.write(fpin.read())
+                    return
+                elif line[0] == "%":
+                    tokens = string.split(line)
+                    if tokens[0] in("%type","%cmp","%alloc","%free","%prefix"):
+                        exec "rb_" + tokens[0][1:] + " = '" + tokens[1] + "'"
+                    elif tokens[0] == "%access":
+                        if tokens[1] in ("inline", "pointer"):
+                            rb_access = tokens[1]
+                        else:
+                            error("unknown access type")
+                    elif tokens[0] == "%omit":
+                        omittable = ("destroy", "search", "find", 
+                                     "delete", "walk", "readlist",
+                                     "lookup", "destroy", "delete", 
+                                     "readlist")
+                        rb_omit = tokens[1:]
+                        for func in rb_omit:
+                            if func not in omittable:
+                                error("%s cannot be omitted" % func)
+                    elif tokens[0] == "%sbrk":
+                        sbrk = 1
+                    elif tokens[0] == "%static":
+                        static = 1
+                    else:
+                        error("unknown directive %s" % string.split(line)[0])
+                else:
+                    error("garbage on line beginning %s." % line[0])
+            else:
+                sys.stderr.write("rbgen: no end on directives section.\n")
+        else:
+            fpout.write(line)
+    sys.stderr.write("rbgen: no directives found.\n")
+    raise SyntaxError
+
+if __name__ == "__main__":
+    import getopt
+    (options, arguments) = getopt.getopt(sys.argv[1:], "lS:")
+    lines = 1;
+    skelpath = [".", "@prefix@/share/@PACKAGE@" "/share/redblack"]
+    for (switch, val) in options:
+	if (switch == '-l'):
+	    lines = 0
+	elif (switch == '-S'):
+            skeldir = val
+
+    for skeldir in skelpath:
+        h_skel = os.path.join(skeldir, "redblack.h")
+        c_skel = os.path.join(skeldir, "redblack.c")
+        if os.path.exists(h_skel) and os.path.exists(c_skel):
+            break
+    else:
+        sys.stderr.write("rbgen: can't find skeleton file\n")
+
+    for file in arguments:
+        try:
+            redblack(file, lines)
+            raise SystemExit, 0
+        except SyntaxError:
+            raise SystemExit, 1
+        
+# The following sets edit modes for GNU EMACS
+# Local Variables:
+# mode:python
+# End:
