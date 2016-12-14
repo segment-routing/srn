@@ -77,8 +77,14 @@ struct graph *graph_new(void)
 
 void graph_destroy(struct graph *g, bool shallow)
 {
+	unsigned int i;
 	struct edge *e;
 	struct node *n;
+
+	for (i = 0; i < g->neighs->keys->elem_count; i++) {
+		alist_get(g->neighs->keys, i, &n);
+		alist_destroy(hmap_get(g->neighs, n));
+	}
 
 	hmap_destroy(g->min_edges);
 	hmap_destroy(g->neighs);
@@ -296,6 +302,11 @@ void graph_compute_all_neighbors(struct graph *g)
 	struct node *node;
 	unsigned int i;
 
+	for (i = 0; i < g->neighs->keys->elem_count; i++) {
+		alist_get(g->neighs->keys, i, &node);
+		alist_destroy(hmap_get(g->neighs, node));
+	}
+
 	hmap_flush(g->neighs);
 
 	for (i = 0; i < g->nodes->elem_count; i++) {
@@ -355,6 +366,8 @@ static void __compute_paths(struct arraylist *res, struct arraylist *tmp,
 
 		__compute_paths(res, alist_copy(tmp), prev, p);
 	}
+
+	alist_destroy(tmp);
 }
 
 static void compute_paths(struct arraylist *res, struct hashmap *prev,
@@ -364,8 +377,6 @@ static void compute_paths(struct arraylist *res, struct hashmap *prev,
 
 	tmp = alist_new(sizeof(struct node *));
 	__compute_paths(res, tmp, prev, u);
-	if (res->elem_count > 1)
-		alist_destroy(tmp);
 }
 
 static void destroy_alist2(struct arraylist *al)
