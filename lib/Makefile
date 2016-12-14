@@ -2,7 +2,7 @@ CC=gcc
 AR=ar
 CFLAGS=-g -Wall -W -O2
 LDFLAGS=
-SRC=arraylist.c misc.c
+SRC=arraylist.c hashmap.c misc.c
 OBJ=$(SRC:.c=.o)
 LIBFILE=libsr.a
 

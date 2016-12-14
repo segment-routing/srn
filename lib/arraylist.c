@@ -79,21 +79,30 @@ int alist_get(struct arraylist *al, int idx, void *buf)
 
 void alist_destroy(struct arraylist *al)
 {
+	if (!al)
+		return;
+
 	free(al->data);
 	free(al);
+}
+
+void alist_append(struct arraylist *dst, struct arraylist *src)
+{
+	int i;
+
+	for (i = 0; i < src->elem_count; i++)
+		alist_insert(dst, alist_elem(src, i));
 }
 
 struct arraylist *alist_copy(struct arraylist *al)
 {
 	struct arraylist *acopy;
-	int i;
 
 	acopy = alist_new(al->elem_size);
 	if (!acopy)
 		return NULL;
 
-	for (i = 0; i < al->elem_count; i++)
-		alist_insert(acopy, alist_elem(al, i));
+	alist_append(acopy, al);
 
 	return acopy;
 }

@@ -346,9 +346,12 @@ static void cb_flowreq(const char *buf)
 	else
 		rstat = STATUS_DENIED;
 
-	snprintf(field_update, SLEN, "\"status\": %d", rstat);
-	if (ovsdb_update("FlowReq", req._row, field_update) < 0)
-		pr_err("failed to update row uuid %s to status %d\n", req._row, rstat);
+	if (rstat == STATUS_DENIED) {
+		snprintf(field_update, SLEN, "\"status\": %d", rstat);
+		if (ovsdb_update("FlowReq", req._row, field_update) < 0)
+			pr_err("failed to update row uuid %s to status %d\n", req._row, rstat);
+		return;
+	}
 }
 
 static void cb_flowstate(const char *buf __unused)

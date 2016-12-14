@@ -9,4 +9,11 @@ void remove_trail(char *line);
 char **strsplit(char *line, int *elems, char splitc);
 void *memdup(void *from, size_t size);
 
+static inline unsigned int hashint(unsigned int x) {
+	x = ((x >> 16) ^ x) * 0x45d9f3b;
+	x = ((x >> 16) ^ x) * 0x45d9f3b;
+	x = (x >> 16) ^ x;
+	return x;
+}
+
 #endif

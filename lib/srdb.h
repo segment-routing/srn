@@ -14,6 +14,7 @@ enum flowreq_status {
 	STATUS_PENDING = 0,
 	STATUS_ALLOWED = 1,
 	STATUS_DENIED = 2,
+	STATUS_UNAVAILABLE = 3,
 };
 
 struct srdb_descriptor {
@@ -63,8 +64,9 @@ struct srdb_linkstate_entry {
 	char addr1[SLEN + 1];
 	char name2[SLEN + 1];
 	char addr2[SLEN + 1];
-	int maxbw;
-	int curbw;
+	int metric;
+	int bw;
+	int ava_bw;
 	int delay;
 	char _version[SLEN + 1];
 };
@@ -73,7 +75,9 @@ struct srdb_nodestate_entry {
 	char _row[SLEN + 1];
 	char _action[SLEN + 1];
 	char name[SLEN + 1];
-	struct arraylist *prefix;
+	char addr[SLEN + 1];
+	char *prefix;
+	char pbsid[SLEN + 1];
 	char _version[SLEN + 1];
 };
 
@@ -84,6 +88,7 @@ struct prefix {
 	
 struct router {
 	char name[SLEN + 1];
+	struct in6_addr addr;
 	struct prefix pbsid;
 };
 

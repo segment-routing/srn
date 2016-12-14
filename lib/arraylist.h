@@ -24,5 +24,6 @@ struct arraylist *alist_copy(struct arraylist *al);
 struct arraylist *alist_copy_reverse(struct arraylist *al);
 bool alist_exist(struct arraylist *al, void *elem);
 int alist_insert_at(struct arraylist *al, void *elem, int idx);
+void alist_append(struct arraylist *dst, struct arraylist *src);
 
 #endif
