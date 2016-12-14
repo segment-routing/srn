@@ -27,7 +27,7 @@ struct arraylist *alist_new(size_t elem_size)
 	return al;
 }
 
-int alist_insert_at(struct arraylist *al, void *elem, int idx)
+int alist_insert_at(struct arraylist *al, void *elem, unsigned int idx)
 {
 	if (al->elem_count == al->buffer_size) {
 		void *data2;
@@ -51,15 +51,15 @@ int alist_insert(struct arraylist *al, void *elem)
 	return alist_insert_at(al, elem, al->elem_count);
 }
 
-void alist_remove(struct arraylist *al, int idx)
+void alist_remove(struct arraylist *al, unsigned int idx)
 {
-	assert(idx >= 0 && idx < al->elem_count);
+	assert(idx < al->elem_count);
 
 	memmove(ALIST_ELEM(al, idx), ALIST_ELEM(al, idx + 1), (al->elem_count - idx - 1) * al->elem_size);
 	al->elem_count--;
 }
 
-void *alist_elem(struct arraylist *al, int idx)
+void *alist_elem(struct arraylist *al, unsigned int idx)
 {
 	if (idx >= al->elem_count)
 		return NULL;
@@ -67,7 +67,7 @@ void *alist_elem(struct arraylist *al, int idx)
 	return al->data + idx * al->elem_size;
 }
 
-int alist_get(struct arraylist *al, int idx, void *buf)
+int alist_get(struct arraylist *al, unsigned int idx, void *buf)
 {
 	if (idx >= al->elem_count)
 		return -1;
@@ -88,7 +88,7 @@ void alist_destroy(struct arraylist *al)
 
 void alist_append(struct arraylist *dst, struct arraylist *src)
 {
-	int i;
+	unsigned int i;
 
 	for (i = 0; i < src->elem_count; i++)
 		alist_insert(dst, alist_elem(src, i));
@@ -110,21 +110,21 @@ struct arraylist *alist_copy(struct arraylist *al)
 struct arraylist *alist_copy_reverse(struct arraylist *al)
 {
 	struct arraylist *acopy;
-	int i;
+	unsigned int i;
 
 	acopy = alist_new(al->elem_size);
 	if (!acopy)
 		return NULL;
 
-	for (i = al->elem_count - 1; i >= 0; i--)
-		alist_insert(acopy, alist_elem(al, i));
+	for (i = 0; i < al->elem_count; i++)
+		alist_insert(acopy, alist_elem(al, al->elem_count - 1 - i));
 
 	return acopy;
 }
 
 bool alist_exist(struct arraylist *al, void *elem)
 {
-	int i;
+	unsigned int i;
 
 	for (i = 0; i < al->elem_count; i++) {
 		if (memcmp(alist_elem(al, i), elem, al->elem_size) == 0)
@@ -132,4 +132,10 @@ bool alist_exist(struct arraylist *al, void *elem)
 	}
 
 	return false;
+}
+
+void alist_flush(struct arraylist *al)
+{
+	while (al->elem_count)
+		alist_remove(al, al->elem_count - 1);
 }

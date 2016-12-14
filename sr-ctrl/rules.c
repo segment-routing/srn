@@ -211,7 +211,7 @@ struct rule *match_rules(struct arraylist *rules, const char *from, const char *
 {
 	struct rule *match = NULL;
 	struct rule *r;
-	int i;
+	unsigned int i;
 
 	for (i = 0; i < rules->elem_count; i++) {
 		alist_get(rules, i, &r);

@@ -41,7 +41,6 @@ struct graph {
 struct dres {
 	struct hashmap *dist;
 	struct hashmap *path;
-	int n_nodes;
 };
 
 struct graph *graph_new(void);
@@ -49,8 +48,9 @@ void graph_destroy(struct graph *g, bool shallow);
 struct node *graph_add_node(struct graph *g, void *data);
 void graph_remove_node(struct graph *g, struct node *node);
 struct node *graph_get_node(struct graph *g, unsigned int id);
+struct node *graph_get_node_data(struct graph *g, void *data);
 struct edge *graph_add_edge(struct graph *g, struct node *local,
-			    struct node *remote);
+			    struct node *remote, bool sym);
 void graph_remove_edge(struct graph *g, struct edge *edge);
 void graph_compute_minimal_edges(struct graph *g);
 void graph_compute_all_neighbors(struct graph *g);

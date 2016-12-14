@@ -40,7 +40,7 @@ int hmap_hash(struct hashmap *hm, void *key)
 bool hmap_key_exist(struct hashmap *hm, void *key)
 {
 	struct key *k;
-	int i;
+	unsigned int i;
 
 	for (i = 0; i < hm->keys->elem_count; i++) {
 		alist_get(hm->keys, i, &k);
@@ -58,14 +58,14 @@ int hmap_set(struct hashmap *hm, void *key, void *elem)
 
 	idx = hmap_hash(hm, key);
 
+	if (hmap_key_exist(hm, key))
+		hmap_delete(hm, key);
+
 	if (hm->map[idx] == NULL) {
 		hm->map[idx] = alist_new(sizeof(struct hmap_entry));
 		if (!hm->map[idx])
 			return -1;
 	}
-
-	if (hmap_key_exist(hm, key))
-		hmap_delete(hm, key);
 
 	he.key = key;
 	he.elem = elem;
@@ -78,8 +78,7 @@ int hmap_set(struct hashmap *hm, void *key, void *elem)
 
 void *hmap_get(struct hashmap *hm, void *key)
 {
-	int idx;
-	int i;
+	unsigned int i, idx;
 
 	idx = hmap_hash(hm, key);
 	if (hm->map[idx] == NULL)
@@ -97,8 +96,7 @@ void *hmap_get(struct hashmap *hm, void *key)
 
 int hmap_delete(struct hashmap *hm, void *key)
 {
-	int idx;
-	int i;
+	unsigned int i, idx;
 
 	if (!alist_exist(hm->keys, &key))
 		return -1;

@@ -80,6 +80,9 @@ void graph_destroy(struct graph *g, bool shallow)
 	struct edge *e;
 	struct node *n;
 
+	hmap_destroy(g->min_edges);
+	hmap_destroy(g->neighs);
+
 	while (g->edges->elem_count) {
 		alist_get(g->edges, 0, &e);
 		graph_remove_edge(g, e);
@@ -96,8 +99,6 @@ void graph_destroy(struct graph *g, bool shallow)
 
 	alist_destroy(g->edges);
 	alist_destroy(g->nodes);
-	hmap_destroy(g->min_edges);
-	hmap_destroy(g->neighs);
 
 	free(g);
 }
@@ -121,7 +122,7 @@ struct node *graph_add_node(struct graph *g, void *data)
 static int get_node_index(struct arraylist *nodes, unsigned int id)
 {
 	struct node *node;
-	int i;
+	unsigned int i;
 
 	for (i = 0; i < nodes->elem_count; i++) {
 		alist_get(nodes, i, &node);
@@ -135,7 +136,7 @@ static int get_node_index(struct arraylist *nodes, unsigned int id)
 static int get_edge_index(struct arraylist *edges, unsigned int id)
 {
 	struct edge *edge;
-	int i;
+	unsigned int i;
 
 	for (i = 0; i < edges->elem_count; i++) {
 		alist_get(edges, i, &edge);
@@ -160,7 +161,7 @@ void graph_remove_node(struct graph *g, struct node *node)
 struct node *graph_get_node(struct graph *g, unsigned int id)
 {
 	struct node *node;
-	int i;
+	unsigned int i;
 
 	for (i = 0; i < g->nodes->elem_count; i++) {
 		alist_get(g->nodes, i, &node);
@@ -171,10 +172,27 @@ struct node *graph_get_node(struct graph *g, unsigned int id)
 	return NULL;
 }
 
+struct node *graph_get_node_data(struct graph *g, void *data)
+{
+	struct node *node;
+	unsigned int i;
+
+	for (i = 0; i < g->nodes->elem_count; i++) {
+		alist_get(g->nodes, i, &node);
+		if (node->data == data)
+			return node;
+	}
+
+	return NULL;
+}
+
 struct edge *graph_add_edge(struct graph *g, struct node *local,
-			    struct node *remote)
+			    struct node *remote, bool sym)
 {
 	struct edge *edge;
+
+	if (sym)
+		graph_add_edge(g, remote, local, false);
 
 	edge = calloc(1, sizeof(*edge));
 	if (!edge)
@@ -183,6 +201,7 @@ struct edge *graph_add_edge(struct graph *g, struct node *local,
 	edge->id = ++g->last_edge;
 	edge->local = local;
 	edge->remote = remote;
+	edge->metric = 1;
 
 	alist_insert(g->edges, &edge);
 
@@ -205,7 +224,7 @@ static struct edge *graph_get_minimal_edge(struct graph *g, struct node *local,
 {
 	struct edge *edge, *res = NULL;
 	uint32_t metric = UINT32_MAX;
-	int i;
+	unsigned int i;
 
 	for (i = 0; i < g->edges->elem_count; i++) {
 		alist_get(g->edges, i, &edge);
@@ -227,7 +246,7 @@ void graph_compute_minimal_edges(struct graph *g)
 {
 	struct node *node1, *node2;
 	struct edge *edge;
-	int i, j;
+	unsigned int i, j;
 
 	hmap_flush(g->min_edges);
 
@@ -250,7 +269,7 @@ static struct arraylist *graph_compute_neighbors(struct graph *g,
 {
 	struct arraylist *neighs;
 	struct edge *edge;
-	int i;
+	unsigned int i;
 
 	neighs = alist_new(sizeof(struct node *));
 	if (!neighs)
@@ -275,7 +294,7 @@ void graph_compute_all_neighbors(struct graph *g)
 {
 	struct arraylist *neighs;
 	struct node *node;
-	int i;
+	unsigned int i;
 
 	hmap_flush(g->neighs);
 
@@ -307,19 +326,74 @@ struct graph *graph_clone(struct graph *g)
 	return g_clone;
 }
 
+/* @res: arraylist(arraylist(node))
+ * @tmp: arraylist(node)
+ */
+static void __compute_paths(struct arraylist *res, struct arraylist *tmp,
+			    struct hashmap *prev, struct node *u)
+{
+	struct arraylist *w;
+	struct node *p;
+	unsigned int i;
+
+	w = hmap_get(prev, u);
+	if (!w->elem_count) {
+		alist_insert(res, &tmp);
+		return;
+	}
+
+	alist_insert(tmp, &u);
+
+	if (w->elem_count == 1) {
+		alist_get(w, 0, &p);
+		__compute_paths(res, tmp, prev, p);
+		return;
+	}
+
+	for (i = 0; i < w->elem_count; i++) {
+		alist_get(w, i, &p);
+
+		__compute_paths(res, alist_copy(tmp), prev, p);
+	}
+}
+
+static void compute_paths(struct arraylist *res, struct hashmap *prev,
+			  struct node *u)
+{
+	struct arraylist *tmp;
+
+	tmp = alist_new(sizeof(struct node *));
+	__compute_paths(res, tmp, prev, u);
+	if (res->elem_count > 1)
+		alist_destroy(tmp);
+}
+
+static void destroy_alist2(struct arraylist *al)
+{
+	struct arraylist *entry;
+	unsigned int i;
+
+	if (!al)
+		return;
+
+	for (i = 0; i < al->elem_count; i++) {
+		alist_get(al, i, &entry);
+		alist_destroy(entry);
+	}
+
+	alist_destroy(al);
+}
+
 void graph_dijkstra(struct graph *g, struct node *src, struct dres *res)
 {
 	struct hashmap *dist, *prev, *path;
 	struct arraylist *Q;
 	struct node *node;
-	int n_nodes;
-	int i;
-
-	n_nodes = g->nodes->elem_count;
+	unsigned int i;
 
 	/* dist: node -> uint32_t
-	 * prev: node -> node
-	 * path: node -> arraylist
+	 * prev: node -> arraylist(node)
+	 * path: node -> arraylist(arraylist(node))
 	 */
 
 	dist = hmap_new(hash_node, compare_node);
@@ -336,8 +410,8 @@ void graph_dijkstra(struct graph *g, struct node *src, struct dres *res)
 		else
 			hmap_set(dist, node, (void *)(uintptr_t)UINT32_MAX);
 
-		hmap_set(prev, node, NULL);
-		hmap_set(path, node, NULL);
+		hmap_set(prev, node, alist_new(sizeof(struct node *)));
+		hmap_set(path, node, alist_new(sizeof(struct arraylist *)));
 
 		alist_insert(Q, &node);
 	}
@@ -345,10 +419,9 @@ void graph_dijkstra(struct graph *g, struct node *src, struct dres *res)
 	while (Q->elem_count > 0) {
 		struct arraylist *S = NULL;
 		struct arraylist *neighs;
-		struct node *u, *v, *w;
 		uint32_t cost, tmpcost;
+		struct node *u, *v;
 		int u_idx = -1;
-		void *val;
 
 		tmpcost = UINT32_MAX;
 		u = NULL;
@@ -366,26 +439,17 @@ void graph_dijkstra(struct graph *g, struct node *src, struct dres *res)
 		if (u_idx == -1)
 			break;
 
-		S = alist_new(sizeof(struct node *));
-		w = u;
+		S = alist_new(sizeof(struct arraylist *));
 
-		val = hmap_get(prev, w);
-		while (val) {
-			alist_insert(S, &w);
-			w = val;
-			val = hmap_get(prev, w);
-		}
-
-		val = hmap_get(path, u);
-		if (val)
-			alist_destroy(val);
-		val = alist_copy_reverse(S);
-		hmap_set(path, u, val);
+		destroy_alist2(hmap_get(path, u));
+		compute_paths(S, prev, u);
+		hmap_set(path, u, S);
 
 		alist_remove(Q, u_idx);
 
 		neighs = hmap_get(g->neighs, u);
 		for (i = 0; i < neighs->elem_count; i++) {
+			struct arraylist *prev_array;
 			uint32_t alt, u_dist, v_dist;
 			struct edge *min_edge;
 			struct nodepair pair;
@@ -407,15 +471,22 @@ void graph_dijkstra(struct graph *g, struct node *src, struct dres *res)
 
 			alt = u_dist + min_edge->metric;
 			if (alt < v_dist) {
+				prev_array = hmap_get(prev, v);
+				alist_flush(prev_array);
+				alist_insert(prev_array, &u);
 				hmap_set(dist, v, (void *)(uintptr_t)alt);
-				hmap_set(prev, v, u);
+			} else if (alt == v_dist) {
+				prev_array = hmap_get(prev, v);
+				alist_insert(prev_array, &u);
 			}
 		}
+	}
 
-		if (S) {
-			alist_destroy(S);
-			S = NULL;
-		}
+	for (i = 0; i < prev->keys->elem_count; i++) {
+		void *key;
+
+		alist_get(prev->keys, i, &key);
+		alist_destroy(hmap_get(prev, key));
 	}
 
 	hmap_destroy(prev);
@@ -423,20 +494,17 @@ void graph_dijkstra(struct graph *g, struct node *src, struct dres *res)
 
 	res->dist = dist;
 	res->path = path;
-	res->n_nodes = n_nodes;
 }
 
 void graph_dijkstra_free(struct dres *res)
 {
-	int i;
+	unsigned int i;
 
 	for (i = 0; i < res->path->keys->elem_count; i++) {
-		struct arraylist *rpath;
 		struct node *n;
 
 		alist_get(res->path->keys, i, &n);
-		rpath = hmap_get(res->path, n);
-		alist_destroy(rpath);
+		destroy_alist2(hmap_get(res->path, n));
 	}
 
 	hmap_destroy(res->path);
@@ -447,8 +515,8 @@ int graph_prune(struct graph *g, bool (*prune)(struct edge *e, void *arg),
 		void *_arg)
 {
 	struct edge *edge;
+	unsigned int i;
 	int rm = 0;
-	int i;
 
 	for (i = 0; i < g->edges->elem_count; i++) {
 		alist_get(g->edges, i, &edge);
