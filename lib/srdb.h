@@ -92,4 +92,12 @@ struct router {
 	struct prefix pbsid;
 };
 
+struct link {
+	struct in6_addr local;
+	struct in6_addr remote;
+	uint32_t bw;
+	uint32_t ava_bw;
+	uint32_t delay;
+};
+
 #endif

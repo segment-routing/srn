@@ -155,11 +155,23 @@ static int get_edge_index(struct arraylist *edges, unsigned int id)
 
 void graph_remove_node(struct graph *g, struct node *node)
 {
+	unsigned int j;
 	int i;
 
 	i = get_node_index(g->nodes, node->id);
 	if (i < 0)
 		return;
+
+	for (j = 0; j < g->edges->elem_count; j++) {
+		struct edge *edge;
+
+		alist_get(g->edges, j, &edge);
+		if (compare_node(edge->local, node) == 0 ||
+		    compare_node(edge->remote, node) == 0) {
+			graph_remove_edge(g, edge);
+			j--;
+		}
+	}
 
 	alist_remove(g->nodes, i);
 }
@@ -193,12 +205,12 @@ struct node *graph_get_node_data(struct graph *g, void *data)
 }
 
 struct edge *graph_add_edge(struct graph *g, struct node *local,
-			    struct node *remote, bool sym)
+			    struct node *remote, bool sym, void *data)
 {
 	struct edge *edge;
 
 	if (sym)
-		graph_add_edge(g, remote, local, false);
+		graph_add_edge(g, remote, local, false, data);
 
 	edge = calloc(1, sizeof(*edge));
 	if (!edge)
@@ -208,6 +220,7 @@ struct edge *graph_add_edge(struct graph *g, struct node *local,
 	edge->local = local;
 	edge->remote = remote;
 	edge->metric = 1;
+	edge->data = data;
 
 	alist_insert(g->edges, &edge);
 
@@ -332,8 +345,6 @@ struct graph *graph_clone(struct graph *g)
 	alist_append(g_clone->nodes, g->nodes);
 	alist_append(g_clone->edges, g->edges);
 
-	graph_finalize(g_clone);
-
 	return g_clone;
 }
 
@@ -395,7 +406,8 @@ static void destroy_alist2(struct arraylist *al)
 	alist_destroy(al);
 }
 
-void graph_dijkstra(struct graph *g, struct node *src, struct dres *res)
+static void __graph_dijkstra(struct graph *g, struct node *src,
+			     struct dres *res, bool backward)
 {
 	struct hashmap *dist, *prev, *path;
 	struct arraylist *Q;
@@ -469,8 +481,8 @@ void graph_dijkstra(struct graph *g, struct node *src, struct dres *res)
 			if (!alist_exist(Q, &v))
 				continue;
 
-			pair.local = u;
-			pair.remote = v;
+			pair.local = backward ? v : u;
+			pair.remote = backward ? u : v;
 			min_edge = hmap_get(g->min_edges, &pair);
 
 			assert(min_edge);
@@ -493,18 +505,16 @@ void graph_dijkstra(struct graph *g, struct node *src, struct dres *res)
 		}
 	}
 
-	for (i = 0; i < prev->keys->elem_count; i++) {
-		void *key;
-
-		alist_get(prev->keys, i, &key);
-		alist_destroy(hmap_get(prev, key));
-	}
-
-	hmap_destroy(prev);
 	alist_destroy(Q);
 
 	res->dist = dist;
 	res->path = path;
+	res->prev = prev;
+}
+
+void graph_dijkstra(struct graph *g, struct node *src, struct dres *res)
+{
+	__graph_dijkstra(g, src, res, false);
 }
 
 void graph_dijkstra_free(struct dres *res)
@@ -518,6 +528,14 @@ void graph_dijkstra_free(struct dres *res)
 		destroy_alist2(hmap_get(res->path, n));
 	}
 
+	for (i = 0; i < res->prev->keys->elem_count; i++) {
+		void *key;
+
+		alist_get(res->prev->keys, i, &key);
+		alist_destroy(hmap_get(res->prev, key));
+	}
+
+	hmap_destroy(res->prev);
 	hmap_destroy(res->path);
 	hmap_destroy(res->dist);
 }
@@ -540,4 +558,91 @@ int graph_prune(struct graph *g, bool (*prune)(struct edge *e, void *arg),
 	}
 
 	return rm;
+}
+
+static void insert_node_segment(struct node *node_i, struct arraylist *res)
+{
+	struct segment s;
+
+	s.adjacency = false;
+	s.node = node_i;
+	alist_insert(res, &s);
+}
+
+static void insert_adj_segment(struct graph *g, struct node *node_i,
+			       struct node *node_ii, struct arraylist *res)
+{
+	struct nodepair pair;
+	struct edge *edge;
+	struct segment s;
+
+	pair.local = node_i;
+	pair.remote = node_ii;
+	edge = hmap_get(g->min_edges, &pair);
+	assert(edge);
+
+	s.adjacency = true;
+	s.edge = edge;
+	alist_insert(res, &s);
+}
+
+void graph_minseg(struct graph *g, struct arraylist *path,
+		  struct arraylist *res)
+{
+	struct graph *gc;
+	unsigned int i, r;
+	struct node *node_r, *node_i, *node_ii;
+	struct dres res_r, res_i;
+
+	if (!path->elem_count)
+		return;
+
+	gc = graph_clone(g);
+	graph_finalize(gc);
+
+	r = 0;
+
+	/* path forward */
+	for (i = 0; i < path->elem_count - 1; i++) {
+		struct arraylist *prev;
+
+		alist_get(path, i, &node_i);
+		alist_get(path, i + 1, &node_ii);
+		alist_get(path, r, &node_r);
+
+		__graph_dijkstra(gc, node_i, &res_i, true);
+		__graph_dijkstra(gc, node_r, &res_r, true);
+
+		prev = hmap_get(res_r.prev, node_ii);
+		if (!alist_exist(prev, &node_i)) { /* MinSegECMP:4 */
+			prev = hmap_get(res_i.prev, node_ii);
+			if (prev->elem_count == 1) { /* MinSegECMP:5 */
+				insert_node_segment(node_i, res);
+				r = i;
+			} else {
+				insert_node_segment(node_i, res);
+				insert_adj_segment(gc, node_i, node_ii, res);
+				r = i + 1;
+			}
+		} else {
+			prev = hmap_get(res_r.prev, node_ii);
+			if (prev->elem_count <= 1) /* !MinSegECMP:11 */
+				continue;
+
+			prev = hmap_get(res_i.prev, node_ii);
+			if (prev->elem_count > 1) { /* MinSegECMP:12 */
+				insert_node_segment(node_i, res);
+				insert_adj_segment(gc, node_i, node_ii, res);
+				r = i + 1;
+			} else {
+				insert_node_segment(node_i, res);
+				r = i;
+			}
+		}
+
+		graph_dijkstra_free(&res_i);
+		graph_dijkstra_free(&res_r);
+	}
+
+	graph_destroy(gc, true);
 }

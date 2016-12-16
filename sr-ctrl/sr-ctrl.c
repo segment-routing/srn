@@ -57,6 +57,7 @@ struct config {
 	struct rule *defrule;
 	struct srdb_descriptor *flowreq_desc;
 	size_t flowreq_desc_size;
+	struct graph *graph;
 };
 
 static struct config cfg;
@@ -280,13 +281,59 @@ static char *normalize_rowbuf(const char *buf)
 	return buf2;
 }
 
+static void process_request(struct srdb_flowreq_entry *req)
+{
+	char field_update[SLEN + 1];
+	enum flowreq_status rstat;
+	struct rule *rule;
+
+	rule = match_rules(cfg.rules, req->source, req->destination);
+	if (!rule)
+		rule = cfg.defrule;
+
+	if (rule->type == RULE_ALLOW)
+		rstat = STATUS_ALLOWED;
+	else
+		rstat = STATUS_DENIED;
+
+	if (rstat == STATUS_DENIED) {
+		snprintf(field_update, SLEN, "\"status\": %d", rstat);
+		if (ovsdb_update("FlowReq", req->_row, field_update) < 0)
+			pr_err("failed to update row uuid %s to status %d\n",
+			       req->_row, rstat);
+		return;
+	}
+
+	/* XXX currently assume only internal flows */
+
+	/* if bw or delay or path:
+	 *	g = copy(cfg.graph)
+	 *
+	 *	if bw or delay:
+	 *		prune(g, bw, delay)
+	 *
+	 *	if path:
+	 *		path += dst
+	 *	else:
+	 *		path = dst
+	 *
+	 *	for each segment s in path:
+	 *		paths[s] = dijkstra(g, segment)
+	 *		if paths[s] is NULL:
+	 *			return STATUS_UNAVAILABLE
+	 *		segs[s] = segment(paths[s])
+	 *
+	 *	result = merge(segs)
+	 *	return (BSID, result) // + ttl, idle
+	 * else:
+	 *	return (BSID, lastnode) // + ttl, idle
+	 */
+}
+
 static void cb_flowreq(const char *buf)
 {
 	struct srdb_flowreq_entry req;
 	struct srdb_descriptor *desc;
-	char field_update[SLEN + 1];
-	enum flowreq_status rstat;
-	struct rule *rule;
 	char **vargs;
 	char *buf2;
 	int vargc;
@@ -330,28 +377,7 @@ static void cb_flowreq(const char *buf)
 	free(vargs);
 	free(buf2);
 
-	/* process req */
-
-	rule = match_rules(cfg.rules, req.source, req.destination);
-
-	printf("matching rule: %p\n", rule);
-
-	if (!rule)
-		rule = cfg.defrule;
-
-	printf("matching rule(2): %p\n", rule);
-
-	if (rule->type == RULE_ALLOW)
-		rstat = STATUS_ALLOWED;
-	else
-		rstat = STATUS_DENIED;
-
-	if (rstat == STATUS_DENIED) {
-		snprintf(field_update, SLEN, "\"status\": %d", rstat);
-		if (ovsdb_update("FlowReq", req._row, field_update) < 0)
-			pr_err("failed to update row uuid %s to status %d\n", req._row, rstat);
-		return;
-	}
+	process_request(&req);
 }
 
 static void cb_flowstate(const char *buf __unused)
