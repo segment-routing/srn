@@ -3,7 +3,7 @@
 
 #include <netinet/in.h>
 
-#define SLEN	128
+#define SLEN	127
 
 enum srdb_type {
 	SRDB_STR,
@@ -15,6 +15,7 @@ enum flowreq_status {
 	STATUS_ALLOWED = 1,
 	STATUS_DENIED = 2,
 	STATUS_UNAVAILABLE = 3,
+	STATUS_ERROR = 4,
 };
 
 struct srdb_descriptor {
@@ -90,6 +91,8 @@ struct router {
 	char name[SLEN + 1];
 	struct in6_addr addr;
 	struct prefix pbsid;
+	struct hashmap *flows;
+	struct node *node;
 };
 
 struct link {
@@ -98,6 +101,19 @@ struct link {
 	uint32_t bw;
 	uint32_t ava_bw;
 	uint32_t delay;
+};
+
+struct flow {
+	struct in6_addr bsid;
+	char src[SLEN + 1];
+	char dst[SLEN + 1];
+	struct node *srcnode;
+	struct node *dstnode;
+	struct arraylist *segs;
+	uint32_t bw;
+	uint32_t delay;
+	uint32_t ttl;
+	uint32_t idle;
 };
 
 #endif

@@ -1,4 +1,7 @@
 #include <string.h>
+#include <sys/time.h>
+#include <sys/types.h>
+#include <unistd.h>
 
 void strip_crlf(char *line)
 {

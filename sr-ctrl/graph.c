@@ -72,6 +72,8 @@ struct graph *graph_new(void)
 		return NULL;
 	}
 
+	pthread_rwlock_init(&g->lock, NULL);
+
 	return g;
 }
 
@@ -80,6 +82,8 @@ void graph_destroy(struct graph *g, bool shallow)
 	unsigned int i;
 	struct edge *e;
 	struct node *n;
+
+	pthread_rwlock_destroy(&g->lock);
 
 	for (i = 0; i < g->neighs->keys->elem_count; i++) {
 		alist_get(g->neighs->keys, i, &n);
@@ -569,8 +573,8 @@ static void insert_node_segment(struct node *node_i, struct arraylist *res)
 	alist_insert(res, &s);
 }
 
-static void insert_adj_segment(struct graph *g, struct node *node_i,
-			       struct node *node_ii, struct arraylist *res)
+static int insert_adj_segment(struct graph *g, struct node *node_i,
+			      struct node *node_ii, struct arraylist *res)
 {
 	struct nodepair pair;
 	struct edge *edge;
@@ -579,26 +583,25 @@ static void insert_adj_segment(struct graph *g, struct node *node_i,
 	pair.local = node_i;
 	pair.remote = node_ii;
 	edge = hmap_get(g->min_edges, &pair);
-	assert(edge);
+	if (!edge)
+		return -1;
 
 	s.adjacency = true;
 	s.edge = edge;
 	alist_insert(res, &s);
+
+	return 0;
 }
 
-void graph_minseg(struct graph *g, struct arraylist *path,
-		  struct arraylist *res)
+int graph_minseg(struct graph *g, struct arraylist *path,
+		 struct arraylist *res)
 {
-	struct graph *gc;
-	unsigned int i, r;
 	struct node *node_r, *node_i, *node_ii;
 	struct dres res_r, res_i;
+	unsigned int i, r;
 
 	if (!path->elem_count)
-		return;
-
-	gc = graph_clone(g);
-	graph_finalize(gc);
+		return 0;
 
 	r = 0;
 
@@ -610,8 +613,8 @@ void graph_minseg(struct graph *g, struct arraylist *path,
 		alist_get(path, i + 1, &node_ii);
 		alist_get(path, r, &node_r);
 
-		__graph_dijkstra(gc, node_i, &res_i, true);
-		__graph_dijkstra(gc, node_r, &res_r, true);
+		graph_dijkstra(g, node_i, &res_i);
+		graph_dijkstra(g, node_r, &res_r);
 
 		prev = hmap_get(res_r.prev, node_ii);
 		if (!alist_exist(prev, &node_i)) { /* MinSegECMP:4 */
@@ -621,18 +624,22 @@ void graph_minseg(struct graph *g, struct arraylist *path,
 				r = i;
 			} else {
 				insert_node_segment(node_i, res);
-				insert_adj_segment(gc, node_i, node_ii, res);
+				if (insert_adj_segment(g, node_i, node_ii,
+						       res) < 0)
+					goto out_error;
 				r = i + 1;
 			}
 		} else {
 			prev = hmap_get(res_r.prev, node_ii);
 			if (prev->elem_count <= 1) /* !MinSegECMP:11 */
-				continue;
+				goto next_free;
 
 			prev = hmap_get(res_i.prev, node_ii);
 			if (prev->elem_count > 1) { /* MinSegECMP:12 */
 				insert_node_segment(node_i, res);
-				insert_adj_segment(gc, node_i, node_ii, res);
+				if (insert_adj_segment(g, node_i, node_ii,
+						       res) < 0)
+					goto out_error;
 				r = i + 1;
 			} else {
 				insert_node_segment(node_i, res);
@@ -640,9 +647,16 @@ void graph_minseg(struct graph *g, struct arraylist *path,
 			}
 		}
 
+next_free:
 		graph_dijkstra_free(&res_i);
 		graph_dijkstra_free(&res_r);
 	}
 
-	graph_destroy(gc, true);
+	return 0;
+
+out_error:
+	graph_dijkstra_free(&res_i);
+	graph_dijkstra_free(&res_r);
+
+	return -1;
 }

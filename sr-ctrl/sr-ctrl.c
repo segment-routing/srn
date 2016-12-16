@@ -7,6 +7,8 @@
 #include "misc.h"
 #include "srdb.h"
 #include "rules.h"
+#include "hashmap.h"
+#include "graph.h"
 
 /* lookup usecases:
  * - access control at source (in/out)
@@ -58,6 +60,7 @@ struct config {
 	struct srdb_descriptor *flowreq_desc;
 	size_t flowreq_desc_size;
 	struct graph *graph;
+	struct hashmap *routers;
 };
 
 static struct config cfg;
@@ -281,11 +284,143 @@ static char *normalize_rowbuf(const char *buf)
 	return buf2;
 }
 
-static void process_request(struct srdb_flowreq_entry *req)
+static int set_status(struct srdb_flowreq_entry *req, enum flowreq_status st)
 {
 	char field_update[SLEN + 1];
+	int ret;
+
+	snprintf(field_update, SLEN, "\"status\": %d", st);
+	ret = ovsdb_update("FlowReq", req->_row, field_update);
+
+	return ret;
+}
+
+static void generate_bsid(struct router *rt, struct in6_addr *res)
+{
+	int len;
+
+	len = (128 - rt->pbsid.len) >> 3;
+
+	memcpy(res, &rt->pbsid.addr, sizeof(struct in6_addr));
+	get_random_bytes((unsigned char *)res + (16 - len), len);
+}
+
+static void generate_unique_bsid(struct router *rt, struct in6_addr *res)
+{
+	do {
+		generate_bsid(rt, res);
+	} while (hmap_key_exist(rt->flows, res));
+}
+
+static bool prune_bw(struct edge *e, void *arg)
+{
+	uint32_t bw = (uintptr_t)arg;
+	struct link *link;
+
+	link = (struct link *)e->data;
+
+	return link->ava_bw < bw;
+}
+
+static bool prune_delay(struct edge *e, void *arg)
+{
+	uint32_t delay = (uintptr_t)arg;
+	struct link *link;
+
+	link = (struct link *)e->data;
+
+	return link->delay < delay;
+}
+
+static struct arraylist *build_segpath(struct graph *g, struct flow *fl,
+				       struct arraylist *via)
+{
+	struct arraylist *res, *path;
+	struct node *cur_node;
+	struct graph *gc;
+	struct dres gres;
+	unsigned int i;
+
+	res = alist_new(sizeof(struct segment));
+	if (!res)
+		return NULL;
+
+	path = alist_new(sizeof(struct node *));
+	if (!path)
+		return NULL;
+
+	gc = graph_clone(g);
+
+	if (fl->bw)
+		graph_prune(gc, prune_bw, (void *)(uintptr_t)fl->bw);
+	if (fl->delay)
+		graph_prune(gc, prune_delay, (void *)(uintptr_t)fl->delay);
+
+	cur_node = fl->srcnode;
+
+	if (via)
+		alist_append(path, via);
+
+	alist_insert(path, &fl->dstnode);
+
+	for (i = 0; i < path->elem_count; i++) {
+		struct arraylist *tmp_paths, *tmp_path, *rev_path;
+		struct node *tmp_node;
+		struct segment s;
+
+		alist_get(path, i, &tmp_node);
+
+		graph_dijkstra(gc, cur_node, &gres);
+		tmp_paths = hmap_get(gres.path, tmp_node);
+		if (!tmp_paths->elem_count)
+			goto out_error;
+
+		/* XXX modify here to support backup paths or modify
+		 * path selection (e.g., random).
+		 */
+		alist_get(tmp_paths, 0, &tmp_path);
+		rev_path = alist_copy_reverse(tmp_path);
+		alist_insert_at(rev_path, &cur_node, 0);
+
+		if (graph_minseg(gc, rev_path, res) < 0)
+			goto out_error;
+
+		/* append waypoint segment only if there is no adjacency
+		 * segment for the last hop (i.e. breaking link bundle)
+		 */
+		alist_get(res, res->elem_count - 1, &s);
+		if (!(s.adjacency && s.edge->remote == tmp_node)) {
+			s.adjacency = false;
+			s.node = tmp_node;
+			alist_insert(res, &s);
+		}
+
+		alist_destroy(rev_path);
+		cur_node = tmp_node;
+
+		graph_dijkstra_free(&gres);
+	}
+
+	graph_destroy(gc, true);
+	alist_destroy(path);
+	return res;
+
+out_error:
+	graph_dijkstra_free(&gres);
+	graph_destroy(gc, true);
+	alist_destroy(path);
+	alist_destroy(res);
+	return NULL;
+}
+
+static void process_request(struct srdb_flowreq_entry *req)
+{
 	enum flowreq_status rstat;
+	struct arraylist *segs;
+	uint32_t bw, delay;
+	struct router *rt;
 	struct rule *rule;
+	struct flow *fl;
 
 	rule = match_rules(cfg.rules, req->source, req->destination);
 	if (!rule)
@@ -297,8 +432,7 @@ static void process_request(struct srdb_flowreq_entry *req)
 		rstat = STATUS_DENIED;
 
 	if (rstat == STATUS_DENIED) {
-		snprintf(field_update, SLEN, "\"status\": %d", rstat);
-		if (ovsdb_update("FlowReq", req->_row, field_update) < 0)
+		if (set_status(req, STATUS_DENIED) < 0)
 			pr_err("failed to update row uuid %s to status %d\n",
 			       req->_row, rstat);
 		return;
@@ -328,6 +462,47 @@ static void process_request(struct srdb_flowreq_entry *req)
 	 * else:
 	 *	return (BSID, lastnode) // + ttl, idle
 	 */
+
+	bw = rule->bw ?: req->bandwidth;
+	delay = rule->delay ?: req->delay;
+	rt = hmap_get(cfg.routers, req->router);
+	if (!rt) {
+		set_status(req, STATUS_ERROR);
+		return;
+	}
+
+	if (!bw && !delay && !rule->path) {
+		fl = calloc(1, sizeof(*fl));
+		if (!fl) {
+			set_status(req, STATUS_ERROR);
+			return;
+		}
+
+		strncpy(fl->src, req->source, SLEN);
+		strncpy(fl->dst, req->destination, SLEN);
+		fl->ttl = rule->ttl;
+		fl->idle = rule->idle;
+
+		hmap_write_lock(rt->flows);
+		generate_unique_bsid(rt, &fl->bsid);
+		hmap_set(rt->flows, &fl->bsid, fl);
+		hmap_unlock(rt->flows);
+
+		set_status(req, STATUS_ALLOWED);
+//		commit_flow(rt, fl);
+		return;
+	}
+
+	graph_read_lock(cfg.graph);
+	segs = build_segpath(cfg.graph, fl, rule->path);
+	graph_unlock(cfg.graph);
+
+	if (!segs) {
+		set_status(req, STATUS_UNAVAILABLE);
+		return;
+	}
+
+	/* build flow */
 }
 
 static void cb_flowreq(const char *buf)

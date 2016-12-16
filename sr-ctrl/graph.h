@@ -2,6 +2,7 @@
 #define _GRAPH_H
 
 #include <stdint.h>
+#include <pthread.h>
 
 #include "arraylist.h"
 #include "hashmap.h"
@@ -43,6 +44,7 @@ struct graph {
 	unsigned int last_edge;
 	struct hashmap *min_edges;
 	struct hashmap *neighs;
+	pthread_rwlock_t lock;
 };
 
 struct dres {
@@ -67,13 +69,28 @@ void graph_dijkstra(struct graph *g, struct node *src, struct dres *res);
 void graph_dijkstra_free(struct dres *res);
 int graph_prune(struct graph *g, bool (*prune)(struct edge *e, void *arg),
 		void *_arg);
-void graph_minseg(struct graph *g, struct arraylist *path,
-		  struct arraylist *res);
+int graph_minseg(struct graph *g, struct arraylist *path,
+		 struct arraylist *res);
 
 static inline void graph_finalize(struct graph *g)
 {
 	graph_compute_minimal_edges(g);
 	graph_compute_all_neighbors(g);
+}
+
+static inline void graph_read_lock(struct graph *g)
+{
+	pthread_rwlock_rdlock(&g->lock);
+}
+
+static inline void graph_write_lock(struct graph *g)
+{
+	pthread_rwlock_wrlock(&g->lock);
+}
+
+static inline void graph_unlock(struct graph *g)
+{
+	pthread_rwlock_unlock(&g->lock);
 }
 
 #endif

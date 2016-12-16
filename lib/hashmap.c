@@ -21,11 +21,15 @@ struct hashmap *hmap_new(unsigned int (*hash)(void *key),
 	hm->compare = compare;
 	hm->keys = alist_new(sizeof(void *));
 
+	pthread_rwlock_init(&hm->lock, NULL);
+
 	return hm;
 }
 
 void hmap_destroy(struct hashmap *hm)
 {
+	pthread_rwlock_destroy(&hm->lock);
+
 	hmap_flush(hm);
 	alist_destroy(hm->keys);
 	free(hm->map);
