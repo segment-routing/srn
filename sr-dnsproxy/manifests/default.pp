@@ -1,10 +1,24 @@
+$kernel_package = "/vagrant/linux-????.deb"
+
+$cares_source_path = "/home/vagrant/lib/c-ares"
+$cares_path = "/home/vagrant/cares"
+
+$quagga_version = "1.0.20160315"
+$quagga_release_url = "http://download.savannah.gnu.org/releases/quagga/quagga-${quagga_version}.tar.gz"
+$quagga_source_path = "/quagga-${quagga_version}"
+$quagga_download_path = "${quagga_source_path}.tar.gz"
+$quagga_path = "/quagga"
+
+$ipmininet_git_repo = "https://github.com/jadinm/ipmininet.git"
+$ipmininet_path = "/home/vagrant/ipmininet"
 
 # PATH
-Exec { path => '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin' }
+$path = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+Exec { path => $path }
 
 # Execute 'apt-get update'
 exec { 'apt-update':
-  command => '/usr/bin/apt-get update',
+  command => 'apt-get update',
 }
 
 # Install python requirements
@@ -23,30 +37,30 @@ package { 'mininet':
   ensure => installed,
 }
 
+# Install specific version of quagga
 exec { 'quagga-download':
   require => Exec['apt-update'],
-  creates => '/quagga-1.0.20160315',
-  command => 'wget -O - http://download.savannah.gnu.org/releases/quagga/quagga-1.0.20160315.tar.gz > /quagga-1.0.20160315.tar.gz;\
-              tar -xvzf /quagga-1.0.20160315.tar.gz -C /;'
+  creates => $quagga_source_path,
+  command => "wget -O - ${quagga_release_url} > ${quagga_download_path};\
+              tar -xvzf ${quagga_download_path};"
 }
-
-# Install version 1.0.2 of quagga
 exec { 'quagga':
   require => [ Exec['apt-update'], Package['gawk'], Package['libreadline6-dev'], Exec['quagga-download'] ],
-  cwd => '/quagga-1.0.20160315',
-  creates => '/quagga',
-  command => './configure --prefix=/quagga;\
+  cwd => $quagga_source_path,
+  creates => $quagga_path,
+  path => "${path}:${quagga_source_path}",
+  command => "configure --prefix=${quagga_path};\
               adduser quagga;\
-              chown quagga:quagga /quagga; chmod 775 /quagga;\
+              chown quagga:quagga ${quagga_path}; chmod 775 ${quagga_path};\
               make;\
               make install;\
-              rm /quagga-1.0.20160315.tar.gz;\
-              echo "# Quagga binaries" >> /etc/profile;\
-              echo "PATH=\"/quagga/sbin:\$PATH\"" >> /etc/profile;\
-              echo "alias sudo=\'sudo env \"PATH=\$PATH\"\'" >> /etc/profile;\
-              echo "# Quagga binaries" >> /root/.bashrc;\
-              echo "PATH=\"/quagga/sbin:\$PATH\"" >> /root/.profile;\
-              PATH=/quagga/sbin:$PATH;',
+              rm ${quagga_download_path};\
+              echo \"# Quagga binaries\" >> /etc/profile;\
+              echo \"PATH=\"${quagga_path}/sbin:\$PATH\"\" >> /etc/profile;\
+              echo \"alias sudo=\'sudo env \"PATH=\$PATH\"\'\" >> /etc/profile;\
+              echo \"# Quagga binaries\" >> /root/.bashrc;\
+              echo \"PATH=\"${quagga_path}/sbin:\$PATH\"\" >> /root/.profile;\
+              PATH=${quagga_path}/sbin:$PATH;",
 }
 
 # Some other needed python packages
@@ -64,30 +78,30 @@ package { 'mako':
 # Download and install ipmininet
 exec { 'download-ipmininet':
   require => Package['git'],
-  command => 'git clone https://github.com/jadinm/ipmininet.git /home/vagrant/ipmininet',
-  creates => '/home/vagrant/ipmininet',
+  command => "git clone ${ipmininet_git_repo} ${ipmininet_path}",
+  creates => $ipmininet_path,
 }
 exec { 'ipmininet':
   require => [ Exec['apt-update'], Exec['download-ipmininet'], Package['python-setuptools'], Package['python-pip'], Package['mininet'], Package['mako'], Exec['quagga'] ],
-  command => 'pip install -e /home/vagrant/ipmininet',
+  command => "pip install -e ${ipmininet_path}",
 }
 
 # c-ares lib
 exec { 'c-ares-build-config':
   require => [ Exec['apt-update'], Package['libtool'] ],
-  cwd => '/home/vagrant/lib/c-ares',
-  path => '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/vagrant/lib/c-ares',
+  cwd => $cares_source_path,
+  path => "${path}:${cares_source_path}",
   command => 'buildconf',
-  creates => '/home/vagrant/lib/c-ares/configure',
+  creates => "${cares_source_path}/configure",
 }
 exec { 'c-ares-config':
   require => [ Exec['c-ares-build-config'] ],
-  cwd => '/home/vagrant/lib/c-ares',
-  path => '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/vagrant/lib/c-ares',
-  command => 'configure --enable-warnings --enable-werror --prefix=/home/vagrant/cares;\
+  cwd => $cares_source_path,
+  path => "${path}:${cares_source_path}",
+  command => "configure --enable-warnings --enable-werror --prefix=${cares_path};\
               make;\
-              make install;',
-  creates => '/home/vagrant/c-ares',
+              make install;",
+  creates => $cares_path,
 }
 
 # Miscellaneous
