@@ -14,19 +14,21 @@
         "delay": {
           "type": "integer"},
         "policing": {
-          "type": "boolean"},
+          "type": "integer"},
         "source": {
           "type": "string"},
         "router": {
           "type": "string"},
         "interface": {
           "type": "string"},
-        "isReverse": {
-          "type": "boolean"},
         "reverseFlow": {
-          "type": "uuid"},
+          "type": "string"},
         "request": {
-          "type": "uuid"}},
+          "type": "string"},
+        "ttl": {
+          "type": "integer"},
+        "idle": {
+          "type": "integer"}},
     "isRoot": true},
     "FlowReq": {
       "columns": {

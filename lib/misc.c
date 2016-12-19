@@ -64,7 +64,7 @@ char **strsplit(char *line, int *elems, char splitc)
 	return vargs;
 }
 
-void *memdup(void *from, size_t size)
+void *memdup(const void *from, size_t size)
 {
 	void *res;
 
