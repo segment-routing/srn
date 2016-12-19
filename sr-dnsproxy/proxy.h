@@ -1,6 +1,13 @@
 #ifndef PROXY__H
 #define PROXY__H
 
+#include <stdlib.h>
+#include <sys/select.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+
+#include <ares.h>
+
 #include "linked_list.h"
 
 #define FREE_POINTER(x) if (x) {\
@@ -13,6 +20,8 @@
   x = -1;\
 }
 
+#define MAX_QUERIES 50000 /* TODO Change by parameter */
+
 struct mapping_qid;
 
 struct query {
@@ -20,7 +29,7 @@ struct query {
   struct sockaddr_in6 addr;
   socklen_t addr_len;
   size_t length;
-  void *data;
+  char data [0];
 };
 
 struct reply {
@@ -30,11 +39,12 @@ struct reply {
   size_t data_length;
   size_t buffer_size;
   uint16_t additional_record_count;
-  void *data;
+  char data [0];
 };
 
-extern struct query queries;
-extern struct reply replies;
+extern struct queue_thread queries;
+extern struct queue_thread replies;
+extern struct queue_thread replies_with_srh;
 
 #define MAX_DNS_PACKET_SIZE 512 /* TODO Advertize value with EDNS0 */
 #define MAX_SRH_RR_SIZE 100 /* TODO Discuss */
@@ -76,5 +86,8 @@ void close_server(int server_sfd);
 ares_channel init_client(int optmask, struct ares_addr_node *servers);
 void client_process(ares_channel channel, fd_set *read_fds, fd_set *write_fds);
 void close_client(ares_channel channel);
+
+void init_monitor();
+void close_monitor();
 
 #endif /* PROXY__H */

@@ -1,26 +1,33 @@
 #ifndef LINKED_LIST__H
 #define LINKED_LIST__H
 
+#include <pthread.h>
+#include <semaphore.h>
+
+/* Thread-safe linked-list */
+
 struct node {
   struct node *next;
   struct node *prev;
 };
 
-#define queue_walk_safe(queue, elem, tmp, type)                         \
-	for (elem = (type) ((struct node *) queue)->next, tmp = (type) ((struct node *) elem)->next;	\
-	  elem != (queue);                                              \
-	  elem = tmp, tmp = (type) ((struct node *) elem)->next)
+struct queue_thread {
+  struct node node;
+  size_t max_size;
+	pthread_mutex_t mutex;
+	sem_t empty;
+	sem_t full;
+};
 
-int queue_is_empty(struct node *queue);
-void queue_init(struct node *queue);
-void queue_append(struct node *queue, struct node *elem);
-struct node *queue_dequeue(struct node *queue);
-void queue_remove(struct node *queue, struct node *elem);
+int queue_is_empty(struct queue_thread *queue);
+void queue_init(struct queue_thread *queue, size_t max_size);
+void queue_append(struct queue_thread *queue, struct node *elem);
+struct node *queue_dequeue(struct queue_thread *queue);
+void queue_destroy(struct queue_thread *queue);
 
-#define QUEUE_INIT(queue) queue_init((struct node *)(queue))
-#define QUEUE_IS_EMPTY(queue) queue_is_empty((struct node *)(queue))
-#define QUEUE_APPEND(queue, elem) queue_append((struct node *)(queue), (struct node *)(elem))
-#define QUEUE_DEQUEUE(queue) queue_dequeue((struct node *)(queue))
-#define QUEUE_REMOVE(queue, elem) queue_remove((struct node *)(queue), (struct node *)(elem))
+#define queue_walk_dequeue(queue, elem, type)           \
+  for (elem = (type) (queue_dequeue(queue));	          \
+       (struct node *) elem != (struct node *) (queue); \
+       elem = (type) (queue_dequeue(queue)))
 
 #endif /* LINKED_LIST__H */

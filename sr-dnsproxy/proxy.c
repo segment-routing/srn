@@ -30,6 +30,19 @@ void inthand(__attribute__((unused)) int signum) {
     stop = 1;
 }
 
+static void add_srh() {
+  struct reply *reply = NULL;
+  /* TODO Temp: adds the SRH to the reply and forward to the other queue */
+  /* TODO It is better to do it with callbacks and a way to check wether something new is available */
+  if (!queue_is_empty(&replies)) {
+    queue_walk_dequeue(&replies, reply, struct reply *) {
+      // TODO Add SRH to reply
+      // TODO DNS_HEADER_SET_ARCOUNT(replies->data, DNS_HEADER_ARCOUNT(replies->data) + 1);
+      queue_append(&replies_with_srh, (struct node *) reply);
+    }
+  }
+}
+
 static int receive_and_forward_loop(int server_sfd, ares_channel channel) {
 
   int err = 0;
@@ -60,11 +73,13 @@ static int receive_and_forward_loop(int server_sfd, ares_channel channel) {
 
     server_process(server_sfd, &read_fds, &write_fds);
     client_process(channel, &read_fds, &write_fds);
+    add_srh();
   }
 
 out:
   close_server(server_sfd);
   close_client(channel);
+  close_monitor();
   return err;
 out_err:
   err = -1;
@@ -99,6 +114,9 @@ int main(int argc, char *argv[]) {
   if (!channel) {
     goto out_err_free_args;
   }
+
+  /* Setup controller monitoring */
+  init_monitor();
 
   /* Get rid of memory allocated for arguments */
   FREE_POINTER(listen_port);

@@ -5,16 +5,17 @@ $cares_path = "/home/vagrant/cares"
 
 $quagga_version = "1.0.20160315"
 $quagga_release_url = "http://download.savannah.gnu.org/releases/quagga/quagga-${quagga_version}.tar.gz"
-$quagga_source_path = "/quagga-${quagga_version}"
+$quagga_root_dir = "/home/vagrant"
+$quagga_source_path = "${quagga_root_dir}/quagga-${quagga_version}"
 $quagga_download_path = "${quagga_source_path}.tar.gz"
-$quagga_path = "/quagga"
+$quagga_path = "/home/vagrant/quagga"
 
 $ipmininet_git_repo = "https://github.com/jadinm/ipmininet.git"
 $ipmininet_path = "/home/vagrant/ipmininet"
 
 # PATH
-$path = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-Exec { path => $path }
+$default_path = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+Exec { path => $default_path }
 
 # Execute 'apt-get update'
 exec { 'apt-update':
@@ -42,13 +43,13 @@ exec { 'quagga-download':
   require => Exec['apt-update'],
   creates => $quagga_source_path,
   command => "wget -O - ${quagga_release_url} > ${quagga_download_path};\
-              tar -xvzf ${quagga_download_path};"
+              tar -xvzf ${quagga_download_path} -C ${quagga_root_dir};"
 }
 exec { 'quagga':
   require => [ Exec['apt-update'], Package['gawk'], Package['libreadline6-dev'], Exec['quagga-download'] ],
   cwd => $quagga_source_path,
   creates => $quagga_path,
-  path => "${path}:${quagga_source_path}",
+  path => "${default_path}:${quagga_source_path}",
   command => "configure --prefix=${quagga_path};\
               adduser quagga;\
               chown quagga:quagga ${quagga_path}; chmod 775 ${quagga_path};\
@@ -90,14 +91,14 @@ exec { 'ipmininet':
 exec { 'c-ares-build-config':
   require => [ Exec['apt-update'], Package['libtool'] ],
   cwd => $cares_source_path,
-  path => "${path}:${cares_source_path}",
+  path => "${default_path}:${cares_source_path}",
   command => 'buildconf',
   creates => "${cares_source_path}/configure",
 }
 exec { 'c-ares-config':
   require => [ Exec['c-ares-build-config'] ],
   cwd => $cares_source_path,
-  path => "${path}:${cares_source_path}",
+  path => "${default_path}:${cares_source_path}",
   command => "configure --enable-warnings --enable-werror --prefix=${cares_path};\
               make;\
               make install;",
