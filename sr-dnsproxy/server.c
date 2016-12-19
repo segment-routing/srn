@@ -11,12 +11,11 @@
 
 #include "proxy.h"
 
-struct reply replies;
+struct queue_thread replies;
 
 void server_process(int server_sfd, fd_set *read_fds, fd_set *write_fds) {
 
   struct reply *reply = NULL;
-  struct reply *tmp_reply = NULL;
 
   struct query *query = NULL;
   int length = 0;
@@ -30,7 +29,6 @@ void server_process(int server_sfd, fd_set *read_fds, fd_set *write_fds) {
       return; /* Drop request */
     }
 
-    query->data = ((char *) query) + sizeof(struct query);
     query->addr_len = sizeof(query->addr);
     length = recvfrom(server_sfd, query->data,
                              (size_t) MAX_DNS_PACKET_SIZE, 0,
@@ -42,19 +40,17 @@ void server_process(int server_sfd, fd_set *read_fds, fd_set *write_fds) {
     } else {
       query->length = (uint16_t) length;
       // TODO Look at the cache
-      QUEUE_APPEND(&queries, query);
+      queue_append(&queries, (struct node *) query);
     }
   }
 
   if (FD_ISSET(server_sfd, write_fds)) {
-    queue_walk_safe(&replies, reply, tmp_reply, struct reply *) {
-      // TODO Add SRH to reply + change number of DNS_HEADER_SET_ARCOUNT()
+    queue_walk_dequeue(&replies_with_srh, reply, struct reply *) {
       if (sendto(server_sfd, reply->data, reply->data_length, 0,
                  (struct sockaddr *) &reply->addr,
                  reply->addr_len) != (int) reply->data_length) {
         perror("Error forwarding reply"); /* Drop the reply */
       }
-      QUEUE_REMOVE(&replies, reply);
       FREE_POINTER(reply);
     }
   }
@@ -64,7 +60,7 @@ int server_fds(int server_sfd, fd_set *read_fds, fd_set *write_fds) {
 
   // TODO Block if not enough memory/too much query in processing ???
   FD_SET(server_sfd, read_fds);
-  if (!QUEUE_IS_EMPTY(&replies)) {
+  if (!queue_is_empty(&replies_with_srh)) {
     FD_SET(server_sfd, write_fds);
   }
   return server_sfd + 1;
@@ -111,20 +107,13 @@ int init_server(const char *listen_port) {
     fprintf(stderr, "Could not bind\n");
   }
 
-  QUEUE_INIT(&replies);
+  queue_init(&replies, MAX_QUERIES);
 
 out:
   return server_sfd;
 }
 
 void close_server(int server_sfd) {
-
-  struct reply *reply = NULL;
-  struct reply *tmp_reply = NULL;
-
-  queue_walk_safe(&replies, reply, tmp_reply, struct reply *) {
-    FREE_POINTER(reply); // data is stored in the same memory region
-  }
-
+  queue_destroy(&replies);
   CLOSE_FD(server_sfd);
 }
