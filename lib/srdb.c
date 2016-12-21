@@ -12,8 +12,8 @@ static int ovsdb_monitor(const struct ovsdb_config *conf, const char *table,
 			 const char *columns,
 			 void (*callback)(const char *buf, void *), void *arg)
 {
-	char line[BUFLEN];
-	char cmd[BUFLEN];
+	char line[BUFLEN+1];
+	char cmd[BUFLEN+1];
 	FILE *fp;
 	int ret;
 
@@ -79,7 +79,7 @@ static int ovsdb_update(const struct ovsdb_config *conf, const char *table,
 }
 
 static int ovsdb_insert(const struct ovsdb_config *conf, const char *table,
-			const char *fields)
+			const char *fields, char *uuid)
 {
 	const char *_start_match = "[{\"uuid\":[\"uuid\",";
 	char line[BUFLEN];
@@ -106,6 +106,9 @@ static int ovsdb_insert(const struct ovsdb_config *conf, const char *table,
 			ret = 1;
 		break;
 	}
+
+	if (uuid && !ret)
+		sscanf(line, "[{\"uuid\":[\"uuid\",\"%[a-z0-9-]\"]}]", uuid);
 
 	if (pclose(fp) < 0)
 		perror("close");
@@ -160,7 +163,7 @@ static void fill_srdb_entry(struct srdb_descriptor *desc,
 		if (idx < 0)
 			continue;
 
-		data = (unsigned char *)entry + desc->offset;
+		data = (unsigned char *)entry + desc[idx].offset;
 
 		switch (desc[idx].type) {
 		case SRDB_STR:
@@ -182,13 +185,12 @@ static void free_srdb_entry(struct srdb_descriptor *desc,
 	struct srdb_descriptor *tmp;
 
 	for (tmp = desc; tmp->name; tmp++) {
-		void *data = (unsigned char *)entry + desc->offset;
+		void *data = (unsigned char *)entry + tmp->offset;
 
 		if (tmp->type == SRDB_VARSTR)
-			free(data);
+			free(*(char **)data);
 	}
 
-	free(desc);
 	free(entry);
 }
 
@@ -490,16 +492,14 @@ static struct srdb_table srdb_tables[] = {
 struct srdb_table *srdb_get_tables(void)
 {
 	struct srdb_table *tbl;
+	unsigned int i;
 
 	tbl = memdup(srdb_tables, sizeof(srdb_tables));
 	if (!tbl)
 		return NULL;
 
-	tbl[0].desc = memdup(tbl[0].desc_tmpl, tbl[0].desc_size);
-	if (!tbl[0].desc) {
-		free(tbl);
-		return NULL;
-	}
+	for (i = 0; i < sizeof(srdb_tables) / sizeof(struct srdb_table); i++)
+		tbl[i].desc = memdup(tbl[i].desc_tmpl, tbl[i].desc_size);
 
 	return tbl;
 }
@@ -531,7 +531,6 @@ struct srdb_table *srdb_table_by_name(struct srdb_table *tables,
 
 static void srdb_read(const char *buf, void *arg)
 {
-	struct srdb_descriptor *desc;
 	struct srdb_table *tbl = arg;
 	struct srdb_entry *entry;
 	char *action;
@@ -539,6 +538,8 @@ static void srdb_read(const char *buf, void *arg)
 	char *buf2;
 	int vargc;
 	int idx;
+
+	gettimeofday(&tbl->last_read, NULL);
 
 	if (!buf || !*buf)
 		return;
@@ -560,50 +561,45 @@ static void srdb_read(const char *buf, void *arg)
 		return;
 	}
 
-	desc = memdup(tbl->desc, tbl->desc_size);
-	if (!desc) {
-		free(vargs);
-		free(buf2);
-		return;
-	}
-
 	entry = calloc(1, tbl->entry_size);
 	if (!entry) {
-		free(desc);
 		free(vargs);
 		free(buf2);
 		return;
 	}
 
-	fill_srdb_entry(desc, entry, vargs);
+	fill_srdb_entry(tbl->desc, entry, vargs);
 
 	free(vargs);
 	free(buf2);
 
-	idx = find_desc_fromname(desc, "action");
+	idx = find_desc_fromname(tbl->desc, "action");
 
 	if (idx < 0) {
 		pr_err("field `action' not present in row.");
-		free_srdb_entry(desc, entry);
+		free_srdb_entry(tbl->desc, entry);
 		return;
 	}
 
-	action = (char *)entry + desc[idx].offset;
+	action = (char *)entry + tbl->desc[idx].offset;
+
+	printf("table: %s, row: %s, action %s\n", tbl->name, entry->row,
+	       entry->action);
 
 	if (!strcmp(action, "insert") || !strcmp(action, "initial")) {
 		if (tbl->read)
 			tbl->read(entry);
-		free_srdb_entry(desc, entry);
+		free_srdb_entry(tbl->desc, entry);
 	} else if (!strcmp(action, "old")) {
 		tbl->update_entry = entry;
 	} else if (!strcmp(action, "new")) {
 		if (tbl->read_update)
 			tbl->read_update(tbl->update_entry, entry);
-		free(tbl->update_entry);
-		free_srdb_entry(desc, entry);
+		free_srdb_entry(tbl->desc, tbl->update_entry);
+		free_srdb_entry(tbl->desc, entry);
 		tbl->update_entry = NULL;
 	} else {
-		free_srdb_entry(desc, entry);
+		free_srdb_entry(tbl->desc, entry);
 		pr_err("unknown action type `%s'.", action);
 	}
 }
@@ -628,13 +624,16 @@ static int write_desc_data(char *buf, size_t size,
 
 	switch (desc->type) {
 	case SRDB_STR:
-	case SRDB_VARSTR:
 		wr = snprintf(buf, size, "\"%s\": \"%s\"", desc->name,
 			      (char *)data);
 		break;
 	case SRDB_INT:
 		wr = snprintf(buf, size, "\"%s\": %d", desc->name,
 			      *(int *)data);
+		break;
+	case SRDB_VARSTR:
+		wr = snprintf(buf, size, "\"%s\": \"%s\"", desc->name,
+			      *(char **)data);
 		break;
 	}
 
@@ -662,12 +661,14 @@ int srdb_update(struct srdb *srdb, struct srdb_table *tbl,
 }
 
 int srdb_insert(struct srdb *srdb, struct srdb_table *tbl,
-		struct srdb_entry *entry)
+		struct srdb_entry *entry, char *uuid)
 {
 	const struct srdb_descriptor *tmp;
 	char fields[BUFLEN + 1];
 	char field[SLEN + 1];
 	int ret;
+
+	memset(fields, 0, BUFLEN + 1);
 
 	for (tmp = tbl->desc; tmp->name; tmp++) {
 		if (!tmp->builtin) {
@@ -675,12 +676,14 @@ int srdb_insert(struct srdb *srdb, struct srdb_table *tbl,
 			if (ret < 0)
 				return ret;
 
-			snprintf(fields, BUFLEN, "%s%s%s", fields, field,
-				 ((tmp+1)->name) ? ", " : " ");
+			// TODO fix that horrible stuff
+			strcat(fields, field);
+			if ((tmp+1)->name)
+				strcat(fields, ", ");
 		}
 	}
 
-	ret = ovsdb_insert(&srdb->conf, tbl->name, fields);
+	ret = ovsdb_insert(&srdb->conf, tbl->name, fields, uuid);
 
 	return ret;
 }

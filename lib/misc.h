@@ -3,6 +3,7 @@
 
 #include <sys/syscall.h>
 #include <linux/random.h>
+#include <sys/time.h>
 
 #define __unused __attribute__((unused))
 #define pr_err(arg, ...) { fprintf(stderr, "%s: " arg "\n", __func__, ##__VA_ARGS__); }
@@ -23,6 +24,14 @@ static inline unsigned int hashint(unsigned int x) {
 static inline int get_random_bytes(void *buf, size_t buflen)
 {
 	return syscall(SYS_getrandom, buf, buflen, 0);
+}
+
+static inline unsigned int getmsdiff(struct timeval *t1, struct timeval *t2)
+{
+	struct timeval tmp;
+
+	timersub(t1, t2, &tmp);
+	return (tmp.tv_sec * 1000) + (tmp.tv_usec / 1000);
 }
 
 #endif

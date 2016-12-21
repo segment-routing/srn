@@ -3,6 +3,7 @@
 
 #include <stdbool.h>
 #include <netinet/in.h>
+#include <arpa/inet.h>
 
 #define SLEN	127
 
@@ -36,6 +37,7 @@ struct srdb_table {
 	void (*read)(struct srdb_entry *);
 	void (*read_update)(struct srdb_entry *, struct srdb_entry *);
 	struct srdb_entry *update_entry;
+	struct timeval last_read;
 };
 
 struct ovsdb_config {
@@ -119,7 +121,25 @@ struct prefix {
 	struct in6_addr addr;
 	int len;
 };
-	
+
+static inline void pref_pton(const char *src, struct prefix *dst)
+{
+	char *d, *s;
+
+	memset(dst, 0, sizeof(*dst));
+
+	d = strdup(src);
+	s = strchr(d, '/');
+	if (!s) {
+		free(d);
+		return;
+	}
+	*s++ = 0;
+	inet_pton(AF_INET6, d, &dst->addr);
+	dst->len = atoi(s);
+	free(d);
+}
+
 struct router {
 	char name[SLEN + 1];
 	struct in6_addr addr;
@@ -155,7 +175,7 @@ int srdb_monitor(struct srdb *srdb, struct srdb_table *tbl,
 int srdb_update(struct srdb *srdb, struct srdb_table *tbl,
 		struct srdb_entry *entry, const char *fieldname);
 int srdb_insert(struct srdb *srdb, struct srdb_table *tbl,
-		struct srdb_entry *entry);
+		struct srdb_entry *entry, char *uuid);
 
 struct srdb_table *srdb_get_tables(void);
 void srdb_free_tables(struct srdb_table *tbl);

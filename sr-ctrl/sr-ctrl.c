@@ -112,9 +112,10 @@ static int commit_flow(struct router *rt, struct flow *fl)
 
 		inet_ntop(AF_INET6, seg_addr, addr, INET6_ADDRSTRLEN);
 
-		snprintf(flow_entry.segments, fl->segs->elem_count *
-			 INET6_ADDRSTRLEN, "%s%s%c", flow_entry.segments, addr,
-			 (i < fl->segs->elem_count - 1) ? ',' : 0);
+		// TODO fix that horrible stuff
+		strcat(flow_entry.segments, addr);
+		if (i < fl->segs->elem_count - 1)
+			strcat(flow_entry.segments, ";");
 	}
 
 	memcpy(flow_entry.router, rt->name, SLEN);
@@ -126,7 +127,7 @@ static int commit_flow(struct router *rt, struct flow *fl)
 
 	ret = srdb_insert(_cfg.srdb,
 			  srdb_table_by_name(_cfg.srdb->tables, "FlowState"),
-			  (struct srdb_entry *)&flow_entry);
+			  (struct srdb_entry *)&flow_entry, NULL);
 
 	free(flow_entry.segments);
 
@@ -136,8 +137,11 @@ static int commit_flow(struct router *rt, struct flow *fl)
 static void generate_bsid(struct router *rt, struct in6_addr *res)
 {
 	int len;
+	char addr[41];
 
 	len = (128 - rt->pbsid.len) >> 3;
+
+	inet_ntop(AF_INET6, &rt->pbsid.addr, addr, 40);
 
 	memcpy(res, &rt->pbsid.addr, sizeof(struct in6_addr));
 	get_random_bytes((unsigned char *)res + (16 - len), len);
@@ -311,16 +315,14 @@ static void read_flowreq(struct srdb_entry *entry)
 	fl->srcrt = rt;
 	fl->dstrt = dstrt;
 
-	if (fl->bw || fl->delay || rule->path) {
-		graph_read_lock(_cfg.graph);
-		fl->segs = build_segpath(_cfg.graph, fl, rule->path);
-		graph_unlock(_cfg.graph);
+	graph_read_lock(_cfg.graph);
+	fl->segs = build_segpath(_cfg.graph, fl, rule->path);
+	graph_unlock(_cfg.graph);
 
-		if (!fl->segs) {
-			free(fl);
-			set_status(req, STATUS_UNAVAILABLE);
-			return;
-		}
+	if (!fl->segs) {
+		free(fl);
+		set_status(req, STATUS_UNAVAILABLE);
+		return;
 	}
 
 	hmap_write_lock(rt->flows);
@@ -355,18 +357,18 @@ static void read_nodestate(struct srdb_entry *entry)
 
 	memcpy(rt->name, node_entry->name, SLEN);
 	inet_pton(AF_INET6, node_entry->addr, &rt->addr);
-	inet_pton(AF_INET6, node_entry->pbsid, &rt->pbsid);
+
+	if (*node_entry->pbsid)
+		pref_pton(node_entry->pbsid, &rt->pbsid);
 
 	rt->prefixes = alist_new(sizeof(struct prefix));
 
-	vargs = strsplit(node_entry->prefix, &vargc, ',');
+	vargs = strsplit(node_entry->prefix, &vargc, ';');
 	for (pref = vargs; *pref; pref++) {
-		char *s;
+		if (!**pref)
+			continue;
 
-		s = strchr(*pref, '/');
-		*s++ = 0;
-		inet_pton(AF_INET6, *pref, &p.addr);
-		p.len = atoi(s);
+		pref_pton(*pref, &p);
 		alist_insert(rt->prefixes, &p);
 
 		lpm_insert(_cfg.prefixes, &p.addr, p.len, rt);
@@ -462,32 +464,60 @@ static void *thread_monitor(void *_arg)
 	return (void *)(intptr_t)ret;
 }
 
-static void launch_srdb(pthread_t *thr)
+static void launch_srdb(pthread_t *thr, struct monitor_arg *args)
 {
-	struct monitor_arg args[3];
 	struct srdb_table *tbl;
+	struct timeval tv;
 
-	tbl = srdb_table_by_name(_cfg.srdb->tables, "FlowReq");
-	srdb_set_read_cb(_cfg.srdb, "FlowReq", read_flowreq);
-	args[0].srdb = _cfg.srdb;
-	args[0].table = tbl;
-	args[0].columns = "!initial,!delete,!modify";
-
-	pthread_create(&thr[0], NULL, thread_monitor, (void *)&args[0]);
+	/* The tables need to be read in specific order: first nodes,
+	 * then links, finally flow requests. With the existing OVSDB
+	 * interface, it is not possible to know in advance the number
+	 * of initial rows. The workaround is to wait for 200 ms after
+	 * the latest insertion in each table before reading the next
+	 * table. This timer might be changed according to network
+	 * conditions. Fortunately, this ugly hack is only performed
+	 * at initialization.
+	 */
 
 	tbl = srdb_table_by_name(_cfg.srdb->tables, "NodeState");
 	srdb_set_read_cb(_cfg.srdb, "NodeState", read_nodestate);
+	args[0].srdb = _cfg.srdb;
+	args[0].table = tbl;
+	args[0].columns = "";
+
+	printf("starting nodestate\n");
+
+	gettimeofday(&tbl->last_read, NULL);
+	pthread_create(&thr[0], NULL, thread_monitor, (void *)&args[0]);
+
+	do {
+		gettimeofday(&tv, NULL);
+		usleep(100000);
+	} while (getmsdiff(&tv, &tbl->last_read) < 200);
+
+	printf("starting linkstate\n");
+
+	tbl = srdb_table_by_name(_cfg.srdb->tables, "LinkState");
+	srdb_set_read_cb(_cfg.srdb, "LinkState", read_linkstate);
 	args[1].srdb = _cfg.srdb;
 	args[1].table = tbl;
 	args[1].columns = "";
 
+	gettimeofday(&tbl->last_read, NULL);
 	pthread_create(&thr[1], NULL, thread_monitor, (void *)&args[1]);
 
-	tbl = srdb_table_by_name(_cfg.srdb->tables, "LinkState");
-	srdb_set_read_cb(_cfg.srdb, "LinkState", read_linkstate);
+	do {
+		gettimeofday(&tv, NULL);
+		usleep(100000);
+	} while (getmsdiff(&tv, &tbl->last_read) < 200);
+
+	printf("starting flowreq\n");
+
+	tbl = srdb_table_by_name(_cfg.srdb->tables, "FlowReq");
+	srdb_set_read_cb(_cfg.srdb, "FlowReq", read_flowreq);
 	args[2].srdb = _cfg.srdb;
 	args[2].table = tbl;
-	args[2].columns = "";
+	args[2].columns = "!delete,!modify";
 
 	pthread_create(&thr[2], NULL, thread_monitor, (void *)&args[2]);
 }
@@ -495,6 +525,7 @@ static void launch_srdb(pthread_t *thr)
 int main(int argc, char **argv)
 {
 	const char *conf = DEFAULT_CONFIG;
+	struct monitor_arg margs[3];
 	pthread_t mon_thr[3];
 	unsigned int i;
 
@@ -541,7 +572,7 @@ int main(int argc, char **argv)
 		return -1;
 	}
 
-	launch_srdb(mon_thr);
+	launch_srdb(mon_thr, margs);
 
 	for (i = 0; i < sizeof(mon_thr) / sizeof(pthread_t); i++)
 		pthread_join(mon_thr[i], NULL);
