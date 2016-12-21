@@ -8,14 +8,14 @@
 #include <netdb.h>
 
 #include <ares.h>
+#include <ares_dns.h>
 
 #include "proxy.h"
 
-struct queue_thread replies;
+int server_sfd = -1;
+struct queue_thread queries;
 
-void server_process(int server_sfd, fd_set *read_fds, fd_set *write_fds) {
-
-  struct reply *reply = NULL;
+static void server_producer_process(fd_set *read_fds) {
 
   struct query *query = NULL;
   int length = 0;
@@ -39,81 +39,119 @@ void server_process(int server_sfd, fd_set *read_fds, fd_set *write_fds) {
       FREE_POINTER(query);
     } else {
       query->length = (uint16_t) length;
+      query->bandwidth_req = 50000; /* TODO Extract */
+      query->latency_req = 50; /* TODO Extract */
+      query->app_name_req = "test.com"; /* TODO Extract */
       // TODO Look at the cache
-      queue_append(&queries, (struct node *) query);
-    }
-  }
-
-  if (FD_ISSET(server_sfd, write_fds)) {
-    queue_walk_dequeue(&replies_with_srh, reply, struct reply *) {
-      if (sendto(server_sfd, reply->data, reply->data_length, 0,
-                 (struct sockaddr *) &reply->addr,
-                 reply->addr_len) != (int) reply->data_length) {
-        perror("Error forwarding reply"); /* Drop the reply */
+      if (mqueue_append(&queries, (struct node *) query)) {
+        /* Dropping request */
+        FREE_POINTER(query);
+        return;
       }
-      FREE_POINTER(reply);
     }
   }
 }
 
-int server_fds(int server_sfd, fd_set *read_fds, fd_set *write_fds) {
+static void *server_producer_main(__attribute__((unused)) void *args) {
 
-  // TODO Block if not enough memory/too much query in processing ???
-  FD_SET(server_sfd, read_fds);
-  if (!queue_is_empty(&replies_with_srh)) {
-    FD_SET(server_sfd, write_fds);
+  int err = 0;
+  fd_set read_fds;
+  struct timeval timeout;
+
+  /* TODO While loop on the result + check a value for stopping the program */
+  while (!stop) {
+    FD_ZERO(&read_fds);
+    FD_SET(server_sfd, &read_fds);
+    timeout.tv_sec = TIMEOUT_LOOP;
+    timeout.tv_usec = 0;
+    err = select(server_sfd + 1, &read_fds, NULL, NULL, &timeout);
+    if (err < 0) {
+      perror("Select fail");
+      goto out;
+    }
+    server_producer_process(&read_fds);
   }
-  return server_sfd + 1;
+
+out:
+  return NULL;
 }
 
-int init_server(const char *listen_port) {
+static void *server_consumer_main(__attribute__((unused)) void *_arg) {
 
-  int server_sfd = -1;
+  int err = 0;
+  struct query *query = NULL;
+  struct callback_args *args = NULL;
 
-  struct addrinfo hints;
-  struct addrinfo *result, *rp;
+  mqueue_walk_dequeue(&queries, query, struct query *) {
+
+    char *name;
+    unsigned char *aptr = ((unsigned char *) query->data) + DNS_RR_NAME_OFFSET;
+    long len = 0;
+    int status = 0;
+
+    status = ares_expand_name(aptr, (unsigned char *) query->data, query->length, &name, &len);
+    if (status != ARES_SUCCESS) {
+      fprintf(stderr, "ERROR Expanding name: %s\n", ares_strerror(status)); /* drop query */
+      goto free_query;
+    }
+
+    args = malloc(sizeof(struct callback_args));
+    if (!args) {
+      fprintf(stderr, "Out of memory !\n");
+      goto free_ares_string;
+    }
+
+    args->qid = DNS_HEADER_QID((char *) query->data);
+    args->addr = query->addr;
+    args->addr_len = query->addr_len;
+    args->bandwidth_req = query->bandwidth_req;
+    args->latency_req = query->latency_req;
+    args->app_name_req = query->app_name_req;
+
+    // TODO Lock mutex
+    if ((err = pthread_mutex_lock(&channel_mutex))) {
+      perror("Cannot lock the mutex to append");
+      goto free_ares_string;
+    }
+    ares_query(channel, name, C_IN, T_AAAA, client_callback, (void *) args);
+    pthread_mutex_unlock(&channel_mutex);
+
+free_ares_string:
+    ares_free_string(name);
+free_query:
+    FREE_POINTER(query);
+  }
+
+  return NULL;
+}
+
+int init_server(pthread_t *server_consumer_thread, pthread_t *server_producer_thread) {
 
   int status = 0;
 
-  memset(&hints, 0, sizeof(struct addrinfo));
-  hints.ai_family = AF_UNSPEC;    /* Allow IPv4 or IPv6 */
-  hints.ai_socktype = SOCK_DGRAM; /* Datagram socket */
-  hints.ai_flags = AI_PASSIVE;    /* For wildcard IP address */
-  hints.ai_protocol = 0;          /* Any protocol */
-  hints.ai_canonname = NULL;
-  hints.ai_addr = NULL;
-  hints.ai_next = NULL;
+  mqueue_init(&queries, MAX_QUERIES);
 
-  status = getaddrinfo(NULL, listen_port, &hints, &result);
-  if (status != 0) {
-    fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(status));
-    goto out;
+  /* Thread launching */
+  status = pthread_create(server_consumer_thread, NULL, server_consumer_main, NULL);
+  if (status) {
+    perror("Cannot create consumer server thread");
+    goto out_err;
   }
 
-  for (rp = result; rp != NULL; rp = rp->ai_next) {
-    server_sfd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
-    if (server_sfd == -1)
-      continue;
-
-    if (bind(server_sfd, rp->ai_addr, rp->ai_addrlen) == 0)
-      break;
-
-    CLOSE_FD(server_sfd);
+  status = pthread_create(server_producer_thread, NULL, server_producer_main, NULL);
+  if (status) {
+    perror("Cannot create producer server thread");
+    goto out_err;
   }
-
-  freeaddrinfo(result);
-
-  if (rp == NULL) {
-    fprintf(stderr, "Could not bind\n");
-  }
-
-  queue_init(&replies, MAX_QUERIES);
 
 out:
-  return server_sfd;
+  return status;
+out_err:
+  mqueue_destroy(&queries);
+  goto out;
 }
 
-void close_server(int server_sfd) {
-  queue_destroy(&replies);
+void close_server() {
+  mqueue_destroy(&queries);
   CLOSE_FD(server_sfd);
 }

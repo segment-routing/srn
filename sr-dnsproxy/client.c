@@ -8,19 +8,13 @@
 
 #include "proxy.h"
 
-#define C_IN 1
-#define T_AAAA 28
-#define DNS_RR_NAME_OFFSET 12
+ares_channel channel;
+struct queue_thread replies;
+pthread_mutex_t channel_mutex;
 
-struct callback_args {
-  uint16_t qid;
-  struct sockaddr_in6 addr;
-  socklen_t addr_len;
-};
+struct queue inner_queue;
 
-struct queue_thread queries;
-
-static void callback(void *arg, int status, __attribute__((unused)) int timeouts, unsigned char *abuf, int alen) {
+void client_callback(void *arg, int status, __attribute__((unused)) int timeouts, unsigned char *abuf, int alen) {
 
   if (status != ARES_SUCCESS) {
     fprintf(stderr, "DNS server error: %s\n", ares_strerror(status));
@@ -36,61 +30,90 @@ static void callback(void *arg, int status, __attribute__((unused)) int timeouts
     reply->additional_record_count = DNS_HEADER_ARCOUNT(abuf);
     reply->addr = call_args->addr;
     reply->addr_len = call_args->addr_len;
+    reply->bandwidth_req = call_args->bandwidth_req;
+    reply->latency_req = call_args->latency_req;
+    reply->app_name_req = call_args->app_name_req;
     memcpy(reply->data, abuf, alen);
     DNS_HEADER_SET_QID((char *) reply->data, call_args->qid);
-    queue_append(&replies, (struct node *) reply);
-    // TODO Make RPC to controller !
-    // TODO Add to cache (+ add count of references in order to prevent segmentation faults)
+    if (queue_append(&inner_queue, (struct node *) reply)) {
+      /* Dropping reply */
+      FREE_POINTER(reply);
+    }
   }
   FREE_POINTER(arg);
 }
 
-void client_process(ares_channel channel, fd_set *read_fds, fd_set *write_fds) {
+static void *client_producer_main(__attribute__((unused)) void *args) {
 
-  struct query *query = NULL;
-  struct callback_args *args = NULL;
+  int err = 0;
+  int nfds = 0;
+  fd_set read_fds, write_fds;
+  struct timeval timeout;
+  struct reply *reply = NULL;
 
-  if (!queue_is_empty(&queries)) { /* TODO REMOVE !!!!! */
-  queue_walk_dequeue(&queries, query, struct query *) {
-
-    char *name;
-    unsigned char *aptr = ((unsigned char *) query->data) + DNS_RR_NAME_OFFSET;
-    long len = 0;
-    int status = 0;
-
-    status = ares_expand_name(aptr, (unsigned char *) query->data, query->length, &name, &len);
-    if (status != ARES_SUCCESS) {
-      fprintf(stderr, "ERROR Expanding name: %s\n", ares_strerror(status)); /* drop query */
-      goto free_query;
+  queue_init(&inner_queue);
+  /* TODO While loop on the result + check a value for stopping the program */
+  while (!stop) {
+    FD_ZERO(&read_fds);
+    FD_ZERO(&write_fds);
+    timeout.tv_sec = TIMEOUT_LOOP;
+    timeout.tv_usec = 0;
+    nfds = ares_fds(channel, &read_fds, &write_fds);
+    err = select(nfds, &read_fds, &write_fds, NULL, &timeout);
+    if (err < 0) {
+      perror("Select fail");
+      break;
     }
 
-    args = malloc(sizeof(struct callback_args));
-    if (!args) {
-      fprintf(stderr, "Out of memory !\n");
-      goto free_ares_string;
+    if (pthread_mutex_lock(&channel_mutex)) {
+      perror("Cannot lock the mutex in client producer");
+      break;
     }
+    ares_process(channel, &read_fds, &write_fds);
+    pthread_mutex_unlock(&channel_mutex);
 
-    args->qid = DNS_HEADER_QID((char *) query->data);
-    args->addr = query->addr;
-    args->addr_len = query->addr_len;
-    ares_query(channel, name, C_IN, T_AAAA, callback, (void *) args);
-
-free_ares_string:
-    ares_free_string(name);
-free_query:
-    FREE_POINTER(query);
+    /* Transfer replies to the multi-threaded queue */
+    queue_walk_dequeue(&inner_queue, reply, struct reply *) {
+      if (mqueue_append(&replies, (struct node *) reply)) {
+        /* Dropping reply */
+        FREE_POINTER(reply);
+      }
+    }
   }
+  queue_destroy(&inner_queue);
+  return NULL;
 }
 
-  /* Handle pending replies (by callback) */
-  ares_process(channel, read_fds, write_fds);
+static void *client_consumer_main(__attribute__((unused)) void *args) {
+
+  struct srdb_table *tbl = srdb_table_by_name(srdb->tables, "FlowState");
+  struct srdb_flowreq_entry entry;
+  memset(&entry, 0, sizeof(struct srdb_entry));
+  struct reply *reply = NULL;
+
+  mqueue_walk_dequeue(&replies, reply, struct reply *) {
+    strncpy(reply->ovsdb_req_uuid, "-1", SLEN + 1);
+    if (mqueue_append(&replies_waiting_controller, (struct node *) reply)) {
+      break;
+    }
+
+    strncpy(entry.destination, "dest.com", SLEN); /* TODO Extract */
+    strncpy(entry.dstaddr, "fd::2", SLEN); /* TODO Extract */
+    strncpy(entry.source, reply->app_name_req, SLEN);
+    entry.bandwidth = reply->bandwidth_req;
+    entry.delay = reply->latency_req;
+    strncpy(entry.router, "router.com", SLEN); /* TODO Put it as an argument */
+
+    srdb_insert(srdb, tbl, (struct srdb_entry *) &entry, reply->ovsdb_req_uuid);
+
+    /* TODO Put in cache */
+  }
+  return NULL;
 }
 
-ares_channel init_client(int optmask, struct ares_addr_node *servers) {
+int init_client(int optmask, struct ares_addr_node *servers, pthread_t *client_consumer_thread, pthread_t *client_producer_thread) {
 
   int status = ARES_SUCCESS;
-
-  ares_channel channel = NULL;
   struct ares_options options;
   memset(&options, 0, sizeof(struct ares_options));
 
@@ -114,10 +137,27 @@ ares_channel init_client(int optmask, struct ares_addr_node *servers) {
     }
   }
 
-  queue_init(&queries, MAX_QUERIES);
+  mqueue_init(&replies, MAX_QUERIES);
+
+  pthread_mutex_init(&channel_mutex, NULL);
+
+  /* Thread launching */
+  status = pthread_create(client_consumer_thread, NULL, client_consumer_main, NULL);
+  if (status) {
+    perror("Cannot create client consumer thread");
+    goto out_cleanup_queue_mutex;
+  }
+  status = pthread_create(client_producer_thread, NULL, client_producer_main, NULL);
+  if (status) {
+    perror("Cannot create client producer thread");
+    goto out_cleanup_queue_mutex;
+  }
 
 out:
-  return channel;
+  return status;
+out_cleanup_queue_mutex:
+  mqueue_destroy(&replies);
+  pthread_mutex_destroy(&channel_mutex);
 out_cleanup_cares:
   ares_library_cleanup();
 out_err:
@@ -128,8 +168,8 @@ out_err:
   goto out;
 }
 
-void close_client(ares_channel channel) {
-  queue_destroy(&queries);
+void close_client() {
+  mqueue_destroy(&replies);
   if (channel) {
     ares_destroy(channel);
     channel = NULL;

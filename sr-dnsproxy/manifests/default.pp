@@ -105,6 +105,16 @@ exec { 'c-ares-config':
   creates => $cares_path,
 }
 
+# OVSDB
+package { 'ovsdb-client':
+  require => Exec['apt-update'],
+  ensure => installed,
+}
+package { 'ovsdb-server':
+  require => Exec['apt-update'],
+  ensure => installed,
+}
+
 # Miscellaneous
 package { 'wireshark':
   require => Exec['apt-update'],

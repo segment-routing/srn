@@ -6,7 +6,6 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <netdb.h>
-#include <signal.h>
 #include <errno.h>
 
 #include <ares.h>
@@ -14,109 +13,94 @@
 
 #include "proxy.h"
 
-#define T_OPT_OPCODE_APP_NAME 65001
-#define T_OPT_OPCODE_BANDWIDTH 65002
-#define T_OPT_OPCODE_LATENCY 65003
-
-#define MAX_MAPPING_LENGTH 1024
-
-#define TIMEOUT_LOOP 1 /* (sec) */
-
-struct mapping_qid *mapping [MAX_MAPPING_LENGTH];
+pthread_t server_producer_thread;
+pthread_t server_consumer_thread;
+pthread_t client_producer_thread;
+pthread_t client_consumer_thread;
+pthread_t monitor_flowreqs_thread;
+pthread_t monitor_flows_thread;
 
 volatile sig_atomic_t stop;
 
-void inthand(__attribute__((unused)) int signum) {
+void inthand(int signum) {
+
+  if (signum == SIGINT) {
     stop = 1;
-}
 
-static void add_srh() {
-  struct reply *reply = NULL;
-  /* TODO Temp: adds the SRH to the reply and forward to the other queue */
-  /* TODO It is better to do it with callbacks and a way to check wether something new is available */
-  if (!queue_is_empty(&replies)) {
-    queue_walk_dequeue(&replies, reply, struct reply *) {
-      // TODO Add SRH to reply
-      // TODO DNS_HEADER_SET_ARCOUNT(replies->data, DNS_HEADER_ARCOUNT(replies->data) + 1);
-      queue_append(&replies_with_srh, (struct node *) reply);
-    }
+    /* Unblocking threads waiting for these queues */
+    mqueue_close(&queries, 1, 1);
+    mqueue_close(&replies, 1, 1);
+    mqueue_close(&replies_waiting_controller, 1, 1);
+
+    /* Unblocking threads waiting for blocking system calls (e.g., select()) */
+    pthread_kill(server_producer_thread, SIGUSR1);
+    pthread_kill(server_consumer_thread, SIGUSR1);
+    pthread_kill(client_producer_thread, SIGUSR1);
+    pthread_kill(client_consumer_thread, SIGUSR1);
+    //pthread_kill(monitor_flowreqs_thread, SIGUSR1); TODO ADD !
+    pthread_kill(monitor_flows_thread, SIGUSR1);
+
+  } else if (signum == SIGUSR1) {
+    printf("Thread is stopped gracefully\n");
+  } else {
+    fprintf(stderr, "Does not understand signal number %d\n", signum);
   }
-}
-
-static int receive_and_forward_loop(int server_sfd, ares_channel channel) {
-
-  int err = 0;
-
-  int nfds = 0;
-  int ares_nfds = 0;
-  int server_nfds = 0;
-
-  fd_set read_fds, write_fds;
-  struct timeval timeout;
-
-  for (;!stop;) {
-
-    FD_ZERO(&read_fds);
-    FD_ZERO(&write_fds);
-    timeout.tv_sec = TIMEOUT_LOOP;
-    timeout.tv_usec = 0;
-
-    server_nfds = server_fds(server_sfd, &read_fds, &write_fds);
-    ares_nfds = ares_fds(channel, &read_fds, &write_fds);
-    nfds = (ares_nfds > server_nfds) ? ares_nfds : server_nfds;
-
-    err = select(nfds, &read_fds, &write_fds, NULL, &timeout);
-    if (err < 0) {
-      perror("Select fail");
-      goto out_err;
-    }
-
-    server_process(server_sfd, &read_fds, &write_fds);
-    client_process(channel, &read_fds, &write_fds);
-    add_srh();
-  }
-
-out:
-  close_server(server_sfd);
-  close_client(channel);
-  close_monitor();
-  return err;
-out_err:
-  err = -1;
-  goto out;
 }
 
 int main(int argc, char *argv[]) {
 
   int err = EXIT_SUCCESS;
 
+  sigset_t set;
+  struct sigaction sa;
+
+	struct monitor_arg args[3];
+
   char *listen_port = NULL;
   struct ares_addr_node *servers = NULL;
   char *remote_port = NULL;
 
-  int server_sfd = -1;
-
   int optmask = ARES_OPT_FLAGS;
-  ares_channel channel = NULL;
 
   if (parse_arguments(argc, argv, &optmask, &listen_port, &remote_port, &servers)) {
     goto out_err;
   }
 
-  /* Setup of the listening socket */
-  server_sfd = init_server(listen_port);
-  if (server_sfd < 0) {
+  /* Block SIGINT here to make this property inherited by the child process */
+  sigemptyset(&set);
+  sigaddset(&set, SIGINT);
+  err = pthread_sigmask(SIG_BLOCK, &set, NULL);
+  if (err) {
+    perror("Cannot block SIGINT");
     goto out_err_free_args;
   }
 
-  /* Setup of the c-ares request library */
-  channel = init_client(optmask, servers);
-  if (!channel) {
+  /* Allow threads to be interrupted by SIGUSR1 */
+  sa.sa_handler = inthand;
+  sa.sa_flags = 0;
+  sigemptyset(&sa.sa_mask);
+  if (sigaction(SIGUSR1, &sa, NULL) == -1) {
+    perror("Cannot change handling of SIGUSR1 signal");
+    goto out_err;
+  }
+
+  /* Setup of the controller monitoring */
+  err = init_monitor(listen_port, args, &monitor_flowreqs_thread, &monitor_flows_thread);
+  if (err) {
     goto out_err_free_args;
   }
 
-  /* Setup controller monitoring */
-  init_monitor();
+  /* Setup of the client threads */
+  err = init_client(optmask, servers, &client_consumer_thread, &client_producer_thread);
+  if (err) {
+    goto out_err_free_args;
+  }
+
+  /* Setup of the server threads */
+  err = init_server(&server_consumer_thread, &server_producer_thread);
+  if (err) {
+    goto out_err_free_args;
+  }
 
   /* Get rid of memory allocated for arguments */
   FREE_POINTER(listen_port);
@@ -124,13 +108,33 @@ int main(int argc, char *argv[]) {
   destroy_addr_list(servers);
   servers = NULL;
 
-  /* Gracefully kill the program when SIGINT is received */
-  signal(SIGINT, inthand);
-
-  /* Do the proxy */
-  if (receive_and_forward_loop(server_sfd, channel) == -1) {
+  /* Allow SIGINT */
+  sigemptyset(&set);
+  sigaddset(&set, SIGINT);
+  err = pthread_sigmask(SIG_UNBLOCK, &set, NULL);
+  if (err) {
+    perror("Cannot unblock SIGINT");
     goto out_err;
   }
+
+  /* Gracefully kill the program when SIGINT is received */
+  sa.sa_flags = SA_RESTART;
+  if (sigaction(SIGINT, &sa, NULL) == -1) {
+    perror("Cannot change handling of SIGINT signal");
+    goto out_err;
+  }
+
+  /* Wait fo threads to finish */
+  pthread_join(server_consumer_thread, NULL);
+  pthread_join(server_producer_thread, NULL);
+  pthread_join(client_consumer_thread, NULL);
+  pthread_join(client_producer_thread, NULL);
+  pthread_join(monitor_flowreqs_thread, NULL);
+  pthread_join(monitor_flows_thread, NULL);
+
+  close_server();
+  close_client();
+  close_monitor();
 
 out:
   exit(err);

@@ -1,12 +1,16 @@
 #ifndef PROXY__H
 #define PROXY__H
 
+#include <unistd.h>
 #include <stdlib.h>
 #include <sys/select.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <signal.h>
 
 #include <ares.h>
+
+#include <srdb.h>
 
 #include "linked_list.h"
 
@@ -22,6 +26,16 @@
 
 #define MAX_QUERIES 50000 /* TODO Change by parameter */
 
+#define TIMEOUT_LOOP 1 /* (sec) */
+
+#define C_IN 1
+#define T_AAAA 28
+#define DNS_RR_NAME_OFFSET 12
+
+#define T_OPT_OPCODE_APP_NAME 65001
+#define T_OPT_OPCODE_BANDWIDTH 65002
+#define T_OPT_OPCODE_LATENCY 65003
+
 struct mapping_qid;
 
 struct query {
@@ -29,6 +43,9 @@ struct query {
   struct sockaddr_in6 addr;
   socklen_t addr_len;
   size_t length;
+  int bandwidth_req;
+  int latency_req;
+  const char *app_name_req;
   char data [0];
 };
 
@@ -39,12 +56,37 @@ struct reply {
   size_t data_length;
   size_t buffer_size;
   uint16_t additional_record_count;
+  int bandwidth_req;
+  int latency_req;
+  const char *app_name_req;
+  char ovsdb_req_uuid[SLEN + 1];
   char data [0];
 };
 
+struct callback_args {
+  uint16_t qid;
+  struct sockaddr_in6 addr;
+  socklen_t addr_len;
+  int bandwidth_req;
+  int latency_req;
+  const char *app_name_req;
+};
+
+struct monitor_arg {
+	struct srdb *srdb;
+	struct srdb_table *table;
+	const char *columns;
+};
+
+extern volatile sig_atomic_t stop;
 extern struct queue_thread queries;
 extern struct queue_thread replies;
-extern struct queue_thread replies_with_srh;
+extern struct queue_thread replies_waiting_controller;
+
+pthread_mutex_t channel_mutex;
+extern ares_channel channel;
+extern int server_sfd;
+extern struct srdb *srdb;
 
 #define MAX_DNS_PACKET_SIZE 512 /* TODO Advertize value with EDNS0 */
 #define MAX_SRH_RR_SIZE 100 /* TODO Discuss */
@@ -78,16 +120,14 @@ static inline void append_addr_list(struct ares_addr_node **head, struct ares_ad
 
 int parse_arguments(int argc, char *argv[], int *optmask, char **listen_port, char **remote_port, struct ares_addr_node **servers);
 
-int init_server(const char *listen_port);
-int server_fds(int server_sfd, fd_set *read_fds, fd_set *write_fds);
-void server_process(int server_sfd, fd_set *read_fds, fd_set *write_fds);
-void close_server(int server_sfd);
+int init_server(pthread_t *server_consumer_thread, pthread_t *server_producer_thread);
+void close_server();
+void client_callback(void *arg, int status, __attribute__((unused)) int timeouts, unsigned char *abuf, int alen);
 
-ares_channel init_client(int optmask, struct ares_addr_node *servers);
-void client_process(ares_channel channel, fd_set *read_fds, fd_set *write_fds);
-void close_client(ares_channel channel);
+int init_client(int optmask, struct ares_addr_node *servers, pthread_t *client_consumer_thread, pthread_t *client_producer_thread);
+void close_client();
 
-void init_monitor();
+int init_monitor(const char *listen_port, struct monitor_arg *args, pthread_t *monitor_flowreqs_thread, pthread_t *monitor_flows_thread);
 void close_monitor();
 
 #endif /* PROXY__H */
