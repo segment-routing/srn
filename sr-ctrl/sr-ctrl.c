@@ -75,7 +75,8 @@ static int set_status(struct srdb_flowreq_entry *req, enum flowreq_status st)
 	return srdb_update(_cfg.srdb, tbl, (struct srdb_entry *)req, "status");
 }
 
-static int commit_flow(struct router *rt, struct flow *fl)
+static int commit_flow(struct srdb_flowreq_entry *req, struct router *rt,
+		       struct flow *fl)
 {
 	struct srdb_flow_entry flow_entry;
 	char addr[INET6_ADDRSTRLEN];
@@ -124,6 +125,8 @@ static int commit_flow(struct router *rt, struct flow *fl)
 	flow_entry.delay = fl->delay;
 	flow_entry.ttl = fl->ttl;
 	flow_entry.idle = fl->idle;
+
+	memcpy(flow_entry.request_uuid, req->_row, SLEN);
 
 	ret = srdb_insert(_cfg.srdb,
 			  srdb_table_by_name(_cfg.srdb->tables, "FlowState"),
@@ -331,7 +334,7 @@ static void read_flowreq(struct srdb_entry *entry)
 	hmap_unlock(rt->flows);
 
 	set_status(req, STATUS_ALLOWED);
-	commit_flow(rt, fl);
+	commit_flow(req, rt, fl);
 }
 
 static void read_nodestate(struct srdb_entry *entry)
