@@ -6,6 +6,7 @@
 
 #define __unused __attribute__((unused))
 #define pr_err(arg, ...) { fprintf(stderr, "%s: " arg "\n", __func__, ##__VA_ARGS__); }
+#define offsetof(type, member)  __builtin_offsetof (type, member)
 
 void strip_crlf(char *line);
 void remove_trail(char *line);

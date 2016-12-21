@@ -10,6 +10,7 @@
 #include "rules.h"
 #include "hashmap.h"
 #include "graph.h"
+#include "lpm.h"
 
 /* lookup usecases:
  * - access control at source (in/out)
@@ -59,22 +60,19 @@ struct config {
 	struct rule *defrule;
 	struct graph *graph;
 	struct hashmap *routers;
+	struct lpm_tree *prefixes;
 };
 
 static struct config _cfg;
 
 static int set_status(struct srdb_flowreq_entry *req, enum flowreq_status st)
 {
-	struct srdb_descriptor desc;
 	struct srdb_table *tbl;
 
-	desc.name = "status";
-	desc.type = SRDB_INT;
-	desc.data = &st;
-
 	tbl = srdb_table_by_name(_cfg.srdb->tables, "FlowReq");
+	req->status = st;
 
-	return srdb_update(_cfg.srdb, tbl, (struct srdb_entry *)req, &desc);
+	return srdb_update(_cfg.srdb, tbl, (struct srdb_entry *)req, "status");
 }
 
 static int commit_flow(struct router *rt, struct flow *fl)
@@ -97,15 +95,22 @@ static int commit_flow(struct router *rt, struct flow *fl)
 
 	for (i = 0; i < fl->segs->elem_count; i++) {
 		struct segment *s;
-		struct router *r;
+		struct in6_addr *seg_addr;
 
 		s = alist_elem(fl->segs, i);
-		if (!s->adjacency)
-			r = s->node->data;
-		else
-			r = s->edge->remote->data;
+		if (!s->adjacency) {
+			struct router *r;
 
-		inet_ntop(AF_INET6, &r->addr, addr, INET6_ADDRSTRLEN);
+			r = s->node->data;
+			seg_addr = &r->addr;
+		} else {
+			struct link *l;
+
+			l = s->edge->data;
+			seg_addr = &l->remote;
+		}
+
+		inet_ntop(AF_INET6, seg_addr, addr, INET6_ADDRSTRLEN);
 
 		snprintf(flow_entry.segments, fl->segs->elem_count *
 			 INET6_ADDRSTRLEN, "%s%s%c", flow_entry.segments, addr,
@@ -189,12 +194,12 @@ static struct arraylist *build_segpath(struct graph *g, struct flow *fl,
 	if (fl->delay)
 		graph_prune(gc, prune_delay, (void *)(uintptr_t)fl->delay);
 
-	cur_node = fl->srcnode;
+	cur_node = fl->srcrt->node;
 
 	if (via)
 		alist_append(path, via);
 
-	alist_insert(path, &fl->dstnode);
+	alist_insert(path, &fl->dstrt->node);
 
 	for (i = 0; i < path->elem_count; i++) {
 		struct arraylist *tmp_paths, *tmp_path, *rev_path;
@@ -215,7 +220,7 @@ static struct arraylist *build_segpath(struct graph *g, struct flow *fl,
 		rev_path = alist_copy_reverse(tmp_path);
 		alist_insert_at(rev_path, &cur_node, 0);
 
-		if (graph_minseg(gc, rev_path, res) < 0)
+		if (graph_minseg(g, rev_path, res) < 0)
 			goto out_error;
 
 		/* append waypoint segment only if there is no adjacency
@@ -246,12 +251,12 @@ out_error:
 	return NULL;
 }
 
-static void process_request(struct srdb_entry *entry)
+static void read_flowreq(struct srdb_entry *entry)
 {
 	struct srdb_flowreq_entry *req = (struct srdb_flowreq_entry *)entry;
+	struct router *rt, *dstrt;
 	enum flowreq_status rstat;
-	struct arraylist *segs;
-	struct router *rt;
+	struct in6_addr addr;
 	struct rule *rule;
 	struct flow *fl;
 
@@ -291,16 +296,27 @@ static void process_request(struct srdb_entry *entry)
 	rt = hmap_get(_cfg.routers, req->router);
 	if (!rt) {
 		free(fl);
-		set_status(req, STATUS_ERROR);
+		set_status(req, STATUS_NOROUTER);
 		return;
 	}
 
+	inet_pton(AF_INET6, req->dstaddr, &addr);
+	dstrt = lpm_lookup(_cfg.prefixes, &addr);
+	if (!dstrt) {
+		free(fl);
+		set_status(req, STATUS_NOPREFIX);
+		return;
+	}
+
+	fl->srcrt = rt;
+	fl->dstrt = dstrt;
+
 	if (fl->bw || fl->delay || rule->path) {
 		graph_read_lock(_cfg.graph);
-		segs = build_segpath(_cfg.graph, fl, rule->path);
+		fl->segs = build_segpath(_cfg.graph, fl, rule->path);
 		graph_unlock(_cfg.graph);
 
-		if (!segs) {
+		if (!fl->segs) {
 			free(fl);
 			set_status(req, STATUS_UNAVAILABLE);
 			return;
@@ -314,6 +330,89 @@ static void process_request(struct srdb_entry *entry)
 
 	set_status(req, STATUS_ALLOWED);
 	commit_flow(rt, fl);
+}
+
+static void read_nodestate(struct srdb_entry *entry)
+{
+	struct srdb_nodestate_entry *node_entry;
+	struct router *rt;
+	struct prefix p;
+	char **vargs;
+	char **pref;
+	int vargc;
+
+	node_entry = (struct srdb_nodestate_entry *)entry;
+
+	rt = hmap_get(_cfg.routers, node_entry->name);
+	if (rt) {
+		pr_err("duplicate router entry `%s'.", node_entry->name);
+		return;
+	}
+
+	rt = calloc(1, sizeof(*rt));
+	if (!rt)
+		return;
+
+	memcpy(rt->name, node_entry->name, SLEN);
+	inet_pton(AF_INET6, node_entry->addr, &rt->addr);
+	inet_pton(AF_INET6, node_entry->pbsid, &rt->pbsid);
+
+	rt->prefixes = alist_new(sizeof(struct prefix));
+
+	vargs = strsplit(node_entry->prefix, &vargc, ',');
+	for (pref = vargs; *pref; pref++) {
+		char *s;
+
+		s = strchr(*pref, '/');
+		*s++ = 0;
+		inet_pton(AF_INET6, *pref, &p.addr);
+		p.len = atoi(s);
+		alist_insert(rt->prefixes, &p);
+
+		lpm_insert(_cfg.prefixes, &p.addr, p.len, rt);
+	}
+	free(vargs);
+
+	rt->flows = hmap_new(hash_in6, compare_in6);
+
+	graph_write_lock(_cfg.graph);
+	rt->node = graph_add_node(_cfg.graph, rt);
+	graph_unlock(_cfg.graph);
+
+	hmap_set(_cfg.routers, rt->name, rt);
+}
+
+static void read_linkstate(struct srdb_entry *entry)
+{
+	struct srdb_linkstate_entry *link_entry;
+	struct router *rt1, *rt2;
+	struct link *link;
+	struct edge *edge;
+
+	link_entry = (struct srdb_linkstate_entry *)entry;
+
+	link = calloc(1, sizeof(*link));
+	if (!link)
+		return;
+
+	rt1 = hmap_get(_cfg.routers, link_entry->name1);
+	rt2 = hmap_get(_cfg.routers, link_entry->name2);
+	if (!rt1 || !rt2) {
+		pr_err("unknown router entry for link (`%s', `%s').",
+		       link_entry->name1, link_entry->name2);
+		return;
+	}
+
+	inet_pton(AF_INET6, link_entry->addr1, &link->local);
+	inet_pton(AF_INET6, link_entry->addr2, &link->remote);
+	link->bw = link_entry->bw;
+	link->ava_bw = link_entry->ava_bw;
+	link->delay = link_entry->delay;
+
+	graph_write_lock(_cfg.graph);
+	edge = graph_add_edge(_cfg.graph, rt1->node, rt2->node, true, link);
+	edge->metric = (uint32_t)link_entry->metric ?: UINT32_MAX;
+	graph_unlock(_cfg.graph);
 }
 
 #define READ_STRING(b, arg, dst) sscanf(b, #arg " \"%[^\"]\"", (dst)->arg)
@@ -347,11 +446,57 @@ static int load_config(const char *fname, struct config *cfg)
 	return ret;
 }
 
+struct monitor_arg {
+	struct srdb *srdb;
+	struct srdb_table *table;
+	const char *columns;
+};
+
+static void *thread_monitor(void *_arg)
+{
+	struct monitor_arg *arg = _arg;
+	int ret;
+
+	ret = srdb_monitor(arg->srdb, arg->table, arg->columns);
+
+	return (void *)(intptr_t)ret;
+}
+
+static void launch_srdb(pthread_t *thr)
+{
+	struct monitor_arg args[3];
+	struct srdb_table *tbl;
+
+	tbl = srdb_table_by_name(_cfg.srdb->tables, "FlowReq");
+	srdb_set_read_cb(_cfg.srdb, "FlowReq", read_flowreq);
+	args[0].srdb = _cfg.srdb;
+	args[0].table = tbl;
+	args[0].columns = "!initial,!delete,!modify";
+
+	pthread_create(&thr[0], NULL, thread_monitor, (void *)&args[0]);
+
+	tbl = srdb_table_by_name(_cfg.srdb->tables, "NodeState");
+	srdb_set_read_cb(_cfg.srdb, "NodeState", read_nodestate);
+	args[1].srdb = _cfg.srdb;
+	args[1].table = tbl;
+	args[1].columns = "";
+
+	pthread_create(&thr[1], NULL, thread_monitor, (void *)&args[1]);
+
+	tbl = srdb_table_by_name(_cfg.srdb->tables, "LinkState");
+	srdb_set_read_cb(_cfg.srdb, "LinkState", read_linkstate);
+	args[2].srdb = _cfg.srdb;
+	args[2].table = tbl;
+	args[2].columns = "";
+
+	pthread_create(&thr[2], NULL, thread_monitor, (void *)&args[2]);
+}
+
 int main(int argc, char **argv)
 {
 	const char *conf = DEFAULT_CONFIG;
-	struct srdb_table *flowreq_tbl;
-	int ret;
+	pthread_t mon_thr[3];
+	unsigned int i;
 
 	if (argc > 2) {
 		fprintf(stderr, "Usage: %s [configfile]\n", argv[0]);
@@ -374,16 +519,32 @@ int main(int argc, char **argv)
 
 	_cfg.srdb = srdb_new(&_cfg.ovsdb_conf);
 	if (!_cfg.srdb) {
-		pr_err("failed to initialize SRDB.\n");
+		pr_err("failed to initialize SRDB.");
 		return -1;
 	}
 
-	flowreq_tbl = srdb_table_by_name(_cfg.srdb->tables, "FlowReq");
-	flowreq_tbl->read = process_request;
+	_cfg.graph = graph_new();
+	if (!_cfg.graph) {
+		pr_err("failed to initialize network graph.");
+		return -1;
+	}
 
-	ret = srdb_monitor(_cfg.srdb, flowreq_tbl, "!initial,!delete,!modify");
+	_cfg.routers = hmap_new(hash_str, compare_str);
+	if (!_cfg.routers) {
+		pr_err("failed to initialize routers map.");
+		return -1;
+	}
 
-	printf("ret: %d\n", ret);
+	_cfg.prefixes = lpm_new();
+	if (!_cfg.prefixes) {
+		pr_err("failed to initialize prefix tree.");
+		return -1;
+	}
+
+	launch_srdb(mon_thr);
+
+	for (i = 0; i < sizeof(mon_thr) / sizeof(pthread_t); i++)
+		pthread_join(mon_thr[i], NULL);
 
 	srdb_destroy(_cfg.srdb);
 

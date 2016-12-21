@@ -58,7 +58,7 @@
         "addr2": {
           "type": "string"},
         "metric": {
-          "type": "string"},
+          "type": "integer"},
         "bw": {
           "type": "integer"},
         "ava_bw": {

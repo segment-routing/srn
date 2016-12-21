@@ -74,6 +74,8 @@ struct graph *graph_new(void)
 
 	pthread_rwlock_init(&g->lock, NULL);
 
+	g->dirty = true;
+
 	return g;
 }
 
@@ -125,6 +127,8 @@ struct node *graph_add_node(struct graph *g, void *data)
 	node->data = data;
 
 	alist_insert(g->nodes, &node);
+
+	g->dirty = true;
 
 	return node;
 }
@@ -178,6 +182,7 @@ void graph_remove_node(struct graph *g, struct node *node)
 	}
 
 	alist_remove(g->nodes, i);
+	g->dirty = true;
 }
 
 struct node *graph_get_node(struct graph *g, unsigned int id)
@@ -228,6 +233,8 @@ struct edge *graph_add_edge(struct graph *g, struct node *local,
 
 	alist_insert(g->edges, &edge);
 
+	g->dirty = true;
+
 	return edge;
 }
 
@@ -240,6 +247,7 @@ void graph_remove_edge(struct graph *g, struct edge *edge)
 		return;
 
 	alist_remove(g->edges, i);
+	g->dirty = true;
 }
 
 static struct edge *graph_get_minimal_edge(struct graph *g, struct node *local,
@@ -422,6 +430,9 @@ static void __graph_dijkstra(struct graph *g, struct node *src,
 	 * prev: node -> arraylist(node)
 	 * path: node -> arraylist(arraylist(node))
 	 */
+
+	if (g->dirty)
+		graph_finalize(g);
 
 	dist = hmap_new(hash_node, compare_node);
 	prev = hmap_new(hash_node, compare_node);

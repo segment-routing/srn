@@ -9,15 +9,16 @@
 enum srdb_type {
 	SRDB_STR,
 	SRDB_INT,
+	SRDB_VARSTR,
 };
 
 struct srdb_descriptor {
 	const char *name;
 	enum srdb_type type;
-	void *data;
 	int index;
 	size_t maxlen;
 	bool builtin;
+	off_t offset;
 };
 
 struct srdb_entry {
@@ -32,8 +33,9 @@ struct srdb_table {
 	struct srdb_descriptor *desc;
 	size_t desc_size;
 	size_t entry_size;
-	void (*fill)(struct srdb_descriptor *, struct srdb_entry *);
 	void (*read)(struct srdb_entry *);
+	void (*read_update)(struct srdb_entry *, struct srdb_entry *);
+	struct srdb_entry *update_entry;
 };
 
 struct ovsdb_config {
@@ -58,14 +60,12 @@ struct srdb_flow_entry {
 	char destination[SLEN + 1];
 	char bsid[SLEN + 1];
 	char *segments;
-	int __nsegs;
 	int bandwidth;
 	int delay;
 	int policing;
 	char source[SLEN + 1];
 	char router[SLEN + 1];
 	char interface[SLEN + 1];
-	int reverse;
 	char reverse_flow_uuid[SLEN + 1];
 	char request_uuid[SLEN + 1];
 	int ttl;
@@ -84,11 +84,13 @@ struct srdb_flowreq_entry {
 };
 
 enum flowreq_status {
-	STATUS_PENDING = 0,
-	STATUS_ALLOWED = 1,
-	STATUS_DENIED = 2,
-	STATUS_UNAVAILABLE = 3,
-	STATUS_ERROR = 4,
+	STATUS_PENDING		= 0,
+	STATUS_ALLOWED		= 1,
+	STATUS_DENIED		= 2,
+	STATUS_UNAVAILABLE	= 3,
+	STATUS_ERROR		= 4,
+	STATUS_NOROUTER		= 6,
+	STATUS_NOPREFIX		= 7,
 };
 
 struct srdb_linkstate_entry {
@@ -122,6 +124,7 @@ struct router {
 	char name[SLEN + 1];
 	struct in6_addr addr;
 	struct prefix pbsid;
+	struct arraylist *prefixes;
 	struct hashmap *flows;
 	struct node *node;
 };
@@ -138,8 +141,8 @@ struct flow {
 	struct in6_addr bsid;
 	char src[SLEN + 1];
 	char dst[SLEN + 1];
-	struct node *srcnode;
-	struct node *dstnode;
+	struct router *srcrt;
+	struct router *dstrt;
 	struct arraylist *segs;
 	uint32_t bw;
 	uint32_t delay;
@@ -150,7 +153,7 @@ struct flow {
 int srdb_monitor(struct srdb *srdb, struct srdb_table *tbl,
 		 const char *columns);
 int srdb_update(struct srdb *srdb, struct srdb_table *tbl,
-		struct srdb_entry *entry, struct srdb_descriptor *desc);
+		struct srdb_entry *entry, const char *fieldname);
 int srdb_insert(struct srdb *srdb, struct srdb_table *tbl,
 		struct srdb_entry *entry);
 
@@ -160,5 +163,7 @@ struct srdb_table *srdb_table_by_name(struct srdb_table *tables,
 				      const char *name);
 struct srdb *srdb_new(const struct ovsdb_config *conf);
 void srdb_destroy(struct srdb *srdb);
+void srdb_set_read_cb(struct srdb *srdb, const char *table,
+		      void (*cb)(struct srdb_entry *));
 
 #endif

@@ -149,8 +149,10 @@ static void fill_srdb_index(struct srdb_descriptor *desc, char **vargs)
 	}
 }
 
-static void fill_srdb_entry(struct srdb_descriptor *desc, char **vargs)
+static void fill_srdb_entry(struct srdb_descriptor *desc,
+			    struct srdb_entry *entry, char **vargs)
 {
+	void *data;
 	int i, idx;
 
 	for (i = 0; *vargs; vargs++, i++) {
@@ -158,15 +160,36 @@ static void fill_srdb_entry(struct srdb_descriptor *desc, char **vargs)
 		if (idx < 0)
 			continue;
 
+		data = (unsigned char *)entry + desc->offset;
+
 		switch (desc[idx].type) {
 		case SRDB_STR:
-			strncpy((char *)desc[idx].data, *vargs, desc[idx].maxlen);
+			strncpy((char *)data, *vargs, desc[idx].maxlen);
 			break;
 		case SRDB_INT:
-			*(int *)desc[idx].data = strtol(*vargs, NULL, 10);
+			*(int *)data = strtol(*vargs, NULL, 10);
+			break;
+		case SRDB_VARSTR:
+			*(char **)data = strndup(*vargs, desc[idx].maxlen);
 			break;
 		}
 	}
+}
+
+static void free_srdb_entry(struct srdb_descriptor *desc,
+			    struct srdb_entry *entry)
+{
+	struct srdb_descriptor *tmp;
+
+	for (tmp = desc; tmp->name; tmp++) {
+		void *data = (unsigned char *)entry + desc->offset;
+
+		if (tmp->type == SRDB_VARSTR)
+			free(data);
+	}
+
+	free(desc);
+	free(entry);
 }
 
 static char *normalize_rowbuf(const char *buf)
@@ -192,82 +215,247 @@ static char *normalize_rowbuf(const char *buf)
 	return buf2;
 }
 
+#define SRDB_BUILTIN_ENTRIES()					\
+	{							\
+		.name	= "row",				\
+		.type	= SRDB_STR,				\
+		.maxlen	= SLEN,					\
+		.builtin = true,				\
+		.offset	= offsetof(struct srdb_entry, row),	\
+	},							\
+	{							\
+		.name	= "action",				\
+		.type	= SRDB_STR,				\
+		.maxlen	= SLEN,					\
+		.builtin = true,				\
+		.offset	= offsetof(struct srdb_entry, action),	\
+	},							\
+	{							\
+		.name	= "_version",				\
+		.type	= SRDB_STR,				\
+		.maxlen	= SLEN,					\
+		.builtin = true,				\
+		.offset = offsetof(struct srdb_entry, version),	\
+	}
+
+#define OFFSET_FLOWREQ(NAME)	offsetof(struct srdb_flowreq_entry, NAME)
 static struct srdb_descriptor flowreq_desc_tmpl[] = {
-	{
-		.name	= "row",
-		.type	= SRDB_STR,
-		.maxlen	= SLEN,
-		.builtin = true,
-	},
-	{
-		.name	= "action",
-		.type	= SRDB_STR,
-		.maxlen	= SLEN,
-		.builtin = true,
-	},
-	{
-		.name	= "_version",
-		.type	= SRDB_STR,
-		.maxlen	= SLEN,
-		.builtin = true,
-	},
+	SRDB_BUILTIN_ENTRIES(),
+
 	{
 		.name	= "destination",
 		.type	= SRDB_STR,
 		.maxlen	= SLEN,
+		.offset	= OFFSET_FLOWREQ(destination),
 	},
 	{
 		.name	= "dstaddr",
 		.type	= SRDB_STR,
 		.maxlen	= SLEN,
+		.offset	= OFFSET_FLOWREQ(dstaddr),
 	},
 	{
 		.name	= "source",
 		.type	= SRDB_STR,
 		.maxlen	= SLEN,
+		.offset	= OFFSET_FLOWREQ(source),
 	},
 	{
 		.name	= "bandwidth",
 		.type	= SRDB_INT,
 		.maxlen	= sizeof(int),
+		.offset	= OFFSET_FLOWREQ(bandwidth),
 	},
 	{
 		.name	= "delay",
 		.type	= SRDB_INT,
 		.maxlen	= sizeof(int),
+		.offset	= OFFSET_FLOWREQ(delay),
 	},
 	{
 		.name	= "router",
 		.type	= SRDB_STR,
 		.maxlen	= SLEN,
+		.offset = OFFSET_FLOWREQ(router),
 	},
 	{
 		.name	= "status",
 		.type	= SRDB_INT,
 		.maxlen	= sizeof(int),
+		.offset	= OFFSET_FLOWREQ(status),
 	},
 	{
 		.name	= NULL,
 	},
 };
 
-static inline void fill_flowreq_desc(struct srdb_descriptor *desc,
-				     struct srdb_entry *entry)
-{
-	struct srdb_flowreq_entry *req = (struct srdb_flowreq_entry *)entry;
+#define OFFSET_FLOWSTATE(NAME)	offsetof(struct srdb_flow_entry, NAME)
+static struct srdb_descriptor flowstate_desc_tmpl[] = {
+	SRDB_BUILTIN_ENTRIES(),
 
-	desc[0].data = req->_row;
-	desc[1].data = req->_action;
-	desc[2].data = req->_version;
+	{
+		.name	= "destination",
+		.type	= SRDB_STR,
+		.maxlen	= SLEN,
+		.offset	= OFFSET_FLOWSTATE(destination),
+	},
+	{
+		.name	= "bsid",
+		.type	= SRDB_STR,
+		.maxlen	= SLEN,
+		.offset	= OFFSET_FLOWSTATE(bsid),
+	},
+	{
+		.name	= "segments",
+		.type	= SRDB_VARSTR,
+		.maxlen	= BUFLEN,
+		.offset	= OFFSET_FLOWSTATE(segments),
+	},
+	{
+		.name	= "bandwidth",
+		.type	= SRDB_INT,
+		.offset	= OFFSET_FLOWSTATE(bandwidth),
+	},
+	{
+		.name	= "delay",
+		.type	= SRDB_INT,
+		.offset	= OFFSET_FLOWSTATE(delay),
+	},
+	{
+		.name	= "policing",
+		.type	= SRDB_INT,
+		.offset	= OFFSET_FLOWSTATE(policing),
+	},
+	{
+		.name	= "source",
+		.type	= SRDB_STR,
+		.maxlen	= SLEN,
+		.offset	= OFFSET_FLOWSTATE(source),
+	},
+	{
+		.name	= "router",
+		.type	= SRDB_STR,
+		.maxlen	= SLEN,
+		.offset	= OFFSET_FLOWSTATE(router),
+	},
+	{
+		.name	= "interface",
+		.type	= SRDB_STR,
+		.maxlen	= SLEN,
+		.offset	= OFFSET_FLOWSTATE(interface),
+	},
+	{
+		.name	= "reverseFlow",
+		.type	= SRDB_STR,
+		.maxlen	= SLEN,
+		.offset	= OFFSET_FLOWSTATE(reverse_flow_uuid),
+	},
+	{
+		.name	= "request",
+		.type	= SRDB_STR,
+		.maxlen	= SLEN,
+		.offset	= OFFSET_FLOWSTATE(request_uuid),
+	},
+	{
+		.name	= "ttl",
+		.type	= SRDB_INT,
+		.offset	= OFFSET_FLOWSTATE(ttl),
+	},
+	{
+		.name	= "idle",
+		.type	= SRDB_INT,
+		.offset	= OFFSET_FLOWSTATE(idle),
+	},
+	{
+		.name	= NULL,
+	},
+};
 
-	desc[3].data = req->destination;
-	desc[4].data = req->dstaddr;
-	desc[5].data = req->source;
-	desc[6].data = &req->bandwidth;
-	desc[7].data = &req->delay;
-	desc[8].data = req->router;
-	desc[9].data = &req->status;
-}
+#define OFFSET_LINKSTATE(NAME)	offsetof(struct srdb_linkstate_entry, NAME)
+static struct srdb_descriptor linkstate_desc_tmpl[] = {
+	SRDB_BUILTIN_ENTRIES(),
+
+	{
+		.name	= "name1",
+		.type	= SRDB_STR,
+		.maxlen	= SLEN,
+		.offset	= OFFSET_LINKSTATE(name1),
+	},
+	{
+		.name	= "addr1",
+		.type	= SRDB_STR,
+		.maxlen	= SLEN,
+		.offset	= OFFSET_LINKSTATE(addr1),
+	},
+	{
+		.name	= "name2",
+		.type	= SRDB_STR,
+		.maxlen	= SLEN,
+		.offset	= OFFSET_LINKSTATE(name2),
+	},
+	{
+		.name	= "addr2",
+		.type	= SRDB_STR,
+		.maxlen	= SLEN,
+		.offset	= OFFSET_LINKSTATE(addr2),
+	},
+	{
+		.name	= "metric",
+		.type	= SRDB_INT,
+		.offset	= OFFSET_LINKSTATE(metric),
+	},
+	{
+		.name	= "bw",
+		.type	= SRDB_INT,
+		.offset	= OFFSET_LINKSTATE(bw),
+	},
+	{
+		.name	= "ava_bw",
+		.type	= SRDB_INT,
+		.offset	= OFFSET_LINKSTATE(ava_bw),
+	},
+	{
+		.name	= "delay",
+		.type	= SRDB_INT,
+		.offset	= OFFSET_LINKSTATE(delay),
+	},
+	{
+		.name	= NULL,
+	},
+};
+
+#define OFFSET_NODESTATE(NAME)	offsetof(struct srdb_nodestate_entry, NAME)
+static struct srdb_descriptor nodestate_desc_tmpl[] = {
+	SRDB_BUILTIN_ENTRIES(),
+
+	{
+		.name	= "name",
+		.type	= SRDB_STR,
+		.maxlen	= SLEN,
+		.offset	= OFFSET_NODESTATE(name),
+	},
+	{
+		.name	= "addr",
+		.type	= SRDB_STR,
+		.maxlen	= SLEN,
+		.offset	= OFFSET_NODESTATE(addr),
+	},
+	{
+		.name	= "prefix",
+		.type	= SRDB_VARSTR,
+		.maxlen	= BUFLEN,
+		.offset	= OFFSET_NODESTATE(prefix),
+	},
+	{
+		.name	= "pbsid",
+		.type	= SRDB_STR,
+		.maxlen	= SLEN,
+		.offset	= OFFSET_NODESTATE(pbsid),
+	},
+	{
+		.name	= NULL,
+	},
+};
 
 static struct srdb_table srdb_tables[] = {
 	{
@@ -275,7 +463,24 @@ static struct srdb_table srdb_tables[] = {
 		.entry_size	= sizeof(struct srdb_flowreq_entry),
 		.desc_tmpl	= flowreq_desc_tmpl,
 		.desc_size	= sizeof(flowreq_desc_tmpl),
-		.fill		= fill_flowreq_desc,
+	},
+	{
+		.name		= "FlowState",
+		.entry_size	= sizeof(struct srdb_flow_entry),
+		.desc_tmpl	= flowstate_desc_tmpl,
+		.desc_size	= sizeof(flowstate_desc_tmpl),
+	},
+	{
+		.name		= "LinkState",
+		.entry_size	= sizeof(struct srdb_linkstate_entry),
+		.desc_tmpl	= linkstate_desc_tmpl,
+		.desc_size	= sizeof(linkstate_desc_tmpl),
+	},
+	{
+		.name		= "NodeState",
+		.entry_size	= sizeof(struct srdb_nodestate_entry),
+		.desc_tmpl	= nodestate_desc_tmpl,
+		.desc_size	= sizeof(nodestate_desc_tmpl),
 	},
 	{
 		.name		= NULL,
@@ -329,9 +534,11 @@ static void srdb_read(const char *buf, void *arg)
 	struct srdb_descriptor *desc;
 	struct srdb_table *tbl = arg;
 	struct srdb_entry *entry;
+	char *action;
 	char **vargs;
 	char *buf2;
 	int vargc;
+	int idx;
 
 	if (!buf || !*buf)
 		return;
@@ -345,8 +552,6 @@ static void srdb_read(const char *buf, void *arg)
 		free(buf2);
 		return;
 	}
-
-	memset(&entry, 0, sizeof(entry));
 
 	if (!strcmp(*vargs, "row")) {
 		fill_srdb_index(tbl->desc, vargs);
@@ -370,16 +575,37 @@ static void srdb_read(const char *buf, void *arg)
 		return;
 	}
 
-	tbl->fill(desc, entry);
-	fill_srdb_entry(desc, vargs);
+	fill_srdb_entry(desc, entry, vargs);
 
-	free(desc);
 	free(vargs);
 	free(buf2);
 
-	tbl->read(entry);
+	idx = find_desc_fromname(desc, "action");
 
-	free(entry);
+	if (idx < 0) {
+		pr_err("field `action' not present in row.");
+		free_srdb_entry(desc, entry);
+		return;
+	}
+
+	action = (char *)entry + desc[idx].offset;
+
+	if (!strcmp(action, "insert") || !strcmp(action, "initial")) {
+		if (tbl->read)
+			tbl->read(entry);
+		free_srdb_entry(desc, entry);
+	} else if (!strcmp(action, "old")) {
+		tbl->update_entry = entry;
+	} else if (!strcmp(action, "new")) {
+		if (tbl->read_update)
+			tbl->read_update(tbl->update_entry, entry);
+		free(tbl->update_entry);
+		free_srdb_entry(desc, entry);
+		tbl->update_entry = NULL;
+	} else {
+		free_srdb_entry(desc, entry);
+		pr_err("unknown action type `%s'.", action);
+	}
 }
 
 int srdb_monitor(struct srdb *srdb, struct srdb_table *tbl, const char *columns)
@@ -392,18 +618,23 @@ int srdb_monitor(struct srdb *srdb, struct srdb_table *tbl, const char *columns)
 }
 
 static int write_desc_data(char *buf, size_t size,
-			   struct srdb_descriptor *desc)
+			   const struct srdb_descriptor *desc,
+			   struct srdb_entry *entry)
 {
 	int wr = -1;
+	void *data;
+
+	data = (unsigned char *)entry + desc->offset;
 
 	switch (desc->type) {
 	case SRDB_STR:
+	case SRDB_VARSTR:
 		wr = snprintf(buf, size, "\"%s\": \"%s\"", desc->name,
-			      (char *)desc->data);
+			      (char *)data);
 		break;
 	case SRDB_INT:
 		wr = snprintf(buf, size, "\"%s\": %d", desc->name,
-			      *(int *)desc->data);
+			      *(int *)data);
 		break;
 	}
 
@@ -411,12 +642,19 @@ static int write_desc_data(char *buf, size_t size,
 }
 
 int srdb_update(struct srdb *srdb, struct srdb_table *tbl,
-		struct srdb_entry *entry, struct srdb_descriptor *desc)
+		struct srdb_entry *entry, const char *fieldname)
 {
+	const struct srdb_descriptor *desc;
 	char field_update[SLEN + 1];
-	int ret;
+	int ret, idx;
 
-	write_desc_data(field_update, SLEN, desc);
+	idx = find_desc_fromname(tbl->desc, fieldname);
+	if (idx < 0)
+		return -1;
+
+	desc = &tbl->desc[idx];
+
+	write_desc_data(field_update, SLEN, desc, entry);
 
 	ret = ovsdb_update(&srdb->conf, tbl->name, entry->row, field_update);
 
@@ -426,35 +664,25 @@ int srdb_update(struct srdb *srdb, struct srdb_table *tbl,
 int srdb_insert(struct srdb *srdb, struct srdb_table *tbl,
 		struct srdb_entry *entry)
 {
-	struct srdb_descriptor *desc, *tmp;
+	const struct srdb_descriptor *tmp;
 	char fields[BUFLEN + 1];
-	int ret, wr = 0;
+	char field[SLEN + 1];
+	int ret;
 
-	desc = memdup(tbl->desc, tbl->desc_size);
-	if (!desc)
-		return -1;
-
-	tbl->fill(desc, entry);
-
-	for (tmp = desc; tmp->name; tmp++) {
-		if (tmp->data && !tmp->builtin) {
-			ret = write_desc_data(fields, BUFLEN - wr, tmp);
-			if (ret < 0) {
-				free(desc);
+	for (tmp = tbl->desc; tmp->name; tmp++) {
+		if (!tmp->builtin) {
+			ret = write_desc_data(field, SLEN, tmp, entry);
+			if (ret < 0)
 				return ret;
-			}
-			wr += ret;
+
+			snprintf(fields, BUFLEN, "%s%s%s", fields, field,
+				 ((tmp+1)->name) ? ", " : " ");
 		}
 	}
 
-	free(desc);
-
-	if (!wr)
-		return 0;
-
 	ret = ovsdb_insert(&srdb->conf, tbl->name, fields);
 
-	return 0;
+	return ret;
 }
 
 struct srdb *srdb_new(const struct ovsdb_config *conf)
@@ -480,4 +708,16 @@ void srdb_destroy(struct srdb *srdb)
 {
 	srdb_free_tables(srdb->tables);
 	free(srdb);
+}
+
+void srdb_set_read_cb(struct srdb *srdb, const char *table,
+		      void (*cb)(struct srdb_entry *))
+{
+	struct srdb_table *tbl;
+
+	tbl = srdb_table_by_name(srdb->tables, table);
+	if (!tbl)
+		return;
+
+	tbl->read = cb;
 }

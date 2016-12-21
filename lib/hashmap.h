@@ -2,8 +2,10 @@
 #define _HASHMAP_H
 
 #include <pthread.h>
+#include <linux/in6.h>
 
 #include "arraylist.h"
+#include "misc.h"
 
 #define HASHMAP_SIZE	5003
 
@@ -62,6 +64,19 @@ static inline unsigned int hash_str(void *key)
 		hash = ((hash << 5) + hash) + c;
 
 	return hash;
+}
+
+static inline int compare_in6(void *k1, void *k2)
+{
+	return memcmp(k1, k2, sizeof(struct in6_addr));
+}
+
+static inline unsigned int hash_in6(void *key)
+{
+	struct in6_addr *in6 = key;
+
+	return hashint(hashint(in6->s6_addr32[0]) ^ hashint(in6->s6_addr32[1]) ^
+		       hashint(in6->s6_addr32[2]) ^ hashint(in6->s6_addr32[3]));
 }
 
 #endif

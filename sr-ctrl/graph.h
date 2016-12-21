@@ -45,6 +45,7 @@ struct graph {
 	struct hashmap *min_edges;
 	struct hashmap *neighs;
 	pthread_rwlock_t lock;
+	bool dirty;
 };
 
 struct dres {
@@ -76,6 +77,7 @@ static inline void graph_finalize(struct graph *g)
 {
 	graph_compute_minimal_edges(g);
 	graph_compute_all_neighbors(g);
+	g->dirty = false;
 }
 
 static inline void graph_read_lock(struct graph *g)
