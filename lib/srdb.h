@@ -1,6 +1,7 @@
 #ifndef _SRDB_H
 #define _SRDB_H
 
+#include <string.h>
 #include <stdbool.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>

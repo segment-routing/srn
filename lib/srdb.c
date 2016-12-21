@@ -507,8 +507,9 @@ struct srdb_table *srdb_get_tables(void)
 void srdb_free_tables(struct srdb_table *tbl)
 {
 	struct srdb_table *tmp = tbl;
+	unsigned int i;
 
-	while (tmp->name) {
+	for (i = 0; i < sizeof(srdb_tables) / sizeof(struct srdb_table); i++) {
 		free(tmp->desc);
 		tmp++;
 	}
