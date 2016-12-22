@@ -40,9 +40,9 @@ static void server_producer_process(fd_set *read_fds) {
       FREE_POINTER(query);
     } else {
       query->length = (uint16_t) length;
-      query->bandwidth_req = 50000; /* TODO Extract */
-      query->latency_req = 50; /* TODO Extract */
-      query->app_name_req = "test.com"; /* TODO Extract */
+      query->bandwidth_req = 5; /* TODO Extract */
+      query->latency_req = 0; /* TODO Extract */
+      query->app_name_req = "accessA"; /* TODO Extract */
       // TODO Look at the cache
       if (mqueue_append(&queries, (struct node *) query)) {
         /* Dropping request */
@@ -61,7 +61,6 @@ static void *server_producer_main(__attribute__((unused)) void *args) {
   fd_set read_fds;
   struct timeval timeout;
 
-  /* TODO While loop on the result + check a value for stopping the program */
   while (!stop) {
     FD_ZERO(&read_fds);
     FD_SET(server_sfd, &read_fds);
@@ -75,9 +74,8 @@ static void *server_producer_main(__attribute__((unused)) void *args) {
     server_producer_process(&read_fds);
   }
 
-  print_debug("A server producer thread has finished\n");
-
 out:
+  print_debug("A server producer thread has finished\n");
   return NULL;
 }
 
@@ -115,7 +113,6 @@ static void *server_consumer_main(__attribute__((unused)) void *_arg) {
     args->latency_req = query->latency_req;
     args->app_name_req = query->app_name_req;
 
-    // TODO Lock mutex
     if ((err = pthread_mutex_lock(&channel_mutex))) {
       perror("Cannot lock the mutex to append");
       goto free_ares_string;

@@ -56,7 +56,6 @@ static void *client_producer_main(__attribute__((unused)) void *args) {
   print_debug("A client producer thread has started\n");
 
   queue_init(&inner_queue);
-  /* TODO While loop on the result + check a value for stopping the program */
   while (!stop) {
     FD_ZERO(&read_fds);
     FD_ZERO(&write_fds);
@@ -92,9 +91,9 @@ static void *client_producer_main(__attribute__((unused)) void *args) {
 
 static void *client_consumer_main(__attribute__((unused)) void *args) {
 
-  // TODO struct srdb_table *tbl = srdb_table_by_name(srdb->tables, "FlowState");
+  struct srdb_table *tbl = srdb_table_by_name(srdb->tables, "FlowReq");
   struct srdb_flowreq_entry entry;
-  memset(&entry, 0, sizeof(struct srdb_entry));
+  memset(&entry, 0, sizeof(entry));
   struct reply *reply = NULL;
 
   print_debug("A client consumer thread has started\n");
@@ -108,14 +107,14 @@ static void *client_consumer_main(__attribute__((unused)) void *args) {
     }
     print_debug("Client consumer forwards a reply to the monitor's queue\n");
 
-    strncpy(entry.destination, "dest.com", SLEN); /* TODO Extract */
-    strncpy(entry.dstaddr, "fd::2", SLEN); /* TODO Extract */
+    strncpy(entry.destination, "accessI", SLEN); /* TODO Extract */
+    strncpy(entry.dstaddr, "fc18::42", SLEN); /* TODO Extract */
     strncpy(entry.source, reply->app_name_req, SLEN);
     entry.bandwidth = reply->bandwidth_req;
     entry.delay = reply->latency_req;
-    strncpy(entry.router, "router.com", SLEN); /* TODO Put it as an argument */
+    strncpy(entry.router, "A", SLEN); /* TODO Put it as an argument */
 
-    // TODO srdb_insert(srdb, tbl, (struct srdb_entry *) &entry, reply->ovsdb_req_uuid);
+    srdb_insert(srdb, tbl, (struct srdb_entry *) &entry, reply->ovsdb_req_uuid);
     print_debug("Client consumer makes the insertion in the OVSDB table\n");
 
     /* TODO Put in cache */

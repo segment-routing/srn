@@ -32,8 +32,6 @@ static void read_flowstate(struct srdb_entry *entry) {
     }
   }
 
-  /* TODO Insert mapping */
-
   /* TODO Add the binding segment to the reply */
 
   /* Send reply to the client */
@@ -138,7 +136,6 @@ out_err:
 }
 
 void close_monitor() {
-  // TODO Free ovsdb monitoring
   srdb_destroy(srdb);
   mqueue_destroy(&replies_waiting_controller);
 }

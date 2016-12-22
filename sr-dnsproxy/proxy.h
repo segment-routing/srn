@@ -51,8 +51,8 @@ struct query {
   struct sockaddr_in6 addr;
   socklen_t addr_len;
   size_t length;
-  int bandwidth_req;
-  int latency_req;
+  uint32_t bandwidth_req;
+  uint32_t latency_req;
   const char *app_name_req;
   char data [0];
 };
@@ -64,8 +64,8 @@ struct reply {
   size_t data_length;
   size_t buffer_size;
   uint16_t additional_record_count;
-  int bandwidth_req;
-  int latency_req;
+  uint32_t bandwidth_req;
+  uint32_t latency_req;
   const char *app_name_req;
   char ovsdb_req_uuid[SLEN + 1];
   char data [0];
@@ -75,8 +75,8 @@ struct callback_args {
   uint16_t qid;
   struct sockaddr_in6 addr;
   socklen_t addr_len;
-  int bandwidth_req;
-  int latency_req;
+  uint32_t bandwidth_req;
+  uint32_t latency_req;
   const char *app_name_req;
 };
 
