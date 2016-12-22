@@ -3,17 +3,58 @@
 #include <sys/socket.h>
 #include <netdb.h>
 
+#include <ares_dns.h>
+
 #include "proxy.h"
+
+#define DNS_RCODE_REJECT 0x5
 
 struct queue_thread replies_waiting_controller;
 
 struct srdb *srdb;
 
-// TODO Complete
-//static void read_flowreq(__attribute__((unused)) struct srdb_entry *entry) {
-//
-//	/* TODO If status is rejected => drop the reply (for the moment) */
-//}
+static void read_flowreq(struct srdb_entry *old_entry, struct srdb_entry *entry) {
+
+	struct srdb_flowreq_entry *flowreq = (struct srdb_flowreq_entry *) entry;
+	struct srdb_flowreq_entry *old_flowreq = (struct srdb_flowreq_entry *) old_entry;
+  struct reply *reply = NULL;
+  struct reply *tmp = NULL;
+
+	print_debug("A new entry in the flowreq table is considered with uuid %s\n", old_flowreq->_row);
+
+	if (flowreq->status != STATUS_PENDING && flowreq->status != STATUS_ALLOWED) {
+		/* Check if its not our request */
+		mqueue_walk_safe(&replies_waiting_controller, reply, tmp, struct reply *) {
+	    if (!strncmp(old_flowreq->_row, reply->ovsdb_req_uuid, SLEN + 1)) {
+				print_debug("A matching with a pending reply was found\n");
+	      mqueue_remove(&replies_waiting_controller, (struct node *) reply);
+	      break;
+	    }
+	  }
+		if (((void *) reply) == (void *) &replies_waiting_controller) {
+			return; /* Not for us */
+		}
+
+		/* Send a DNS reject by changing the RCODE and by leaving only the query record */
+		DNS_HEADER_SET_RCODE(reply->data, DNS_RCODE_REJECT);
+		DNS_HEADER_SET_ANCOUNT(reply->data, 0);
+		DNS_HEADER_SET_NSCOUNT(reply->data, 0);
+		DNS_HEADER_SET_ARCOUNT(reply->data, 0);
+		uint16_t i = 0;
+		for (i = 0; reply->data[DNS_HEADER_LENGTH + i] != 0; i++);
+		reply->data_length = DNS_HEADER_LENGTH + i + 1 + 4; /* 4 bytes of Type and Class */
+
+		print_debug("A DNS reject is going to be sent to the application\n");
+	  if (sendto(server_sfd, reply->data, reply->data_length, 0,
+	                 (struct sockaddr *) &reply->addr,
+	                 reply->addr_len) != (int) reply->data_length) {
+	    /* Drop the reject */
+	    perror("Error sending the DNS reject to the client");
+	  }
+
+		FREE_POINTER(reply);
+	}
+}
 
 static void read_flowstate(struct srdb_entry *entry) {
 
@@ -31,6 +72,9 @@ static void read_flowstate(struct srdb_entry *entry) {
       break;
     }
   }
+	if (((void *) reply) == (void *) &replies_waiting_controller) {
+		return; /* Not for us */
+	}
 
   /* TODO Add the binding segment to the reply */
 
@@ -107,27 +151,26 @@ int init_monitor(const char *listen_port, struct monitor_arg *args, __attribute_
 	struct srdb_table *tbl;
   struct ovsdb_config ovsdb_conf;
 
-  /* TODO Add arguments for that */
+  /* TODO Add config file for that */
   snprintf(ovsdb_conf.ovsdb_client, SLEN + 1, "ovsdb-client");
   snprintf(ovsdb_conf.ovsdb_server, SLEN + 1, "tcp:[::1]:6640");
   snprintf(ovsdb_conf.ovsdb_database, SLEN + 1, "SR_test");
 
   srdb = srdb_new(&ovsdb_conf);
 
-  /* TODO Wait for the function to set an update callback */
-	/*tbl = srdb_table_by_name(srdb->tables, "FlowReq");
-	srdb_set_readupdate_cb(srdb, "FlowReq", read_flowreq);
-	args[0].srdb = _cfg.srdb;
+	tbl = srdb_table_by_name(srdb->tables, "FlowReq");
+	tbl->read_update = read_flowreq;
+	args[0].srdb = srdb;
 	args[0].table = tbl;
 	args[0].columns = "!initial,!delete,!insert";
-	pthread_create(monitor_flowreqs_thread, NULL, thread_monitor, (void *)&args[0]);*/
+	pthread_create(monitor_flowreqs_thread, NULL, thread_monitor, (void *)&args[0]);
 
 	tbl = srdb_table_by_name(srdb->tables, "FlowState");
 	srdb_set_read_cb(srdb, "FlowState", read_flowstate);
-	args[0].srdb = srdb;
-	args[0].table = tbl;
-	args[0].columns = "!initial,!delete,!modify";
-	pthread_create(monitor_flows_thread, NULL, thread_monitor, (void *)&args[0]);
+	args[1].srdb = srdb;
+	args[1].table = tbl;
+	args[1].columns = "!initial,!delete,!modify";
+	pthread_create(monitor_flows_thread, NULL, thread_monitor, (void *)&args[1]);
 
   mqueue_init(&replies_waiting_controller, MAX_QUERIES);
 
