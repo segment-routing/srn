@@ -87,6 +87,7 @@ static int commit_flow(struct srdb_flowreq_entry *req, struct router *rt,
 
 	memcpy(flow_entry.destination, fl->dst, SLEN);
 	memcpy(flow_entry.source, fl->src, SLEN);
+	inet_ntop(AF_INET6, &fl->dstaddr, flow_entry.dstaddr, INET6_ADDRSTRLEN);
 	inet_ntop(AF_INET6, &fl->bsid, flow_entry.bsid, INET6_ADDRSTRLEN);
 
 	flow_entry.segments = calloc(fl->segs->elem_count, INET6_ADDRSTRLEN);
@@ -295,6 +296,7 @@ static void read_flowreq(struct srdb_entry *entry)
 
 	strncpy(fl->src, req->source, SLEN);
 	strncpy(fl->dst, req->destination, SLEN);
+	inet_pton(AF_INET6, req->dstaddr, &fl->dstaddr);
 	fl->bw = rule->bw ?: req->bandwidth;
 	fl->delay = rule->delay ?: req->delay;
 	fl->ttl = rule->ttl;

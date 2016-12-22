@@ -61,6 +61,7 @@ struct srdb {
 struct srdb_flow_entry {
 	struct srdb_entry entry;
 	char destination[SLEN + 1];
+	char dstaddr[SLEN + 1];
 	char bsid[SLEN + 1];
 	char *segments;
 	int bandwidth;
@@ -162,6 +163,7 @@ struct flow {
 	struct in6_addr bsid;
 	char src[SLEN + 1];
 	char dst[SLEN + 1];
+	struct in6_addr dstaddr;
 	struct router *srcrt;
 	struct router *dstrt;
 	struct arraylist *segs;

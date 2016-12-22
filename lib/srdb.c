@@ -302,6 +302,12 @@ static struct srdb_descriptor flowstate_desc_tmpl[] = {
 		.offset	= OFFSET_FLOWSTATE(destination),
 	},
 	{
+		.name	= "dstaddr",
+		.type	= SRDB_STR,
+		.maxlen	= SLEN,
+		.offset	= OFFSET_FLOWSTATE(dstaddr),
+	},
+	{
 		.name	= "bsid",
 		.type	= SRDB_STR,
 		.maxlen	= SLEN,
@@ -498,20 +504,21 @@ struct srdb_table *srdb_get_tables(void)
 	if (!tbl)
 		return NULL;
 
-	for (i = 0; i < sizeof(srdb_tables) / sizeof(struct srdb_table); i++)
-		tbl[i].desc = memdup(tbl[i].desc_tmpl, tbl[i].desc_size);
+	for (i = 0; i < sizeof(srdb_tables) / sizeof(struct srdb_table); i++) {
+		if (tbl[i].name)
+			tbl[i].desc = memdup(tbl[i].desc_tmpl, tbl[i].desc_size);
+	}
 
 	return tbl;
 }
 
 void srdb_free_tables(struct srdb_table *tbl)
 {
-	struct srdb_table *tmp = tbl;
 	unsigned int i;
 
 	for (i = 0; i < sizeof(srdb_tables) / sizeof(struct srdb_table); i++) {
-		free(tmp->desc);
-		tmp++;
+		if (tbl[i].name)
+			free(tbl[i].desc);
 	}
 
 	free(tbl);
