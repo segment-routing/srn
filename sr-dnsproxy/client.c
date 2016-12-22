@@ -18,6 +18,7 @@ void client_callback(void *arg, int status, __attribute__((unused)) int timeouts
 
   if (status != ARES_SUCCESS) {
     fprintf(stderr, "DNS server error: %s\n", ares_strerror(status));
+    goto out;
   }
 
   struct callback_args *call_args = (struct callback_args *) arg;
@@ -40,6 +41,7 @@ void client_callback(void *arg, int status, __attribute__((unused)) int timeouts
       FREE_POINTER(reply);
     }
   }
+out:
   FREE_POINTER(arg);
 }
 
@@ -50,6 +52,8 @@ static void *client_producer_main(__attribute__((unused)) void *args) {
   fd_set read_fds, write_fds;
   struct timeval timeout;
   struct reply *reply = NULL;
+
+  print_debug("A client producer thread has started\n");
 
   queue_init(&inner_queue);
   /* TODO While loop on the result + check a value for stopping the program */
@@ -74,6 +78,7 @@ static void *client_producer_main(__attribute__((unused)) void *args) {
 
     /* Transfer replies to the multi-threaded queue */
     queue_walk_dequeue(&inner_queue, reply, struct reply *) {
+      print_debug("Client producer will append a reply to the appropriate queue\n");
       if (mqueue_append(&replies, (struct node *) reply)) {
         /* Dropping reply */
         FREE_POINTER(reply);
@@ -81,21 +86,27 @@ static void *client_producer_main(__attribute__((unused)) void *args) {
     }
   }
   queue_destroy(&inner_queue);
+  print_debug("A client producer thread has finished\n");
   return NULL;
 }
 
 static void *client_consumer_main(__attribute__((unused)) void *args) {
 
-  struct srdb_table *tbl = srdb_table_by_name(srdb->tables, "FlowState");
+  // TODO struct srdb_table *tbl = srdb_table_by_name(srdb->tables, "FlowState");
   struct srdb_flowreq_entry entry;
   memset(&entry, 0, sizeof(struct srdb_entry));
   struct reply *reply = NULL;
 
+  print_debug("A client consumer thread has started\n");
+
   mqueue_walk_dequeue(&replies, reply, struct reply *) {
+    print_debug("Client consumer dequeues a reply\n");
     strncpy(reply->ovsdb_req_uuid, "-1", SLEN + 1);
     if (mqueue_append(&replies_waiting_controller, (struct node *) reply)) {
+      FREE_POINTER(reply);
       break;
     }
+    print_debug("Client consumer forwards a reply to the monitor's queue\n");
 
     strncpy(entry.destination, "dest.com", SLEN); /* TODO Extract */
     strncpy(entry.dstaddr, "fd::2", SLEN); /* TODO Extract */
@@ -104,10 +115,12 @@ static void *client_consumer_main(__attribute__((unused)) void *args) {
     entry.delay = reply->latency_req;
     strncpy(entry.router, "router.com", SLEN); /* TODO Put it as an argument */
 
-    srdb_insert(srdb, tbl, (struct srdb_entry *) &entry, reply->ovsdb_req_uuid);
+    // TODO srdb_insert(srdb, tbl, (struct srdb_entry *) &entry, reply->ovsdb_req_uuid);
+    print_debug("Client consumer makes the insertion in the OVSDB table\n");
 
     /* TODO Put in cache */
   }
+  print_debug("A client consumer thread has finished\n");
   return NULL;
 }
 

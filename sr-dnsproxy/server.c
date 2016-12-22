@@ -21,6 +21,7 @@ static void server_producer_process(fd_set *read_fds) {
   int length = 0;
 
   if (FD_ISSET(server_sfd, read_fds)) {
+    print_debug("A server producer thread will read the server socket\n");
 
     /* Read request */
     query = malloc(QUERY_ALLOC);
@@ -54,6 +55,8 @@ static void server_producer_process(fd_set *read_fds) {
 
 static void *server_producer_main(__attribute__((unused)) void *args) {
 
+  print_debug("A server producer thread has started\n");
+
   int err = 0;
   fd_set read_fds;
   struct timeval timeout;
@@ -72,11 +75,15 @@ static void *server_producer_main(__attribute__((unused)) void *args) {
     server_producer_process(&read_fds);
   }
 
+  print_debug("A server producer thread has finished\n");
+
 out:
   return NULL;
 }
 
 static void *server_consumer_main(__attribute__((unused)) void *_arg) {
+
+  print_debug("A server consumer thread has started\n");
 
   int err = 0;
   struct query *query = NULL;
@@ -121,6 +128,8 @@ free_ares_string:
 free_query:
     FREE_POINTER(query);
   }
+
+  print_debug("A server consumer thread has finished\n");
 
   return NULL;
 }

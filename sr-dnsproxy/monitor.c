@@ -21,9 +21,12 @@ static void read_flowstate(struct srdb_entry *entry) {
   struct reply *reply = NULL;
   struct reply *tmp = NULL;
 
+	print_debug("A new entry in the flow state table is considered\n");
+
   /* Find the concerned reply */
   mqueue_walk_safe(&replies_waiting_controller, reply, tmp, struct reply *) {
     if (!strncmp(flowstate->request_uuid, reply->ovsdb_req_uuid, SLEN + 1)) {
+			print_debug("A matching with a pending reply was found\n");
       mqueue_remove(&replies_waiting_controller, (struct node *) reply);
       break;
     }
@@ -34,6 +37,7 @@ static void read_flowstate(struct srdb_entry *entry) {
   /* TODO Add the binding segment to the reply */
 
   /* Send reply to the client */
+	print_debug("A reply is going to be sent to the application\n");
   if (sendto(server_sfd, reply->data, reply->data_length, 0,
                  (struct sockaddr *) &reply->addr,
                  reply->addr_len) != (int) reply->data_length) {
@@ -50,7 +54,11 @@ static void *thread_monitor(void *_arg) {
   struct monitor_arg *arg = _arg;
 	int ret;
 
+	print_debug("A monitor thread has started\n");
+
 	ret = srdb_monitor(arg->srdb, arg->table, arg->columns);
+
+	print_debug("A monitor thread has finished\n");
 
 	return (void *)(intptr_t)ret;
 }

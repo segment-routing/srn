@@ -54,6 +54,7 @@ int mqueue_append(struct queue_thread *queue, struct node *elem) {
 	pthread_mutex_unlock(&queue->mutex);
 	sem_post(&queue->full);
 
+  return 0;
 out_free_sem:
   sem_post(&queue->empty);
 out_err:

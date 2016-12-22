@@ -26,7 +26,7 @@ void inthand(int signum) {
 
   if (signum == SIGINT) {
     stop = 1;
-
+    print_debug("SIGINT received\n");
     /* Unblocking threads waiting for these queues */
     mqueue_close(&queries, 1, 1);
     mqueue_close(&replies, 1, 1);
@@ -41,7 +41,7 @@ void inthand(int signum) {
     pthread_kill(monitor_flows_thread, SIGUSR1);
 
   } else if (signum == SIGUSR1) {
-    printf("Thread is stopped gracefully\n");
+    print_debug("Thread is stopped gracefully\n");
   } else {
     fprintf(stderr, "Does not understand signal number %d\n", signum);
   }
@@ -124,6 +124,8 @@ int main(int argc, char *argv[]) {
     goto out_err;
   }
 
+  print_debug("Everything was launched\n");
+
   /* Wait fo threads to finish */
   pthread_join(server_consumer_thread, NULL);
   pthread_join(server_producer_thread, NULL);
@@ -131,6 +133,8 @@ int main(int argc, char *argv[]) {
   pthread_join(client_producer_thread, NULL);
   pthread_join(monitor_flowreqs_thread, NULL);
   pthread_join(monitor_flows_thread, NULL);
+
+  print_debug("All the threads returned\n");
 
   close_server();
   close_client();

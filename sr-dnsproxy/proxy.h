@@ -24,7 +24,15 @@
   x = -1;\
 }
 
-#define MAX_QUERIES 50000 /* TODO Change by parameter */
+#define DEBUG 1
+
+#define print_debug(fmt, args...)					\
+	do {								\
+		if (DEBUG)			\
+			fprintf(stderr, __FILE__ ": %s: " fmt, __func__ , ##args);	\
+} while (0)
+
+#define MAX_QUERIES 5 /* TODO Change by parameter */
 
 #define TIMEOUT_LOOP 1 /* (sec) */
 
