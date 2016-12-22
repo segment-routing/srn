@@ -1,5 +1,12 @@
 $kernel_package = "/vagrant/linux-????.deb"
 
+$ovsdb_version = "2.6.1"
+$ovsdb_release_url = "http://openvswitch.org/releases/openvswitch-${ovsdb_version}.tar.gz"
+$ovsdb_root_dir = "/home/vagrant"
+$ovsdb_source_path = "${ovsdb_root_dir}/openvswitch-${ovsdb_version}"
+$ovsdb_download_path = "${ovsdb_source_path}.tar.gz"
+$ovsdb_path = "/home/vagrant/ovsdb"
+
 $cares_source_path = "/home/vagrant/lib/c-ares"
 $cares_path = "/home/vagrant/cares"
 
@@ -38,6 +45,30 @@ package { 'mininet':
   ensure => installed,
 }
 
+# Install ovsdb
+exec { 'ovsdb-download':
+  require => Exec['apt-update'],
+  creates => $ovsdb_source_path,
+  command => "wget -O - ${ovsdb_release_url} > ${ovsdb_download_path};\
+              tar -xvzf ${ovsdb_download_path} -C ${ovsdb_root_dir};"
+}
+exec { 'ovsdb':
+  require => [ Exec['apt-update'], Exec['ovsdb-download'] ],
+  cwd => $ovsdb_source_path,
+  creates => $ovsdb_path,
+  path => "${default_path}:${ovsdb_source_path}",
+  command => "configure --prefix=${ovsdb_path};\
+              make;\
+              make install;\
+              rm ${ovsdb_download_path};\
+              echo \"# ovsdb binaries\" >> /etc/profile;\
+              echo \"PATH=\\\"${ovsdb_path}/bin:${ovsdb_path}/sbin:\\\$PATH\\\"\" >> /etc/profile;\
+              echo \"alias sudo=\'sudo env \\\"PATH=\\\$PATH\\\"\'\" >> /etc/profile;\
+              echo \"# ovsdb binaries\" >> /root/.bashrc;\
+              echo \"PATH=\\\"${ovsdb_path}/bin:${ovsdb_path}/sbin:\\\$PATH\\\"\" >> /root/.bashrc;\
+              PATH=${ovsdb_path}/sbin:${ovsdb_path}/bin:$PATH;",
+}
+
 # Install specific version of quagga
 exec { 'quagga-download':
   require => Exec['apt-update'],
@@ -57,10 +88,10 @@ exec { 'quagga':
               make install;\
               rm ${quagga_download_path};\
               echo \"# Quagga binaries\" >> /etc/profile;\
-              echo \"PATH=\"${quagga_path}/sbin:\$PATH\"\" >> /etc/profile;\
-              echo \"alias sudo=\'sudo env \"PATH=\$PATH\"\'\" >> /etc/profile;\
+              echo \"PATH=\\\"${quagga_path}/sbin:\\\$PATH\\\"\" >> /etc/profile;\
+              echo \"alias sudo=\'sudo env \\\"PATH=\\\$PATH\\\"\'\" >> /etc/profile;\
               echo \"# Quagga binaries\" >> /root/.bashrc;\
-              echo \"PATH=\"${quagga_path}/sbin:\$PATH\"\" >> /root/.profile;\
+              echo \"PATH=\\\"${quagga_path}/sbin:\\\$PATH\\\"\" >> /root/.bashrc;\
               PATH=${quagga_path}/sbin:$PATH;",
 }
 
@@ -103,16 +134,6 @@ exec { 'c-ares-config':
               make;\
               make install;",
   creates => $cares_path,
-}
-
-# OVSDB
-package { 'ovsdb-client':
-  require => Exec['apt-update'],
-  ensure => installed,
-}
-package { 'ovsdb-server':
-  require => Exec['apt-update'],
-  ensure => installed,
 }
 
 # Miscellaneous
