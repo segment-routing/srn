@@ -5,6 +5,8 @@
       "columns": {
         "destination": {
           "type": "string"},
+        "dstaddr": {
+          "type": "string"},
         "bsid": {
           "type": "string"},
         "segments": {
