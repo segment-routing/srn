@@ -13,6 +13,7 @@ void strip_crlf(char *line);
 void remove_trail(char *line);
 char **strsplit(char *line, int *elems, char splitc);
 void *memdup(const void *from, size_t size);
+char *strreplace(char *line, char from, char to);
 
 static inline unsigned int hashint(unsigned int x) {
 	x = ((x >> 16) ^ x) * 0x45d9f3b;

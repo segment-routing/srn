@@ -76,3 +76,15 @@ void *memdup(const void *from, size_t size)
 	memcpy(res, from, size);
 	return res;
 }
+
+char *strreplace(char *line, char from, char to)
+{
+	char *s;
+
+	for (s = line; *s; s++) {
+		if (*s == from)
+			*s = to;
+	}
+
+	return line;
+}
