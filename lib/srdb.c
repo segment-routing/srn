@@ -205,7 +205,7 @@ static char *normalize_rowbuf(const char *buf)
 			n++;
 	}
 
-	buf2 = calloc(1, n);
+	buf2 = calloc(1, n+1);
 	if (!buf2)
 		return NULL;
 
