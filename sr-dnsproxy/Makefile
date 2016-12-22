@@ -7,8 +7,8 @@ CFLAGS += -Wextra # Enable additional warnings
 CFLAGS += -O2 -D_FORTIFY_SOURCE=2 # Add canary code, i.e. detect buffer overflows
 CFLAGS += -fstack-protector-all # Add canary code to detect stack smashing
 CFLAGS += -D_POSIX_C_SOURCE=201112L -D_XOPEN_SOURCE # feature_test_macros for getpot and getaddrinfo
-CFLAGS += -I/home/vagrant/cares/include -I/home/vagrant/lib
-LDFLAGS += -L/home/vagrant/cares/lib -L/home/vagrant/lib
+CFLAGS += -I../cares/include -I../lib
+LDFLAGS += -L../cares/lib -L../lib
 LDFLAGS += -lcares -lpthread -lsr
 EXEC=proxy
 SRC= $(wildcard *.c)
