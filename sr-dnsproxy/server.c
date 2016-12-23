@@ -40,9 +40,9 @@ static void server_producer_process(fd_set *read_fds) {
       FREE_POINTER(query);
     } else {
       query->length = (uint16_t) length;
-      query->bandwidth_req = 5; /* TODO Extract */
-      query->latency_req = 0; /* TODO Extract */
-      query->app_name_req = "accessA"; /* TODO Extract */
+      query->bandwidth_req = DEFAULT_BANDWIDTH; /* TODO Extract */
+      query->latency_req = DEFAULT_LATENCY; /* TODO Extract */
+      query->app_name_req = DEFAULT_APP_NAME; /* TODO Extract */
       // TODO Look at the cache
       if (mqueue_append(&queries, (struct node *) query)) {
         /* Dropping request */

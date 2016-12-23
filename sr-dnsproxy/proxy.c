@@ -37,7 +37,7 @@ void inthand(int signum) {
     pthread_kill(server_consumer_thread, SIGUSR1);
     pthread_kill(client_producer_thread, SIGUSR1);
     pthread_kill(client_consumer_thread, SIGUSR1);
-    //pthread_kill(monitor_flowreqs_thread, SIGUSR1); TODO ADD !
+    pthread_kill(monitor_flowreqs_thread, SIGUSR1);
     pthread_kill(monitor_flows_thread, SIGUSR1);
 
   } else if (signum == SIGUSR1) {

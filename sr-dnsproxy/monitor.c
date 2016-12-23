@@ -268,7 +268,7 @@ int init_monitor(const char *listen_port, struct monitor_arg *args, __attribute_
 	args[0].columns = "!initial,!delete,!insert";
 	pthread_create(monitor_flowreqs_thread, NULL, thread_monitor, (void *)&args[0]);
 
-	pthread_create(monitor_flows_thread, NULL, thread_flowstate_monitor, (void *) "../dns.fifo"); /* TODO Put in a config file */
+	pthread_create(monitor_flows_thread, NULL, thread_flowstate_monitor, (void *) DNS_FIFO_PATH); /* TODO Put in a config file */
 
   mqueue_init(&replies_waiting_controller, MAX_QUERIES);
 

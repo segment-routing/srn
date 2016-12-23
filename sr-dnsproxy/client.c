@@ -107,12 +107,12 @@ static void *client_consumer_main(__attribute__((unused)) void *args) {
     }
     print_debug("Client consumer forwards a reply to the monitor's queue\n");
 
-    strncpy(entry.destination, "accessI", SLEN); /* TODO Extract */
-    strncpy(entry.dstaddr, "fc18::42", SLEN); /* TODO Extract */
+    strncpy(entry.destination, DEFAULT_DEST, SLEN); /* TODO Extract */
+    strncpy(entry.dstaddr, DEFAULT_DEST_ADDR, SLEN); /* TODO Extract */
     strncpy(entry.source, reply->app_name_req, SLEN);
     entry.bandwidth = reply->bandwidth_req;
     entry.delay = reply->latency_req;
-    strncpy(entry.router, "A", SLEN); /* TODO Put it as an argument */
+    strncpy(entry.router, ROUTER_NAME, SLEN); /* TODO Put it as a config parameter */
 
     srdb_insert(srdb, tbl, (struct srdb_entry *) &entry, reply->ovsdb_req_uuid);
     print_debug("Client consumer makes the insertion in the OVSDB table\n");
