@@ -554,8 +554,8 @@ struct ares_srh_reply {
     struct ares_in6_addr  addr;
     unsigned char         length;
   } prefix;
-  unsigned short          srh_length;
-  void                    *srh;
+  struct ares_in6_addr    binding_segment;
+  unsigned int            rr_ttl;
 };
 
 /*

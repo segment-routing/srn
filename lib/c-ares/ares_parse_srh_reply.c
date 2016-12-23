@@ -19,7 +19,8 @@ int ares_parse_srh_reply(const unsigned char *abuf, int alen,
 {
   unsigned int qdcount, ancount, i;
   const unsigned char *aptr;
-  int status, rr_type, rr_class;
+  int status;
+  unsigned int rr_type, rr_class, rr_ttl;
   unsigned short rr_len;
   long len;
   char *hostname = NULL, *rr_name = NULL;
@@ -35,9 +36,10 @@ int ares_parse_srh_reply(const unsigned char *abuf, int alen,
   /* Fetch the question and answer count from the header. */
   qdcount = DNS_HEADER_QDCOUNT (abuf);
   ancount = DNS_HEADER_ANCOUNT (abuf);
+  arcount = DNS_HEADER_ARCOUNT (abuf);
   if (qdcount != 1)
     return ARES_EBADRESP;
-  if (ancount == 0)
+  if (ancount == 0 || arcount == 0)
     return ARES_ENODATA;
 
   /* Expand the name from the question, and skip past the question. */
@@ -54,7 +56,7 @@ int ares_parse_srh_reply(const unsigned char *abuf, int alen,
   aptr += len + QFIXEDSZ;
 
   /* Examine each answer resource record (RR) in turn. */
-  for (i = 0; i < ancount; i++)
+  for (i = 0; i < ancount + arcount; i++)
   {
     /* Decode the RR up to the data field. */
     status = ares_expand_name (aptr, abuf, alen, &rr_name, &len);
@@ -71,6 +73,7 @@ int ares_parse_srh_reply(const unsigned char *abuf, int alen,
     rr_type = DNS_RR_TYPE (aptr);
     rr_class = DNS_RR_CLASS (aptr);
     rr_len = DNS_RR_LEN (aptr);
+    rr_ttl = DNS_RR_TTL(aptr);
     aptr += RRFIXEDSZ;
     if (aptr + rr_len > abuf + alen)
     {
@@ -92,21 +95,13 @@ int ares_parse_srh_reply(const unsigned char *abuf, int alen,
         break;
       }
 
+      srh->rr_ttl = rr_ttl;
       srh->success = *aptr;
-
+      aptr += 2;
       memcpy(&srh->prefix.addr, aptr + 1, sizeof(struct ares_in6_addr));
-
-      srh->prefix.length = *(aptr + SRH_MIN_LEN - 1);
-
-      srh->srh_length = (unsigned short) (rr_len - SRH_MIN_LEN);
-      if (srh->srh_length) {
-        srh->srh = ares_malloc(srh->srh_length);
-        if (!srh->srh) {
-          status = ARES_ENOMEM;
-          break;
-        }
-        memcpy(srh->srh, aptr + SRH_MIN_LEN, srh->srh_length);
-      }
+      srh->prefix.length = 64;
+      aptr += sizeof(struct ares_in6_addr);
+      memcpy(&srh->binding_segment, aptr, sizeof(struct ares_in6_addr));
     }
 
     /* Propagate any failures */

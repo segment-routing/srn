@@ -1,8 +1,10 @@
 CC=gcc
 AR=ar
 CFLAGS=-g -Wall -W -O0
-LDFLAGS=
-SRC=arraylist.c hashmap.c lpm.c misc.c srdb.c
+CFLAGS += -I../cares/include
+LDFLAGS += -L../cares/lib
+LDFLAGS += -lcares
+SRC=arraylist.c hashmap.c lpm.c misc.c srdb.c srdns.c
 OBJ=$(SRC:.c=.o)
 LIBFILE=libsr.a
 
