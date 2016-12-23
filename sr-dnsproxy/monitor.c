@@ -8,6 +8,9 @@
 #include "proxy.h"
 
 #define DNS_RCODE_REJECT 0x5
+#define RRFIXEDSZ 10
+
+#define MAX_LINE_LENGTH 3*(SLEN + 2)
 
 struct queue_thread replies_waiting_controller;
 
@@ -56,17 +59,17 @@ static void read_flowreq(struct srdb_entry *old_entry, struct srdb_entry *entry)
 	}
 }
 
-static void read_flowstate(struct srdb_entry *entry) {
+static void read_flowstate(char *uuid, char *prefix, char *binding_segment) {
 
-	struct srdb_flow_entry *flowstate = (struct srdb_flow_entry *) entry;
   struct reply *reply = NULL;
   struct reply *tmp = NULL;
+	int i = 0;
 
 	print_debug("A new entry in the flow state table is considered\n");
 
   /* Find the concerned reply */
   mqueue_walk_safe(&replies_waiting_controller, reply, tmp, struct reply *) {
-    if (!strncmp(flowstate->request_uuid, reply->ovsdb_req_uuid, SLEN + 1)) {
+    if (!strncmp(uuid, reply->ovsdb_req_uuid, SLEN + 1)) {
 			print_debug("A matching with a pending reply was found\n");
       mqueue_remove(&replies_waiting_controller, (struct node *) reply);
       break;
@@ -76,7 +79,46 @@ static void read_flowstate(struct srdb_entry *entry) {
 		return; /* Not for us */
 	}
 
-  /* TODO Add the binding segment to the reply */
+  /* Add the binding segment to the reply */
+
+	char *srh_rr = reply->data + reply->data_length;
+	char *name = reply->data + DNS_RR_NAME_OFFSET;
+	unsigned char binding_segment_addr[16];
+	if (inet_pton(AF_INET6, binding_segment, binding_segment_addr) != 1) {
+		fprintf(stderr, "Not a valid IPv6 address received: %s\n", binding_segment);
+		goto free_reply;
+	}
+	unsigned char prefix_segment_addr[16];
+	if (inet_pton(AF_INET6, prefix, prefix_segment_addr) != 1) {
+		fprintf(stderr, "Not a valid IPv6 address received: %s\n", prefix);
+		goto free_reply;
+	}
+
+	/* Change DNS header */
+	DNS_HEADER_SET_ARCOUNT(reply->data, DNS_HEADER_ARCOUNT(reply->data) + 1);
+
+	/* Set name */
+	for (i = 0; name[i] != 0; i++) {
+		srh_rr[i] = name[i];
+	}
+	srh_rr[i] = name[i];
+	reply->data_length = reply->data_length + i + 1;
+	srh_rr = reply->data + reply->data_length;
+
+	/* Set RR fields */
+	DNS_RR_SET_TYPE(srh_rr, T_SRH);
+	DNS_RR_SET_CLASS(srh_rr, C_IN);
+	DNS_RR_SET_TTL(srh_rr, 0); /* TODO Change this value */
+	DNS_RR_SET_LEN(srh_rr, 2 + 2*16); /* Status + 1 prefix + 1 binding segment */
+	reply->data_length = reply->data_length + RRFIXEDSZ + 2 + 2*16;
+	srh_rr += RRFIXEDSZ;
+
+	/* Set RR data (status + prefix + binding segment) */
+	DNS__SET16BIT(srh_rr, 0);
+	srh_rr += 2;
+	memcpy(srh_rr, prefix_segment_addr, 16);
+	srh_rr += 16;
+	memcpy(srh_rr, binding_segment_addr, 16);
 
   /* Send reply to the client */
 	print_debug("A reply is going to be sent to the application\n");
@@ -88,6 +130,7 @@ static void read_flowstate(struct srdb_entry *entry) {
     /* TODO What to do then ??? */
   }
 
+free_reply:
   FREE_POINTER(reply);
 }
 
@@ -103,6 +146,66 @@ static void *thread_monitor(void *_arg) {
 	print_debug("A monitor thread has finished\n");
 
 	return (void *)(intptr_t)ret;
+}
+
+static void *thread_flowstate_monitor(void *_arg) {
+
+	char *pipe_path = (char *) _arg;
+  int err = 0;
+	int i = 0;
+  fd_set read_fds;
+  struct timeval timeout;
+	FILE *fp;
+	int fd = -1;
+
+	print_debug("A monitor thread for the flow state has started\n");
+
+	fp = fopen(pipe_path, "r");
+	if (!fp) {
+		perror("Cannot open file");
+		return NULL;
+	}
+	fd = fileno(fp);
+
+	while (!stop) {
+
+    FD_ZERO(&read_fds);
+		FD_SET(fd, &read_fds);
+    timeout.tv_sec = TIMEOUT_LOOP;
+    timeout.tv_usec = 0;
+    err = select(fd + 1, &read_fds, NULL, NULL, &timeout);
+    if (err < 0) {
+      perror("Select fail");
+      break;
+    }
+
+		if (FD_ISSET(fd, &read_fds)) {
+			char line [MAX_LINE_LENGTH];
+			if (!fgets(line, MAX_LINE_LENGTH, fp)) {
+				perror("Cannot read line");
+				break;
+			}
+
+			/* Line parsing */
+			char *uuid = line;
+			for (i = 0; line[i] != ' '; i++);
+			line[i] = '\0';
+			char *prefix = line + i + 1;
+			for (i++; line[i] != ' '; i++);
+			line[i] = '\0';
+			char *binding_segment = line + i + 1;
+			for (i++; line[i] != '\n' && line[i] != '\0'; i++);
+			line[i] = '\0';
+
+			/* Send back a reply to the application */
+			read_flowstate(uuid, prefix, binding_segment);
+		}
+	}
+
+	fclose(fp);
+
+	print_debug("A monitor thread for the flow state has stopped\n");
+	return NULL;
 }
 
 int init_monitor(const char *listen_port, struct monitor_arg *args, __attribute__((unused)) pthread_t *monitor_flowreqs_thread, pthread_t *monitor_flows_thread) {
@@ -165,12 +268,7 @@ int init_monitor(const char *listen_port, struct monitor_arg *args, __attribute_
 	args[0].columns = "!initial,!delete,!insert";
 	pthread_create(monitor_flowreqs_thread, NULL, thread_monitor, (void *)&args[0]);
 
-	tbl = srdb_table_by_name(srdb->tables, "FlowState");
-	srdb_set_read_cb(srdb, "FlowState", read_flowstate);
-	args[1].srdb = srdb;
-	args[1].table = tbl;
-	args[1].columns = "!initial,!delete,!modify";
-	pthread_create(monitor_flows_thread, NULL, thread_monitor, (void *)&args[1]);
+	pthread_create(monitor_flows_thread, NULL, thread_flowstate_monitor, (void *) "../dns.fifo"); /* TODO Put in a config file */
 
   mqueue_init(&replies_waiting_controller, MAX_QUERIES);
 

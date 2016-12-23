@@ -38,6 +38,8 @@
 
 #define C_IN 1
 #define T_AAAA 28
+#define T_SRH 65280
+
 #define DNS_HEADER_LENGTH 12
 #define DNS_RR_NAME_OFFSET DNS_HEADER_LENGTH
 
