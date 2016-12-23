@@ -11,6 +11,7 @@
 #include "hashmap.h"
 #include "graph.h"
 #include "lpm.h"
+#include "sr-ctrl.h"
 
 /* lookup usecases:
  * - access control at source (in/out)
