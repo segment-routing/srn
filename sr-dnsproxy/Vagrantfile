@@ -23,6 +23,7 @@ Vagrant.configure("2") do |config|
   config.vm.synced_folder "../sr-ctrl", "/home/vagrant/sr-ctrl"
   config.vm.synced_folder "../sr-routed", "/home/vagrant/sr-routed"
   config.vm.synced_folder ".", "/home/vagrant/sr-dnsproxy"
+  config.vm.synced_folder "../sr-client", "/home/vagrant/sr-client"
   config.vm.provision :file, source: '../sr.ovsschema', destination: '/home/vagrant/sr.ovsschema'
 
   config.vm.provision "shell", inline: <<-SHELL

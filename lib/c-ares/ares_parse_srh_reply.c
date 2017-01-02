@@ -17,7 +17,7 @@
 int ares_parse_srh_reply(const unsigned char *abuf, int alen,
                          struct ares_srh_reply **srh_out)
 {
-  unsigned int qdcount, ancount, i;
+  unsigned int qdcount, ancount, arcount, i;
   const unsigned char *aptr;
   int status;
   unsigned int rr_type, rr_class, rr_ttl;
