@@ -58,6 +58,11 @@ struct srdb {
 
 /* OVSDB tables description */
 
+struct srdb_router_entry {
+	struct srdb_entry entry;
+	char router[SLEN + 1];
+};
+
 struct srdb_flow_entry {
 	struct srdb_entry entry;
 	char destination[SLEN + 1];
@@ -71,13 +76,14 @@ struct srdb_flow_entry {
 	char router[SLEN + 1];
 	char interface[SLEN + 1];
 	char reverse_flow_uuid[SLEN + 1];
-	char request_uuid[SLEN + 1];
+	char request_id[SLEN + 1];
 	int ttl;
 	int idle;
 };
 
 struct srdb_flowreq_entry {
 	struct srdb_entry entry;
+	char request_id[SLEN + 1];
 	char destination[SLEN + 1];
 	char dstaddr[SLEN + 1];
 	char source[SLEN + 1];

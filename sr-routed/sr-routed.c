@@ -134,7 +134,7 @@ static void read_flowstate(struct srdb_entry *entry)
 	 */
 
 	add_fib_entry(flow_entry->bsid, flow_entry->segments);
-	send_flow(flow_entry->request_uuid, flow_entry->dstaddr,
+	send_flow(flow_entry->request_id, flow_entry->dstaddr,
 		  flow_entry->bsid);
 }
 

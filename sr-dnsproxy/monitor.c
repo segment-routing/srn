@@ -16,26 +16,27 @@ struct queue_thread replies_waiting_controller;
 
 struct srdb *srdb;
 
-static void read_flowreq(struct srdb_entry *old_entry, struct srdb_entry *entry) {
+static void read_flowreq(__attribute__((unused)) struct srdb_entry *old_entry, struct srdb_entry *entry) {
 
 	struct srdb_flowreq_entry *flowreq = (struct srdb_flowreq_entry *) entry;
-	struct srdb_flowreq_entry *old_flowreq = (struct srdb_flowreq_entry *) old_entry;
   struct reply *reply = NULL;
   struct reply *tmp = NULL;
 
-	print_debug("A new entry in the flowreq table is considered with uuid %s\n", old_flowreq->_row);
+	print_debug("A modified entry in the flowreq table is considered with id %s and status %d\n", flowreq->request_id, flowreq->status);
 
 	if (flowreq->status != STATUS_PENDING && flowreq->status != STATUS_ALLOWED) {
+		print_debug("Check if the rejected reply is for this router\n");
 		/* Check if its not our request */
 		mqueue_walk_safe(&replies_waiting_controller, reply, tmp, struct reply *) {
-	    if (!strncmp(old_flowreq->_row, reply->ovsdb_req_uuid, SLEN + 1)) {
+			print_debug("Check an entry with uuid %s\n", reply->ovsdb_req_uuid);
+	    if (!strncmp(flowreq->request_id, reply->ovsdb_req_uuid, SLEN + 1)) {
 				print_debug("A matching with a pending reply was found\n");
 	      mqueue_remove(&replies_waiting_controller, (struct node *) reply);
 	      break;
 	    }
 	  }
 		if (((void *) reply) == (void *) &replies_waiting_controller) {
-			return; /* Not for us */
+			return; /* Not for us or not rejected */
 		}
 
 		/* Send a DNS reject by changing the RCODE and by leaving only the query record */
@@ -260,6 +261,11 @@ int init_monitor(const char *listen_port, struct monitor_arg *args, __attribute_
   snprintf(ovsdb_conf.ovsdb_database, SLEN + 1, "SR_test");
 
   srdb = srdb_new(&ovsdb_conf);
+	if (!srdb) {
+		fprintf(stderr, "Cannot connect to the database\n");
+		status = -1;
+		goto out_err;
+	}
 
 	tbl = srdb_table_by_name(srdb->tables, "FlowReq");
 	tbl->read_update = read_flowreq;

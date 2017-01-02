@@ -91,33 +91,54 @@ static void *client_producer_main(__attribute__((unused)) void *args) {
 
 static void *client_consumer_main(__attribute__((unused)) void *args) {
 
+  struct srdb_table *router_tbl = srdb_table_by_name(srdb->tables, "RouterIds");
+  struct srdb_router_entry router_entry;
+  memset(&router_entry, 0, sizeof(router_entry));
+  char thread_id [SLEN + 1];
+  memset(&thread_id, 0, SLEN + 1);
+  unsigned long req_counter = 0;
+
   struct srdb_table *tbl = srdb_table_by_name(srdb->tables, "FlowReq");
   struct srdb_flowreq_entry entry;
   memset(&entry, 0, sizeof(entry));
+
   struct reply *reply = NULL;
 
   print_debug("A client consumer thread has started\n");
 
+  /* Get the OpenFlow ID of this thread */
+  strncpy(router_entry.router, ROUTER_NAME, SLEN + 1); /* TODO Put it as a config parameter */
+  if (srdb_insert(srdb, router_tbl, (struct srdb_entry *) &router_entry, thread_id)) {
+    fprintf(stderr, "Problem during extraction of thread ID -> stop thread\n");
+    return NULL;
+  }
+
+  print_debug("This client consumer thread got the ID %s\n", thread_id);
+
   mqueue_walk_dequeue(&replies, reply, struct reply *) {
     print_debug("Client consumer dequeues a reply\n");
-    strncpy(reply->ovsdb_req_uuid, "-1", SLEN + 1);
+
+    snprintf(reply->ovsdb_req_uuid, SLEN + 1, "%s-%ld", thread_id, req_counter);
     if (mqueue_append(&replies_waiting_controller, (struct node *) reply)) {
       FREE_POINTER(reply);
       break;
     }
-    print_debug("Client consumer forwards a reply to the monitor's queue\n");
+    print_debug("Client consumer forwards a reply to the monitor's queue with id %s\n", reply->ovsdb_req_uuid);
 
-    strncpy(entry.destination, DEFAULT_DEST, SLEN); /* TODO Extract */
-    strncpy(entry.dstaddr, DEFAULT_DEST_ADDR, SLEN); /* TODO Extract */
-    strncpy(entry.source, reply->app_name_req, SLEN);
+    strncpy(entry.destination, DEFAULT_DEST, SLEN + 1); /* TODO Extract */
+    strncpy(entry.dstaddr, DEFAULT_DEST_ADDR, SLEN + 1); /* TODO Extract */
+    strncpy(entry.source, reply->app_name_req, SLEN + 1);
     entry.bandwidth = reply->bandwidth_req;
     entry.delay = reply->latency_req;
-    strncpy(entry.router, ROUTER_NAME, SLEN); /* TODO Put it as a config parameter */
+    strncpy(entry.router, ROUTER_NAME, SLEN + 1); /* TODO Put it as a config parameter */
+    strncpy(entry.request_id, reply->ovsdb_req_uuid, SLEN + 1);
 
-    srdb_insert(srdb, tbl, (struct srdb_entry *) &entry, reply->ovsdb_req_uuid);
+    srdb_insert(srdb, tbl, (struct srdb_entry *) &entry, NULL);
     print_debug("Client consumer makes the insertion in the OVSDB table\n");
 
     /* TODO Put in cache */
+
+    req_counter++; /* The next request will have another id */
   }
   print_debug("A client consumer thread has finished\n");
   return NULL;

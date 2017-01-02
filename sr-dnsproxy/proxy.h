@@ -26,11 +26,12 @@
 
 #define DEBUG 1
 
-#define print_debug(fmt, args...)					\
-	do {								\
-		if (DEBUG)			\
-			fprintf(stderr, __FILE__ ": %s: " fmt, __func__ , ##args);	\
-} while (0)
+#if DEBUG
+  #define print_debug(fmt, args...)					\
+  			fprintf(stderr, __FILE__ ": %s: " fmt, __func__ , ##args);
+#else
+  #define print_debug(fmt, args...)
+#endif
 
 #define MAX_QUERIES 5 /* TODO Change by parameter */
 

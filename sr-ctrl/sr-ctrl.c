@@ -46,7 +46,7 @@
 
 /* on flowreq do:
  *   - lookup destination
- *   - 
+ *   -
  */
 
 #define DEFAULT_CONFIG	"sr-ctrl.conf"
@@ -128,7 +128,7 @@ static int commit_flow(struct srdb_flowreq_entry *req, struct router *rt,
 	flow_entry.ttl = fl->ttl;
 	flow_entry.idle = fl->idle;
 
-	memcpy(flow_entry.request_uuid, req->_row, SLEN);
+	memcpy(flow_entry.request_id, req->request_id, SLEN);
 
 	ret = srdb_insert(_cfg.srdb,
 			  srdb_table_by_name(_cfg.srdb->tables, "FlowState"),

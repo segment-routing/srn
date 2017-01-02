@@ -240,10 +240,31 @@ static char *normalize_rowbuf(const char *buf)
 		.offset = offsetof(struct srdb_entry, version),	\
 	}
 
+#define OFFSET_ROUTERIDS(NAME)	offsetof(struct srdb_router_entry, NAME)
+static struct srdb_descriptor routerids_desc_tmpl[] = {
+	SRDB_BUILTIN_ENTRIES(),
+
+	{
+		.name	= "router",
+		.type	= SRDB_STR,
+		.maxlen	= SLEN,
+		.offset	= OFFSET_ROUTERIDS(router),
+	},
+	{
+		.name	= NULL,
+	},
+};
+
 #define OFFSET_FLOWREQ(NAME)	offsetof(struct srdb_flowreq_entry, NAME)
 static struct srdb_descriptor flowreq_desc_tmpl[] = {
 	SRDB_BUILTIN_ENTRIES(),
 
+	{
+		.name	= "req_id",
+		.type	= SRDB_STR,
+		.maxlen	= SLEN,
+		.offset	= OFFSET_FLOWREQ(request_id),
+	},
 	{
 		.name	= "destination",
 		.type	= SRDB_STR,
@@ -362,7 +383,7 @@ static struct srdb_descriptor flowstate_desc_tmpl[] = {
 		.name	= "request",
 		.type	= SRDB_STR,
 		.maxlen	= SLEN,
-		.offset	= OFFSET_FLOWSTATE(request_uuid),
+		.offset	= OFFSET_FLOWSTATE(request_id),
 	},
 	{
 		.name	= "ttl",
@@ -466,6 +487,12 @@ static struct srdb_descriptor nodestate_desc_tmpl[] = {
 };
 
 static struct srdb_table srdb_tables[] = {
+	{
+		.name		= "RouterIds",
+		.entry_size	= sizeof(struct srdb_router_entry),
+		.desc_tmpl	= routerids_desc_tmpl,
+		.desc_size	= sizeof(routerids_desc_tmpl),
+	},
 	{
 		.name		= "FlowReq",
 		.entry_size	= sizeof(struct srdb_flowreq_entry),

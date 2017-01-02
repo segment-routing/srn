@@ -1,6 +1,11 @@
 { "name": "SR_test",
   "version": "0.0.1",
   "tables": {
+    "RouterIds": {
+      "columns": {
+        "router": {
+          "type": "string"}},
+    "isRoot": true},
     "FlowState": {
       "columns": {
         "destination": {
@@ -34,6 +39,8 @@
     "isRoot": true},
     "FlowReq": {
       "columns": {
+        "req_id": {
+          "type": "string"},
         "destination": {
           "type": "string"},
         "dstaddr": {
