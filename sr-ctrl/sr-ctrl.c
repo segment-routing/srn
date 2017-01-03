@@ -650,11 +650,17 @@ int main(int argc, char **argv)
 
 	launch_srdb(mon_thr, margs);
 
-	for (i = 0; i < _cfg.worker_threads; i++)
-		pthread_join(workers[i], NULL);
-
 	for (i = 0; i < sizeof(mon_thr) / sizeof(pthread_t); i++)
 		pthread_join(mon_thr[i], NULL);
+
+	for (i = 0; i < sizeof(mon_thr) / sizeof(pthread_t); i++) {
+		void *null_entry = NULL;
+
+		mq_push(_cfg.req_queue, &null_entry);
+	}
+
+	for (i = 0; i < _cfg.worker_threads; i++)
+		pthread_join(workers[i], NULL);
 
 	free(workers);
 	mq_destroy(_cfg.req_queue);
