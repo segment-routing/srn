@@ -1,9 +1,7 @@
 CC=gcc
 AR=ar
 CFLAGS=-g -Wall -W -O0
-CFLAGS += -I../cares/include
-LDFLAGS += -L../cares/lib
-LDFLAGS += -lcares
+CFLAGS += -I./c-ares
 SRC=arraylist.c hashmap.c lpm.c misc.c srdb.c srdns.c
 OBJ=$(SRC:.c=.o)
 LIBFILE=libsr.a
@@ -14,9 +12,13 @@ all: $(LIBFILE)
 %.o: %.c
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-$(LIBFILE): $(OBJ)
+$(LIBFILE): ares $(OBJ)
 	$(AR) r $@ $(OBJ)
+
+ares:
+	cd c-ares && cmake -DCARES_STATIC=1 && $(MAKE) && cd ..
 
 clean:
 	rm -f $(LIBFILE) $(OBJ) libredblack.a
+	cd c-ares && make clean && cd ..
 #	cd libredblack-1.3 && make clean && cd .. && rm -f libredblack.a

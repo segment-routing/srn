@@ -6,7 +6,7 @@ OBJ=$(SRC:.c=.o)
 EXEC=sr-ctrl
 
 all:
-	make $(EXEC)
+	$(MAKE) $(EXEC)
 
 %.o: %.c
 	$(CC) $(CFLAGS) -c -o $@ $<

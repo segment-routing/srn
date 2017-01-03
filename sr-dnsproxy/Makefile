@@ -4,12 +4,12 @@ CFLAGS += -Wall # Enable the 'all' set of warnings
 CFLAGS += -Werror # Treat all warnings as error
 CFLAGS += -Wshadow # Warn when shadowing variables
 CFLAGS += -Wextra # Enable additional warnings
-CFLAGS += -O2 -D_FORTIFY_SOURCE=2 # Add canary code, i.e. detect buffer overflows
+CFLAGS += -O2 # -D_FORTIFY_SOURCE=2 # Add canary code, i.e. detect buffer overflows
 CFLAGS += -fstack-protector-all # Add canary code to detect stack smashing
 CFLAGS += -D_POSIX_C_SOURCE=201112L -D_XOPEN_SOURCE # feature_test_macros for getpot and getaddrinfo
-CFLAGS += -I../cares/include -I../lib
-LDFLAGS += -L../cares/lib -L../lib
-LDFLAGS += -lcares -lpthread -lsr
+CFLAGS += -I../lib/c-ares -I../lib
+LDFLAGS += -L../lib/c-ares/lib -L../lib
+LDFLAGS += -Wl,-Bstatic -lcares -Wl,-Bdynamic -lpthread -lsr
 EXEC=proxy
 SRC= $(wildcard *.c)
 OBJ= $(SRC:.c=.o)
@@ -18,17 +18,17 @@ OBJ= $(SRC:.c=.o)
 all: $(EXEC)
 
 proxy: $(OBJ)
-	@$(CC) -o $@ $^ $(LDFLAGS)
+	$(CC) -o $@ $^ $(LDFLAGS)
 
 proxy.o: proxy.h
 
 %.o: %.c
-	@$(CC) -o $@ -c $< $(CFLAGS)
+	$(CC) -o $@ -c $< $(CFLAGS)
 
 .PHONY: clean mrproper
 
 clean:
-	@rm -rf *.o
+	rm -rf *.o
 
 mrproper: clean
-	@rm -rf $(EXEC)
+	rm -rf $(EXEC)
