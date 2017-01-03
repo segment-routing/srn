@@ -179,8 +179,8 @@ static void fill_srdb_entry(struct srdb_descriptor *desc,
 	}
 }
 
-static void free_srdb_entry(struct srdb_descriptor *desc,
-			    struct srdb_entry *entry)
+void free_srdb_entry(struct srdb_descriptor *desc,
+		     struct srdb_entry *entry)
 {
 	struct srdb_descriptor *tmp;
 
@@ -624,10 +624,11 @@ static void srdb_read(const char *buf, void *arg)
 	if (!strcmp(action, "insert") || !strcmp(action, "initial")) {
 		if (tbl->read)
 			tbl->read(entry);
-		free_srdb_entry(tbl->desc, entry);
+		if (!tbl->delayed_free)
+			free_srdb_entry(tbl->desc, entry);
 	} else if (!strcmp(action, "old")) {
 		tbl->update_entry = entry;
-	} else if (!strcmp(action, "new")) {
+	} else if (!strcmp(action, "new")) { /* TODO fix for delayed free / MT */
 		if (tbl->read_update)
 			tbl->read_update(tbl->update_entry, entry);
 		free_srdb_entry(tbl->desc, tbl->update_entry);

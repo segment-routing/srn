@@ -39,6 +39,7 @@ struct srdb_table {
 	void (*read_update)(struct srdb_entry *, struct srdb_entry *);
 	struct srdb_entry *update_entry;
 	struct timeval last_read;
+	bool delayed_free;
 };
 
 struct ovsdb_config {
@@ -138,5 +139,7 @@ struct srdb *srdb_new(const struct ovsdb_config *conf);
 void srdb_destroy(struct srdb *srdb);
 void srdb_set_read_cb(struct srdb *srdb, const char *table,
 		      void (*cb)(struct srdb_entry *));
+void free_srdb_entry(struct srdb_descriptor *desc,
+ 		     struct srdb_entry *entry);
 
 #endif

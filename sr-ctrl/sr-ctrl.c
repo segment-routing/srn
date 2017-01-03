@@ -12,6 +12,7 @@
 #include "graph.h"
 #include "lpm.h"
 #include "sr-ctrl.h"
+#include "mq.h"
 
 /* lookup usecases:
  * - access control at source (in/out)
@@ -54,6 +55,8 @@
 struct config {
 	char rules_file[SLEN + 1];
 	struct ovsdb_config ovsdb_conf;
+	unsigned int worker_threads;
+	unsigned int req_queue_size;
 
 	/* internal data */
 	struct srdb *srdb;
@@ -62,9 +65,20 @@ struct config {
 	struct graph *graph;
 	struct hashmap *routers;
 	struct lpm_tree *prefixes;
+	struct mqueue *req_queue;
 };
 
 static struct config _cfg;
+
+static void config_set_defaults(struct config *cfg)
+{
+	strcpy(cfg->rules_file, "rules.conf");
+	strcpy(cfg->ovsdb_conf.ovsdb_client, "ovsdb-client");
+	strcpy(cfg->ovsdb_conf.ovsdb_server, "tcp:[::1]:6640");
+	strcpy(cfg->ovsdb_conf.ovsdb_database, "SR_test");
+	cfg->worker_threads = 1;
+	cfg->req_queue_size = 16;
+}
 
 static int set_status(struct srdb_flowreq_entry *req, enum flowreq_status st)
 {
@@ -260,7 +274,7 @@ out_error:
 	return NULL;
 }
 
-static void read_flowreq(struct srdb_entry *entry)
+static void process_request(struct srdb_entry *entry)
 {
 	struct srdb_flowreq_entry *req = (struct srdb_flowreq_entry *)entry;
 	struct router *rt, *dstrt;
@@ -338,6 +352,13 @@ static void read_flowreq(struct srdb_entry *entry)
 
 	set_status(req, STATUS_ALLOWED);
 	commit_flow(req, rt, fl);
+}
+
+static void read_flowreq(struct srdb_entry *entry)
+{
+	struct srdb_flowreq_entry *req = (struct srdb_flowreq_entry *)entry;
+
+	mq_push(_cfg.req_queue, &req);
 }
 
 static void read_nodestate(struct srdb_entry *entry)
@@ -424,6 +445,7 @@ static void read_linkstate(struct srdb_entry *entry)
 }
 
 #define READ_STRING(b, arg, dst) sscanf(b, #arg " \"%[^\"]\"", (dst)->arg)
+#define READ_INT(b, arg, dst) sscanf(b, #arg " %i", &(dst)->arg)
 
 static int load_config(const char *fname, struct config *cfg)
 {
@@ -445,6 +467,16 @@ static int load_config(const char *fname, struct config *cfg)
 			continue;
 		if (READ_STRING(buf, rules_file, cfg))
 			continue;
+		if (READ_INT(buf, worker_threads, cfg)) {
+			if (!cfg->worker_threads)
+				cfg->worker_threads = 1;
+			continue;
+		}
+		if (READ_INT(buf, req_queue_size, cfg)) {
+			if (!cfg->req_queue_size)
+				cfg->req_queue_size = 1;
+			continue;
+		}
 		pr_err("parse error: unknown line `%s'.", buf);
 		ret = -1;
 		break;
@@ -452,6 +484,24 @@ static int load_config(const char *fname, struct config *cfg)
 
 	fclose(fp);
 	return ret;
+}
+
+static void *thread_worker(void *arg __unused)
+{
+	struct srdb_entry *entry;
+	struct srdb_table *tbl;
+
+	tbl = srdb_table_by_name(_cfg.srdb->tables, "FlowReq");
+
+	for (;;) {
+		mq_pop(_cfg.req_queue, &entry);
+		if (!entry)
+			break;
+		process_request(entry);
+		free_srdb_entry(tbl->desc, entry);
+	}
+
+	return NULL;
 }
 
 struct monitor_arg {
@@ -521,6 +571,7 @@ static void launch_srdb(pthread_t *thr, struct monitor_arg *args)
 
 	tbl = srdb_table_by_name(_cfg.srdb->tables, "FlowReq");
 	srdb_set_read_cb(_cfg.srdb, "FlowReq", read_flowreq);
+	tbl->delayed_free = true;
 	args[2].srdb = _cfg.srdb;
 	args[2].table = tbl;
 	args[2].columns = "!delete,!modify";
@@ -533,6 +584,7 @@ int main(int argc, char **argv)
 	const char *conf = DEFAULT_CONFIG;
 	struct monitor_arg margs[3];
 	pthread_t mon_thr[3];
+	pthread_t *workers;
 	unsigned int i;
 
 	if (argc > 2) {
@@ -542,6 +594,8 @@ int main(int argc, char **argv)
 
 	if (argc == 2)
 		conf = argv[1];
+
+	config_set_defaults(&_cfg);
 
 	if (load_config(conf, &_cfg) < 0) {
 		pr_err("failed to load configuration file.");
@@ -578,11 +632,35 @@ int main(int argc, char **argv)
 		return -1;
 	}
 
+	_cfg.req_queue = mq_init(_cfg.req_queue_size,
+				 sizeof(struct srdb_entry *));
+	if (!_cfg.req_queue) {
+		pr_err("failed to initialize request queue.\n");
+		return -1;
+	}
+
+	workers = malloc(_cfg.worker_threads * sizeof(pthread_t));
+	if (!workers) {
+		pr_err("failed to allocate space for worker threads.\n");
+		return -1;
+	}
+
+	for (i = 0; i < _cfg.worker_threads; i++)
+		pthread_create(&workers[i], NULL, thread_worker, NULL);
+
 	launch_srdb(mon_thr, margs);
+
+	for (i = 0; i < _cfg.worker_threads; i++)
+		pthread_join(workers[i], NULL);
 
 	for (i = 0; i < sizeof(mon_thr) / sizeof(pthread_t); i++)
 		pthread_join(mon_thr[i], NULL);
 
+	free(workers);
+	mq_destroy(_cfg.req_queue);
+	lpm_destroy(_cfg.prefixes);
+	hmap_destroy(_cfg.routers);
+	graph_destroy(_cfg.graph, false);
 	srdb_destroy(_cfg.srdb);
 
 	return 0;
