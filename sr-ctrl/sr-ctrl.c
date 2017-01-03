@@ -190,7 +190,7 @@ static bool prune_delay(struct edge *e, void *arg)
 
 	link = (struct link *)e->data;
 
-	return link->delay < delay;
+	return link->delay > delay;
 }
 
 static struct arraylist *build_segpath(struct graph *g, struct flow *fl,

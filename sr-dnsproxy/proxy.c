@@ -42,6 +42,7 @@ void inthand(int signum) {
 
   } else if (signum == SIGUSR1) {
     print_debug("Thread is stopped gracefully\n");
+    pthread_exit(NULL);
   } else {
     fprintf(stderr, "Does not understand signal number %d\n", signum);
   }

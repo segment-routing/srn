@@ -233,7 +233,7 @@ int init_monitor(struct monitor_arg *args, __attribute__((unused)) pthread_t *mo
   }
 
   for (rp = result; rp != NULL; rp = rp->ai_next) {
-    server_sfd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
+    server_sfd = socket(rp->ai_family, rp->ai_socktype | SOCK_CLOEXEC, rp->ai_protocol);
     if (server_sfd == -1)
       continue;
 
