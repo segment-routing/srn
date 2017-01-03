@@ -53,7 +53,7 @@
 
 // TODO Temporary defines
 #define DEFAULT_DEST "accessI"
-#define DEFAULT_DEST_ADDR "fc18::42"
+#define DEFAULT_DEST_ADDR "fc00:2:0:8::42"
 #define DEFAULT_BANDWIDTH 5
 #define DEFAULT_LATENCY 0
 #define DEFAULT_APP_NAME "accessA"
