@@ -33,7 +33,7 @@ void client_callback(void *arg, int status, __attribute__((unused)) int timeouts
     reply->addr_len = call_args->addr_len;
     reply->bandwidth_req = call_args->bandwidth_req;
     reply->latency_req = call_args->latency_req;
-    reply->app_name_req = call_args->app_name_req;
+    strncpy(reply->app_name_req, call_args->app_name_req, SLEN +1);
     memcpy(reply->data, abuf, alen);
     DNS_HEADER_SET_QID((char *) reply->data, call_args->qid);
     if (queue_append(&inner_queue, (struct node *) reply)) {

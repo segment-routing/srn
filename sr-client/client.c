@@ -10,7 +10,7 @@ int test_srdns(const char *dst, short port, const char *dns_servername)
 {
   static char buf[] = "Hello with Segment Routing :)\n";
   int fd = sr_socket(SOCK_STREAM, IPPROTO_TCP, dst, port, dns_servername,
-                     "test.com", 5, 5);
+                     "accessA", 5, 5);
   if (fd < 0) {
     fprintf(stderr, "Cannot create socket\n");
     return -1;

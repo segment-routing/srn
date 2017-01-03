@@ -101,6 +101,8 @@
 #define DNS_RR_SET_LEN(r, v)            DNS__SET16BIT((r) + 8, v)
 
 /* Macros for constructing the fixed part of a EDNS option */
+#define DNS_OPT_CODE(r)                 DNS__16BIT(r)
+#define DNS_OPT_LEN(r)                  DNS__16BIT((r) + 2)
 #define DNS_OPT_SET_CODE(r, v)          DNS__SET16BIT(r, v)
 #define DNS_OPT_SET_LEN(r, v)           DNS__SET16BIT((r) + 2, v)
 

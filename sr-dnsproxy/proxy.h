@@ -38,8 +38,11 @@
 #define C_IN 1
 #define T_AAAA 28
 #define T_SRH 65280
+#define T_OPT 41
 
 #define DNS_HEADER_LENGTH 12
+#define DNS_FIXED_HEADER_QUERY 4
+#define EDNSFIXEDSZ 11
 #define DNS_RR_NAME_OFFSET DNS_HEADER_LENGTH
 
 #define T_OPT_OPCODE_APP_NAME 65001
@@ -49,9 +52,6 @@
 // TODO Temporary defines
 #define DEFAULT_DEST "accessI"
 #define DEFAULT_DEST_ADDR "fc00:2:0:8::42"
-#define DEFAULT_BANDWIDTH 5
-#define DEFAULT_LATENCY 0
-#define DEFAULT_APP_NAME "accessA"
 
 struct mapping_qid;
 
@@ -62,7 +62,7 @@ struct query {
   size_t length;
   uint32_t bandwidth_req;
   uint32_t latency_req;
-  const char *app_name_req;
+  char app_name_req [SLEN + 1];
   char data [0];
 };
 
@@ -75,7 +75,7 @@ struct reply {
   uint16_t additional_record_count;
   uint32_t bandwidth_req;
   uint32_t latency_req;
-  const char *app_name_req;
+  char app_name_req [SLEN + 1];
   char ovsdb_req_uuid[SLEN + 1];
   char data [0];
 };
@@ -86,7 +86,7 @@ struct callback_args {
   socklen_t addr_len;
   uint32_t bandwidth_req;
   uint32_t latency_req;
-  const char *app_name_req;
+  char app_name_req [SLEN + 1];
 };
 
 struct monitor_arg {

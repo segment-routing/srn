@@ -15,6 +15,85 @@
 int server_sfd = -1;
 struct queue_thread queries;
 
+static int dns_parse_edns(struct query *query, char **name) {
+
+  unsigned char *aptr = ((unsigned char *) query->data);
+  long len = 0;
+  int status = 0, i = 0;
+  uint16_t qdcount, ancount, nscount, arcount;
+
+  /* Default values */
+  query->bandwidth_req = 0;
+  query->latency_req = 0;
+  *query->app_name_req = '\0';
+
+  /* Fetch the question and additional record counts from the header. */
+  qdcount = DNS_HEADER_QDCOUNT(aptr);
+  ancount = DNS_HEADER_ANCOUNT(aptr);
+  nscount = DNS_HEADER_NSCOUNT(aptr);
+  arcount = DNS_HEADER_ARCOUNT(aptr);
+  if (qdcount != 1 || ancount != 0 || nscount != 0 || arcount > 1) {
+    fprintf(stderr, "Unexpected number of records for a DNS query: \
+      qdcount = %d - ancount = %d - nscount = %d - arcount = %d\n",
+      qdcount, ancount, nscount, arcount);
+    return -1;
+  }
+
+  aptr = aptr + DNS_HEADER_LENGTH;
+  status = ares_expand_name(aptr, (unsigned char *) query->data, query->length, name, &len);
+  if (status != ARES_SUCCESS) {
+    fprintf(stderr, "ERROR Expanding name: %s\n", ares_strerror(status));
+    return -1;
+  }
+  aptr += len + DNS_FIXED_HEADER_QUERY;
+
+  if (arcount == 0) {
+    /* No special request for the controller */
+    print_debug("A DNS request without information\n");
+    inet_ntop(AF_INET6, &query->addr.sin6_addr, query->app_name_req, SLEN + 1);
+    return 0;
+  }
+
+  /* Examine the EDNS RR */
+  aptr++;
+  if (DNS_RR_TYPE(aptr) != T_OPT) {
+    fprintf(stderr, "The additional record of the request is not an OPT record\n");
+  }
+  // TODO We could use max_udp_size //uint16_t max_udp_size = DNS_RR_CLASS(q);
+  uint16_t edns_length = DNS_RR_LEN(aptr);
+  aptr += (EDNSFIXEDSZ-1);
+
+  /* EDNS options in the DNS query */
+  uint16_t option_code = 0;
+  uint16_t option_length = 0;
+  for (i = 0; i < edns_length; i = i + 4 + option_length) {
+    option_code = DNS_OPT_CODE(aptr + i);
+    option_length = DNS_OPT_LEN(aptr + i);
+    switch (option_code) {
+    case T_OPT_OPCODE_APP_NAME:
+      memcpy(query->app_name_req, aptr + i + 4, option_length);
+      break;
+    case T_OPT_OPCODE_BANDWIDTH:
+      query->bandwidth_req = DNS__32BIT(aptr + i + 4);
+      break;
+    case T_OPT_OPCODE_LATENCY:
+      query->latency_req = DNS__32BIT(aptr + i + 4);
+      break;
+    default: /* Unknown values are skipped */
+      print_debug("Unknown option code %d in a T_OPT RR of a DNS query\n", option_code);
+      break;
+    }
+  }
+
+  /* Use the IPv6 address if the application name was not given */
+  if (*query->app_name_req == '\0') {
+    print_debug("No application name received -> we use the IPv6 address\n");
+    inet_ntop(AF_INET6, &query->addr.sin6_addr, query->app_name_req, SLEN + 1);
+  }
+
+  return 0;
+}
+
 static void server_producer_process(fd_set *read_fds) {
 
   struct query *query = NULL;
@@ -40,10 +119,6 @@ static void server_producer_process(fd_set *read_fds) {
       FREE_POINTER(query);
     } else {
       query->length = (uint16_t) length;
-      query->bandwidth_req = DEFAULT_BANDWIDTH; /* TODO Extract */
-      query->latency_req = DEFAULT_LATENCY; /* TODO Extract */
-      query->app_name_req = DEFAULT_APP_NAME; /* TODO Extract */
-      // TODO Look at the cache
       if (mqueue_append(&queries, (struct node *) query)) {
         /* Dropping request */
         FREE_POINTER(query);
@@ -86,24 +161,22 @@ static void *server_consumer_main(__attribute__((unused)) void *_arg) {
   int err = 0;
   struct query *query = NULL;
   struct callback_args *args = NULL;
+  char *name = NULL;
 
   mqueue_walk_dequeue(&queries, query, struct query *) {
 
-    char *name;
-    unsigned char *aptr = ((unsigned char *) query->data) + DNS_RR_NAME_OFFSET;
-    long len = 0;
-    int status = 0;
-
-    status = ares_expand_name(aptr, (unsigned char *) query->data, query->length, &name, &len);
-    if (status != ARES_SUCCESS) {
-      fprintf(stderr, "ERROR Expanding name: %s\n", ares_strerror(status)); /* drop query */
-      goto free_query;
-    }
+    print_debug("A server consumer thread dequeues a query\n");
 
     args = malloc(sizeof(struct callback_args));
     if (!args) {
       fprintf(stderr, "Out of memory !\n");
-      goto free_ares_string;
+      goto free_query;
+    }
+
+    /* Parse Query and EDNS0 RR */
+    if (dns_parse_edns(query, &name)) {
+      fprintf(stderr, "A query was not parsed correctly and hence dropped\n");
+      goto err_free_args;
     }
 
     args->qid = DNS_HEADER_QID((char *) query->data);
@@ -111,19 +184,29 @@ static void *server_consumer_main(__attribute__((unused)) void *_arg) {
     args->addr_len = query->addr_len;
     args->bandwidth_req = query->bandwidth_req;
     args->latency_req = query->latency_req;
-    args->app_name_req = query->app_name_req;
+    strncpy(args->app_name_req, query->app_name_req, SLEN + 1);
+
+    // TODO Look at the cache
 
     if ((err = pthread_mutex_lock(&channel_mutex))) {
       perror("Cannot lock the mutex to append");
-      goto free_ares_string;
+      goto err_free_ares_string;
     }
     ares_query(channel, name, C_IN, T_AAAA, client_callback, (void *) args);
     pthread_mutex_unlock(&channel_mutex);
 
-free_ares_string:
     ares_free_string(name);
+
 free_query:
     FREE_POINTER(query);
+    continue;
+
+    /* Errors */
+err_free_ares_string:
+    ares_free_string(name);
+err_free_args:
+    FREE_POINTER(args);
+    goto free_query;
   }
 
   print_debug("A server consumer thread has finished\n");
