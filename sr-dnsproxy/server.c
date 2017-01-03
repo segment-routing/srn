@@ -135,7 +135,7 @@ int init_server(pthread_t *server_consumer_thread, pthread_t *server_producer_th
 
   int status = 0;
 
-  mqueue_init(&queries, MAX_QUERIES);
+  mqueue_init(&queries, max_queries);
 
   /* Thread launching */
   status = pthread_create(server_consumer_thread, NULL, server_consumer_main, NULL);

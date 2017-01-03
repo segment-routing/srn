@@ -9,35 +9,67 @@
 
 #include "proxy.h"
 
-/* Some of the code was taken from the "adig.c" file in the c-ares library */
-int parse_arguments(int argc, char *argv[], int *optmask, char **listen_port, char **remote_port, struct ares_addr_node **servers) {
+#define DEFAULT_DNS_PORT "53"
 
-  int opt = 0;
-  int err = 0;
+int max_queries;
+struct config cfg;
+
+#define READ_STRING(b, arg, dst) sscanf(b, #arg " \"%[^\"]\"", (dst)->arg)
+
+static void strip_crlf(char *line) {
+	char *s;
+	s = strchr(line, '\n');
+	if (s)
+		*s = 0;
+	s = strchr(line, '\r');
+	if (s)
+		*s = 0;
+}
+
+/* Some of the code was taken from the "adig.c" file in the c-ares library */
+int load_config(const char *fname, int *optmask, struct ares_addr_node **servers) {
+	char buf[128];
+	int ret = 0;
+	FILE *fp;
+  char *ptr;
+  char dns_server [SLEN + 1];
   struct ares_addr_node *srvr = NULL;
   struct hostent *hostent = NULL;
 
-  *listen_port = NULL;
-  *remote_port = NULL;
-  *servers = NULL;
+	fp = fopen(fname, "r");
+	if (!fp) {
+    perror("Cannot open config file\n");
+    destroy_addr_list(*servers);
+    *servers = NULL;
+		return -1;
+  }
 
-  while ((opt = getopt(argc, argv, "p:r:q:")) != -1) {
-    switch (opt) {
-    case 'p':
-      if (*listen_port) {
-        fprintf(stderr, "The port to listen DNS requests was already specified\n");
+	while (fgets(buf, 128, fp)) {
+		strip_crlf(buf);
+		if (READ_STRING(buf, ovsdb_client, &cfg.ovsdb_conf))
+			continue;
+		if (READ_STRING(buf, ovsdb_server, &cfg.ovsdb_conf))
+			continue;
+		if (READ_STRING(buf, ovsdb_database, &cfg.ovsdb_conf))
+			continue;
+		if (READ_STRING(buf, dns_fifo, &cfg))
+			continue;
+		if (READ_STRING(buf, router_name, &cfg))
+			continue;
+    if (READ_STRING(buf, dns_server_port, &cfg))
+      continue;
+    if (READ_STRING(buf, propxy_listen_port, &cfg))
+      continue;
+		if (READ_STRING(buf, max_parallel_queries, &cfg)) {
+      max_queries = strtol(cfg.max_parallel_queries, &ptr, 10);
+      if (*ptr != '\0' || max_queries < 0) {
+        fprintf(stderr, "parse error: not a positive integer as argument `%s'.", buf);
         goto out_err;
       }
-      *listen_port = malloc(strlen(optarg));
-      if (!*listen_port) {
-        fprintf(stderr, "Out of memory!\n");
-        goto out_err;
-      }
-      strcpy(*listen_port, optarg);
-      break;
-    case 'r':
-      /* User-specified name servers override default ones. */
-      srvr = malloc(sizeof(struct ares_addr_node));
+			continue;
+    }
+    if (sscanf(buf, "dns_server \"%[^\"]\"", dns_server)) {
+      srvr = malloc(sizeof(*srvr));
       if (!srvr) {
         fprintf(stderr, "Out of memory!\n");
         goto out_err;
@@ -54,19 +86,19 @@ int parse_arguments(int argc, char *argv[], int *optmask, char **listen_port, ch
           goto out_err;
         }
         switch (hostent->h_addrtype) {
-          case AF_INET:
-            srvr->family = AF_INET;
-            memcpy(&srvr->addr.addr4, hostent->h_addr_list[0],
-                   sizeof(srvr->addr.addr4));
-            break;
-          case AF_INET6:
-            srvr->family = AF_INET6;
-            memcpy(&srvr->addr.addr6, hostent->h_addr_list[0],
-                   sizeof(srvr->addr.addr6));
-            break;
-          default:
-            fprintf(stderr, "adig: server %s unsupported address family.\n", optarg);
-            goto out_err;
+        case AF_INET:
+          srvr->family = AF_INET;
+          memcpy(&srvr->addr.addr4, hostent->h_addr_list[0],
+                 sizeof(srvr->addr.addr4));
+          break;
+        case AF_INET6:
+          srvr->family = AF_INET6;
+          memcpy(&srvr->addr.addr6, hostent->h_addr_list[0],
+                 sizeof(srvr->addr.addr6));
+          break;
+        default:
+          fprintf(stderr, "adig: server %s unsupported address family.\n", optarg);
+          goto out_err;
         }
       }
       /* Notice that calling ares_init_options() without servers in the
@@ -79,49 +111,25 @@ int parse_arguments(int argc, char *argv[], int *optmask, char **listen_port, ch
        * If this flag is not set here the result shall be the same but
        * ares_init_options() will do needless work. */
       *optmask |= ARES_OPT_SERVERS;
-      break;
-    case 'q':
-      if (*remote_port) {
-        fprintf(stderr, "The remote port of the DNS servers was already specified\n");
-        goto out_err;
-      }
-      *remote_port = malloc(strlen(optarg));
-      if (!*remote_port) {
-        fprintf(stderr, "Out of memory !\n");
-        goto out_err;
-      }
-      strcpy(*remote_port, optarg);
-      break;
-    default: /* '?' */
-      fprintf(stderr, "Usage: %s [-p listen_port] [-r dns_server] [-q dns_port]\n", argv[0]);
-      goto out_err;
+      continue;
     }
-  }
-
-  if (!*remote_port) {
-    *remote_port = malloc(3);
-    if (!*remote_port) {
-      fprintf(stderr, "Out of memory !\n");
-      goto out_err;
-    }
-    strncpy(*remote_port, "53", 3);
-  }
-  if (!*listen_port) {
-    *listen_port = malloc(3);
-    if (!*listen_port) {
-      fprintf(stderr, "Out of memory !\n");
-      goto out_err;
-    }
-    strncpy(*listen_port, "53", 3);
-  }
-
-out:
-  return err;
 out_err:
-  FREE_POINTER(*listen_port);
-  FREE_POINTER(*remote_port);
-  destroy_addr_list(*servers);
-  *servers = NULL;
-  err = -1;
-  goto out;
+    destroy_addr_list(*servers);
+    *servers = NULL;
+		fprintf(stderr, "parse error: unknown line `%s'.", buf);
+		ret = -1;
+		break;
+	}
+
+  /* Default values */
+  if (*cfg.dns_server_port == '\0') {
+    strncpy(cfg.dns_server_port, DEFAULT_DNS_PORT, SLEN + 1);
+  }
+
+  if (*cfg.propxy_listen_port == '\0') {
+    strncpy(cfg.propxy_listen_port, DEFAULT_DNS_PORT, SLEN + 1);
+  }
+
+	fclose(fp);
+	return ret;
 }

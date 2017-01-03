@@ -33,8 +33,6 @@
   #define print_debug(fmt, args...)
 #endif
 
-#define MAX_QUERIES 5 /* TODO Change by parameter */
-
 #define TIMEOUT_LOOP 1 /* (sec) */
 
 #define C_IN 1
@@ -47,9 +45,6 @@
 #define T_OPT_OPCODE_APP_NAME 65001
 #define T_OPT_OPCODE_BANDWIDTH 65002
 #define T_OPT_OPCODE_LATENCY 65003
-
-#define DNS_FIFO_PATH "../dns.fifo"
-#define ROUTER_NAME "A"
 
 // TODO Temporary defines
 #define DEFAULT_DEST "accessI"
@@ -100,7 +95,18 @@ struct monitor_arg {
 	const char *columns;
 };
 
+struct config {
+	struct ovsdb_config ovsdb_conf;
+	char dns_fifo[SLEN + 1];
+  char router_name[SLEN + 1];
+  char max_parallel_queries[SLEN + 1];
+  char propxy_listen_port[SLEN + 1];
+  char dns_server_port[SLEN + 1];
+};
+
 extern volatile sig_atomic_t stop;
+extern int max_queries;
+extern struct config cfg;
 extern struct queue_thread queries;
 extern struct queue_thread replies;
 extern struct queue_thread replies_waiting_controller;
@@ -140,7 +146,7 @@ static inline void append_addr_list(struct ares_addr_node **head, struct ares_ad
     *head = node;
 }
 
-int parse_arguments(int argc, char *argv[], int *optmask, char **listen_port, char **remote_port, struct ares_addr_node **servers);
+int load_config(const char *fname, int *optmask, struct ares_addr_node **servers);
 
 int init_server(pthread_t *server_consumer_thread, pthread_t *server_producer_thread);
 void close_server();
@@ -149,7 +155,7 @@ void client_callback(void *arg, int status, __attribute__((unused)) int timeouts
 int init_client(int optmask, struct ares_addr_node *servers, pthread_t *client_consumer_thread, pthread_t *client_producer_thread);
 void close_client();
 
-int init_monitor(const char *listen_port, struct monitor_arg *args, pthread_t *monitor_flowreqs_thread, pthread_t *monitor_flows_thread);
+int init_monitor(struct monitor_arg *args, pthread_t *monitor_flowreqs_thread, pthread_t *monitor_flows_thread);
 void close_monitor();
 
 #endif /* PROXY__H */

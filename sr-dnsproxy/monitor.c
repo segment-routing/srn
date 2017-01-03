@@ -209,7 +209,7 @@ static void *thread_flowstate_monitor(void *_arg) {
 	return NULL;
 }
 
-int init_monitor(const char *listen_port, struct monitor_arg *args, __attribute__((unused)) pthread_t *monitor_flowreqs_thread, pthread_t *monitor_flows_thread) {
+int init_monitor(struct monitor_arg *args, __attribute__((unused)) pthread_t *monitor_flowreqs_thread, pthread_t *monitor_flows_thread) {
 
   struct addrinfo hints;
   struct addrinfo *result, *rp;
@@ -226,7 +226,7 @@ int init_monitor(const char *listen_port, struct monitor_arg *args, __attribute_
   hints.ai_addr = NULL;
   hints.ai_next = NULL;
 
-  status = getaddrinfo(NULL, listen_port, &hints, &result);
+  status = getaddrinfo(NULL, cfg.propxy_listen_port, &hints, &result);
   if (status != 0) {
     fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(status));
     goto out_err;
@@ -253,14 +253,7 @@ int init_monitor(const char *listen_port, struct monitor_arg *args, __attribute_
 
   /* Init ovsdb monitoring */
 	struct srdb_table *tbl;
-  struct ovsdb_config ovsdb_conf;
-
-  /* TODO Add config file for that */
-  snprintf(ovsdb_conf.ovsdb_client, SLEN + 1, "ovsdb-client");
-  snprintf(ovsdb_conf.ovsdb_server, SLEN + 1, "tcp:[::1]:6640");
-  snprintf(ovsdb_conf.ovsdb_database, SLEN + 1, "SR_test");
-
-  srdb = srdb_new(&ovsdb_conf);
+  srdb = srdb_new(&cfg.ovsdb_conf);
 	if (!srdb) {
 		fprintf(stderr, "Cannot connect to the database\n");
 		status = -1;
@@ -274,9 +267,9 @@ int init_monitor(const char *listen_port, struct monitor_arg *args, __attribute_
 	args[0].columns = "!initial,!delete,!insert";
 	pthread_create(monitor_flowreqs_thread, NULL, thread_monitor, (void *)&args[0]);
 
-	pthread_create(monitor_flows_thread, NULL, thread_flowstate_monitor, (void *) DNS_FIFO_PATH); /* TODO Put in a config file */
+	pthread_create(monitor_flows_thread, NULL, thread_flowstate_monitor, (void *) cfg.dns_fifo);
 
-  mqueue_init(&replies_waiting_controller, MAX_QUERIES);
+  mqueue_init(&replies_waiting_controller, max_queries);
 
 out_err:
   return status;

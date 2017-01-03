@@ -56,13 +56,16 @@ int main(int argc, char *argv[]) {
 
 	struct monitor_arg args[3];
 
-  char *listen_port = NULL;
   struct ares_addr_node *servers = NULL;
-  char *remote_port = NULL;
 
   int optmask = ARES_OPT_FLAGS;
 
-  if (parse_arguments(argc, argv, &optmask, &listen_port, &remote_port, &servers)) {
+  if (argc != 2) {
+    fprintf(stderr, "Usage: %s config_file\n", argv[0]);
+    goto out_err;
+  }
+
+  if (load_config(argv[1], &optmask, &servers)) {
     goto out_err;
   }
 
@@ -85,7 +88,7 @@ int main(int argc, char *argv[]) {
   }
 
   /* Setup of the controller monitoring */
-  err = init_monitor(listen_port, args, &monitor_flowreqs_thread, &monitor_flows_thread);
+  err = init_monitor(args, &monitor_flowreqs_thread, &monitor_flows_thread);
   if (err) {
     goto out_err_free_args;
   }
@@ -103,8 +106,6 @@ int main(int argc, char *argv[]) {
   }
 
   /* Get rid of memory allocated for arguments */
-  FREE_POINTER(listen_port);
-  FREE_POINTER(remote_port);
   destroy_addr_list(servers);
   servers = NULL;
 
@@ -143,8 +144,6 @@ int main(int argc, char *argv[]) {
 out:
   exit(err);
 out_err_free_args:
-  FREE_POINTER(listen_port);
-  FREE_POINTER(remote_port);
   destroy_addr_list(servers);
   servers = NULL;
 out_err:

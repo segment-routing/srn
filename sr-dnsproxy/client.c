@@ -107,7 +107,7 @@ static void *client_consumer_main(__attribute__((unused)) void *args) {
   print_debug("A client consumer thread has started\n");
 
   /* Get the OpenFlow ID of this thread */
-  strncpy(router_entry.router, ROUTER_NAME, SLEN + 1); /* TODO Put it as a config parameter */
+  strncpy(router_entry.router, cfg.router_name, SLEN + 1);
   if (srdb_insert(srdb, router_tbl, (struct srdb_entry *) &router_entry, thread_id)) {
     fprintf(stderr, "Problem during extraction of thread ID -> stop thread\n");
     return NULL;
@@ -130,7 +130,7 @@ static void *client_consumer_main(__attribute__((unused)) void *args) {
     strncpy(entry.source, reply->app_name_req, SLEN + 1);
     entry.bandwidth = reply->bandwidth_req;
     entry.delay = reply->latency_req;
-    strncpy(entry.router, ROUTER_NAME, SLEN + 1); /* TODO Put it as a config parameter */
+    strncpy(entry.router, cfg.router_name, SLEN + 1);
     strncpy(entry.request_id, reply->ovsdb_req_uuid, SLEN + 1);
 
     srdb_insert(srdb, tbl, (struct srdb_entry *) &entry, NULL);
@@ -170,7 +170,7 @@ int init_client(int optmask, struct ares_addr_node *servers, pthread_t *client_c
     }
   }
 
-  mqueue_init(&replies, MAX_QUERIES);
+  mqueue_init(&replies, max_queries);
 
   pthread_mutex_init(&channel_mutex, NULL);
 
