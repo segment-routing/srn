@@ -17,9 +17,9 @@
 int ares_parse_srh_reply(const unsigned char *abuf, int alen,
                          struct ares_srh_reply **srh_out)
 {
-  unsigned int qdcount, ancount, arcount, i;
+  unsigned int qdcount, ancount, arcount, nscount, i;
   const unsigned char *aptr;
-  int status;
+  int status = 0, srh_found = 0;
   unsigned int rr_type, rr_class, rr_ttl;
   unsigned short rr_len;
   long len;
@@ -36,6 +36,7 @@ int ares_parse_srh_reply(const unsigned char *abuf, int alen,
   /* Fetch the question and answer count from the header. */
   qdcount = DNS_HEADER_QDCOUNT (abuf);
   ancount = DNS_HEADER_ANCOUNT (abuf);
+  nscount = DNS_HEADER_NSCOUNT (abuf);
   arcount = DNS_HEADER_ARCOUNT (abuf);
   if (qdcount != 1)
     return ARES_EBADRESP;
@@ -44,7 +45,7 @@ int ares_parse_srh_reply(const unsigned char *abuf, int alen,
 
   /* Expand the name from the question, and skip past the question. */
   aptr = abuf + HFIXEDSZ;
-  status = ares_expand_name (aptr, abuf, alen, &hostname, &len);
+  status = ares__expand_name_for_response (aptr, abuf, alen, &hostname, &len);
   if (status != ARES_SUCCESS)
     return status;
 
@@ -56,10 +57,10 @@ int ares_parse_srh_reply(const unsigned char *abuf, int alen,
   aptr += len + QFIXEDSZ;
 
   /* Examine each answer resource record (RR) in turn. */
-  for (i = 0; i < ancount + arcount; i++)
+  for (i = 0; i < ancount + nscount + arcount; i++)
   {
     /* Decode the RR up to the data field. */
-    status = ares_expand_name (aptr, abuf, alen, &rr_name, &len);
+    status = ares__expand_name_for_response (aptr, abuf, alen, &rr_name, &len);
     if (status != ARES_SUCCESS)
     {
       break;
@@ -84,6 +85,7 @@ int ares_parse_srh_reply(const unsigned char *abuf, int alen,
     /* Check if we are really looking at a SRH record */
     if (rr_class == C_IN && rr_type == T_SRH)
     {
+      srh_found = 1;
       if (rr_len < SRH_MIN_LEN) {
         status = ARES_EBADRESP;
         break;
@@ -116,6 +118,11 @@ int ares_parse_srh_reply(const unsigned char *abuf, int alen,
 
     /* Move on to the next record */
     aptr += rr_len;
+  }
+
+  if (status == ARES_SUCCESS && !srh_found)
+  {
+    status = ARES_ENODATA;
   }
 
   if (hostname)

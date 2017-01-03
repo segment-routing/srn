@@ -119,6 +119,9 @@ void ares_free_data(void *dataptr)
         if (ptr->data.soa_reply.hostmaster)
           ares_free(ptr->data.soa_reply.hostmaster);
 
+      case ARES_DATATYPE_SRH_REPLY:
+        break;
+
       default:
         return;
     }
@@ -206,7 +209,7 @@ void *ares_malloc_data(ares_datatype type)
         ptr->data.soa_reply.retry = 0;
         ptr->data.soa_reply.expire = 0;
         ptr->data.soa_reply.minttl = 0;
-	break;
+	      break;
 
       case ARES_DATATYPE_SRH_REPLY:
         ptr->data.srh_reply.success = 0;
@@ -216,6 +219,7 @@ void *ares_malloc_data(ares_datatype type)
         memset(&ptr->data.srh_reply.binding_segment, 0,
                sizeof(ptr->data.srh_reply.binding_segment));
         ptr->data.srh_reply.rr_ttl = 0;
+        break;
 
       default:
         ares_free(ptr);

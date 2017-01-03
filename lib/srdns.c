@@ -83,7 +83,9 @@ static void callback(void *_arg, int status, __attribute__((unused)) int timeout
     fprintf(stderr, "Problem parsing the SRH record: %s\n", ares_strerror(status));
     goto free_aaaa;
   }
-  memcpy(args->src_prefix, &srh_out->prefix.addr, 16);
+  if (args->src_prefix) { /* Optional */
+    memcpy(args->src_prefix, &srh_out->prefix.addr, 16);
+  }
   memcpy(args->binding_segment, &srh_out->binding_segment, 16);
 
   *stop = 1;
@@ -117,6 +119,7 @@ int make_srdns_request(const char *destination, const char *servername, char *ap
   struct ares_addr_node *srvr = NULL, *servers = NULL;
   ares_channel channel = NULL;
   struct ares_options options;
+  memset(&options, 0, sizeof(options));
   int optmask = ARES_OPT_FLAGS, dnsclass = C_IN, type = T_AAAA;
   options.ednspsz = 1280;
   optmask |= ARES_OPT_EDNSPSZ;
