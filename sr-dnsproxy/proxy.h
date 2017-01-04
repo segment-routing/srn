@@ -11,6 +11,7 @@
 #include <ares.h>
 
 #include <srdb.h>
+#include <hashmap.h>
 
 #include "linked_list.h"
 
@@ -49,10 +50,6 @@
 #define T_OPT_OPCODE_BANDWIDTH 65002
 #define T_OPT_OPCODE_LATENCY 65003
 
-// TODO Temporary defines
-#define DEFAULT_DEST "accessI"
-#define DEFAULT_DEST_ADDR "fc00:2:0:8::42"
-
 struct mapping_qid;
 
 struct query {
@@ -77,6 +74,8 @@ struct reply {
   uint32_t latency_req;
   char app_name_req [SLEN + 1];
   char ovsdb_req_uuid[SLEN + 1];
+  char destination[SLEN + 1];
+  char destination_addr[SLEN + 1];
   char data [0];
 };
 
@@ -114,6 +113,7 @@ extern struct queue_thread replies_waiting_controller;
 pthread_mutex_t channel_mutex;
 extern ares_channel channel;
 extern int server_sfd;
+extern struct hashmap *dns_cache;
 extern struct srdb *srdb;
 
 #define MAX_DNS_PACKET_SIZE 512 /* TODO Advertize value with EDNS0 */

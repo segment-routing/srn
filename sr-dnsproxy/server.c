@@ -72,6 +72,7 @@ static int dns_parse_edns(struct query *query, char **name) {
     switch (option_code) {
     case T_OPT_OPCODE_APP_NAME:
       memcpy(query->app_name_req, aptr + i + 4, option_length);
+      query->app_name_req[option_length] = '\0';
       break;
     case T_OPT_OPCODE_BANDWIDTH:
       query->bandwidth_req = DNS__32BIT(aptr + i + 4);
@@ -154,6 +155,26 @@ out:
   return NULL;
 }
 
+static struct reply *get_from_dns_cache(char *dns_name) {
+
+  hmap_read_lock(dns_cache);
+  struct reply *stored_reply = hmap_get(dns_cache, dns_name);
+  if (stored_reply) {
+    /* TODO Delete if TTL is exceeded */
+  }
+  hmap_unlock(dns_cache);
+
+  struct reply *dns_reply = NULL;
+  if (stored_reply) {
+    dns_reply = malloc(REPLY_ALLOC);
+    if (!dns_reply) {
+      fprintf(stderr, "Out of memory\n");
+    }
+    memcpy(dns_reply, stored_reply, sizeof(*stored_reply) + stored_reply->data_length);
+  }
+  return dns_reply;
+}
+
 static void *server_consumer_main(__attribute__((unused)) void *_arg) {
 
   print_debug("A server consumer thread has started\n");
@@ -167,33 +188,53 @@ static void *server_consumer_main(__attribute__((unused)) void *_arg) {
 
     print_debug("A server consumer thread dequeues a query\n");
 
-    args = malloc(sizeof(struct callback_args));
-    if (!args) {
-      fprintf(stderr, "Out of memory !\n");
-      goto free_query;
-    }
-
     /* Parse Query and EDNS0 RR */
     if (dns_parse_edns(query, &name)) {
       fprintf(stderr, "A query was not parsed correctly and hence dropped\n");
-      goto err_free_args;
+      goto free_query;
     }
 
-    args->qid = DNS_HEADER_QID((char *) query->data);
-    args->addr = query->addr;
-    args->addr_len = query->addr_len;
-    args->bandwidth_req = query->bandwidth_req;
-    args->latency_req = query->latency_req;
-    strncpy(args->app_name_req, query->app_name_req, SLEN + 1);
+    /* Look inside the DNS cache */
+    struct reply *reply = get_from_dns_cache(name);
+    if (!reply) {
+      /* Makes a new request to the controller */
+      print_debug("DNS cache miss !\n");
 
-    // TODO Look at the cache
+      args = malloc(sizeof(struct callback_args));
+      if (!args) {
+        fprintf(stderr, "Out of memory !\n");
+        goto err_free_ares_string;
+      }
 
-    if ((err = pthread_mutex_lock(&channel_mutex))) {
-      perror("Cannot lock the mutex to append");
-      goto err_free_ares_string;
+      args->qid = DNS_HEADER_QID((char *) query->data);
+      args->addr = query->addr;
+      args->addr_len = query->addr_len;
+      args->bandwidth_req = query->bandwidth_req;
+      args->latency_req = query->latency_req;
+      strncpy(args->app_name_req, query->app_name_req, SLEN + 1);
+
+      if ((err = pthread_mutex_lock(&channel_mutex))) {
+        perror("Cannot lock the mutex to append");
+        goto err_free_args;
+      }
+      ares_query(channel, name, C_IN, T_AAAA, client_callback, (void *) args);
+      pthread_mutex_unlock(&channel_mutex);
+
+    } else {
+      /* Bypass the interactions the DNS server and the client producer */
+      print_debug("DNS cache hit !\n");
+      reply->addr = query->addr;
+      reply->addr_len = query->addr_len;
+      reply->bandwidth_req = query->bandwidth_req;
+      reply->latency_req = query->latency_req;
+      strncpy(reply->app_name_req, query->app_name_req, SLEN + 1);
+      uint16_t qid = DNS_HEADER_QID((char *) query->data);
+      DNS_HEADER_SET_QID((char *) reply->data, qid);
+      if (mqueue_append(&replies, (struct node *) reply)) {
+        /* Dropping reply */
+        FREE_POINTER(reply);
+      }
     }
-    ares_query(channel, name, C_IN, T_AAAA, client_callback, (void *) args);
-    pthread_mutex_unlock(&channel_mutex);
 
     ares_free_string(name);
 
@@ -202,10 +243,10 @@ free_query:
     continue;
 
     /* Errors */
-err_free_ares_string:
-    ares_free_string(name);
 err_free_args:
     FREE_POINTER(args);
+err_free_ares_string:
+    ares_free_string(name);
     goto free_query;
   }
 

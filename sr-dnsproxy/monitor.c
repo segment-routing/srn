@@ -128,7 +128,6 @@ static void read_flowstate(char *uuid, char *prefix, char *binding_segment) {
                  reply->addr_len) != (int) reply->data_length) {
     /* Drop the reply */
     perror("Error sending the reply to the client");
-    /* TODO What to do then ??? */
   }
 
 free_reply:
