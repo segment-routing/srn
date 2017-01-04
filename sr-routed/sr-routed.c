@@ -84,7 +84,7 @@ static void get_vnh(struct in6_addr *res)
 	vnh = htobe64(_cfg.last_vnh);
 
 	memcpy(res, &_cfg.vnhp, 8);
-	memcpy((char *)res + 4, &vnh, 8);
+	memcpy((char *)res + 8, &vnh, 8);
 }
 
 static void add_fib_entry(const char *bsid, const char *segments)
