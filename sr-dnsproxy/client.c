@@ -11,6 +11,7 @@
 ares_channel channel;
 struct queue_thread replies;
 pthread_mutex_t channel_mutex;
+struct hashmap *dns_cache;
 
 struct queue inner_queue;
 
@@ -43,6 +44,33 @@ void client_callback(void *arg, int status, __attribute__((unused)) int timeouts
   }
 out:
   FREE_POINTER(arg);
+}
+
+static int push_to_dns_cache(char *dns_name, size_t name_length,
+                             struct reply *dns_reply) {
+  int err = 0;
+  char *stored_name = malloc(name_length + 1);
+  if (!stored_name) {
+    fprintf(stderr, "Out of memory\n");
+    return -1;
+  }
+  struct reply *stored_reply = malloc(REPLY_ALLOC);
+  if (!stored_reply) {
+    fprintf(stderr, "Out of memory\n");
+    free(stored_name);
+    return -1;
+  }
+
+  strncpy(stored_name, dns_name, name_length + 1);
+  memcpy(stored_reply, dns_reply, sizeof(*dns_reply) + dns_reply->data_length);
+
+  hmap_write_lock(dns_cache);
+  struct reply *entry = hmap_get(dns_cache, stored_name);
+  if (!entry) {
+    err = hmap_set(dns_cache, stored_name, stored_reply);
+  }
+  hmap_unlock(dns_cache);
+  return err;
 }
 
 static void *client_producer_main(__attribute__((unused)) void *args) {
@@ -81,6 +109,12 @@ static void *client_producer_main(__attribute__((unused)) void *args) {
       if (mqueue_append(&replies, (struct node *) reply)) {
         /* Dropping reply */
         FREE_POINTER(reply);
+      }
+      /* Place in cache */
+      print_debug("Client producer will push the reply to the DNS cache\n");
+      if (push_to_dns_cache("google.com", strlen("google.com"), reply)) { // TODO Extract and place in the "struct reply"
+        fprintf(stderr, "Cannot insert entry in the DNS cache\n");
+        /* Ignores this error */
       }
     }
   }
@@ -136,8 +170,6 @@ static void *client_consumer_main(__attribute__((unused)) void *args) {
     srdb_insert(srdb, tbl, (struct srdb_entry *) &entry, NULL);
     print_debug("Client consumer makes the insertion in the OVSDB table\n");
 
-    /* TODO Put in cache */
-
     req_counter++; /* The next request will have another id */
   }
   print_debug("A client consumer thread has finished\n");
@@ -170,6 +202,13 @@ int init_client(int optmask, struct ares_addr_node *servers, pthread_t *client_c
     }
   }
 
+	/* Init DNS cache */
+	dns_cache = hmap_new(hash_str, compare_str);
+  if (!dns_cache) {
+    fprintf(stderr, "Cannot initalize dns cache\n");
+    goto out_cleanup_cares;
+  }
+
   mqueue_init(&replies, max_queries);
 
   pthread_mutex_init(&channel_mutex, NULL);
@@ -189,6 +228,7 @@ int init_client(int optmask, struct ares_addr_node *servers, pthread_t *client_c
 out:
   return status;
 out_cleanup_queue_mutex:
+  hmap_destroy(dns_cache);
   mqueue_destroy(&replies);
   pthread_mutex_destroy(&channel_mutex);
 out_cleanup_cares:
@@ -201,7 +241,24 @@ out_err:
   goto out;
 }
 
+static void destroy_dns_cache() {
+
+  /* Free DNS names and DNS replies along with the arraylists */
+  while (dns_cache->keys->elem_count) {
+    char *name;
+    alist_get(dns_cache->keys, 0, &name);
+    struct reply *reply = hmap_get(dns_cache, name);
+		hmap_delete(dns_cache, name);
+    free(name);
+    free(reply);
+	}
+
+  /* Destroy the hmap structure */
+  hmap_destroy(dns_cache);
+}
+
 void close_client() {
+  destroy_dns_cache();
   mqueue_destroy(&replies);
   if (channel) {
     ares_destroy(channel);

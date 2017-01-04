@@ -16,16 +16,6 @@ struct config cfg;
 
 #define READ_STRING(b, arg, dst) sscanf(b, #arg " \"%[^\"]\"", (dst)->arg)
 
-static void strip_crlf(char *line) {
-	char *s;
-	s = strchr(line, '\n');
-	if (s)
-		*s = 0;
-	s = strchr(line, '\r');
-	if (s)
-		*s = 0;
-}
-
 /* Some of the code was taken from the "adig.c" file in the c-ares library */
 int load_config(const char *fname, int *optmask, struct ares_addr_node **servers) {
 	char buf[128];

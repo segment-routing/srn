@@ -11,6 +11,7 @@
 #include <ares.h>
 
 #include <srdb.h>
+#include <hashmap.h>
 
 #include "linked_list.h"
 
@@ -114,6 +115,7 @@ extern struct queue_thread replies_waiting_controller;
 pthread_mutex_t channel_mutex;
 extern ares_channel channel;
 extern int server_sfd;
+extern struct hashmap *dns_cache;
 extern struct srdb *srdb;
 
 #define MAX_DNS_PACKET_SIZE 512 /* TODO Advertize value with EDNS0 */
