@@ -2,6 +2,7 @@
 #include <sys/select.h>
 #include <stdlib.h>
 #include <string.h>
+#include <netdb.h>
 
 #include <ares.h>
 #include <ares_dns.h>
@@ -46,28 +47,33 @@ out:
   FREE_POINTER(arg);
 }
 
-static int push_to_dns_cache(char *dns_name, size_t name_length,
-                             struct reply *dns_reply) {
-  int err = 0;
-  char *stored_name = malloc(name_length + 1);
-  if (!stored_name) {
-    fprintf(stderr, "Out of memory\n");
+static int parse_aaaa_reply(struct reply *reply) {
+
+  struct hostent *host = NULL;
+  if (ares_parse_aaaa_reply((unsigned char *) reply->data, reply->data_length,
+                            &host, NULL, NULL)) {
     return -1;
   }
+  strncpy(reply->destination, host->h_name, SLEN +1);
+  inet_ntop(AF_INET6, host->h_addr_list[0], reply->destination_addr, SLEN + 1);
+  print_debug("DNS matching : %s -> %s\n", reply->destination, reply->destination_addr);
+  ares_free_hostent(host);
+  return 0;
+}
+
+static int push_to_dns_cache(struct reply *dns_reply) {
+  int err = 0;
   struct reply *stored_reply = malloc(REPLY_ALLOC);
   if (!stored_reply) {
     fprintf(stderr, "Out of memory\n");
-    free(stored_name);
     return -1;
   }
-
-  strncpy(stored_name, dns_name, name_length + 1);
   memcpy(stored_reply, dns_reply, sizeof(*dns_reply) + dns_reply->data_length);
 
   hmap_write_lock(dns_cache);
-  struct reply *entry = hmap_get(dns_cache, stored_name);
+  struct reply *entry = hmap_get(dns_cache, stored_reply->destination);
   if (!entry) {
-    err = hmap_set(dns_cache, stored_name, stored_reply);
+    err = hmap_set(dns_cache, stored_reply->destination, stored_reply);
   }
   hmap_unlock(dns_cache);
   return err;
@@ -105,14 +111,22 @@ static void *client_producer_main(__attribute__((unused)) void *args) {
 
     /* Transfer replies to the multi-threaded queue */
     queue_walk_dequeue(&inner_queue, reply, struct reply *) {
+      /* Get back the DNS name and its resolved IPv6 address */
+      if (parse_aaaa_reply(reply)) {
+        print_debug("Invalid DNS reply received\n");
+        /* Dropping reply */
+        FREE_POINTER(reply);
+        continue;
+      }
       print_debug("Client producer will append a reply to the appropriate queue\n");
       if (mqueue_append(&replies, (struct node *) reply)) {
         /* Dropping reply */
         FREE_POINTER(reply);
+        continue;
       }
       /* Place in cache */
       print_debug("Client producer will push the reply to the DNS cache\n");
-      if (push_to_dns_cache("google.com", strlen("google.com"), reply)) { // TODO Extract and place in the "struct reply"
+      if (push_to_dns_cache(reply)) {
         fprintf(stderr, "Cannot insert entry in the DNS cache\n");
         /* Ignores this error */
       }
@@ -159,8 +173,8 @@ static void *client_consumer_main(__attribute__((unused)) void *args) {
     }
     print_debug("Client consumer forwards a reply to the monitor's queue with id %s\n", reply->ovsdb_req_uuid);
 
-    strncpy(entry.destination, DEFAULT_DEST, SLEN + 1); /* TODO Extract */
-    strncpy(entry.dstaddr, DEFAULT_DEST_ADDR, SLEN + 1); /* TODO Extract */
+    strncpy(entry.destination, reply->destination, SLEN + 1);
+    strncpy(entry.dstaddr, reply->destination_addr, SLEN + 1);
     strncpy(entry.source, reply->app_name_req, SLEN + 1);
     entry.bandwidth = reply->bandwidth_req;
     entry.delay = reply->latency_req;
@@ -249,7 +263,6 @@ static void destroy_dns_cache() {
     alist_get(dns_cache->keys, 0, &name);
     struct reply *reply = hmap_get(dns_cache, name);
 		hmap_delete(dns_cache, name);
-    free(name);
     free(reply);
 	}
 

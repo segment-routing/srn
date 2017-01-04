@@ -50,10 +50,6 @@
 #define T_OPT_OPCODE_BANDWIDTH 65002
 #define T_OPT_OPCODE_LATENCY 65003
 
-// TODO Temporary defines
-#define DEFAULT_DEST "accessI"
-#define DEFAULT_DEST_ADDR "fc00:2:0:8::42"
-
 struct mapping_qid;
 
 struct query {
@@ -78,6 +74,8 @@ struct reply {
   uint32_t latency_req;
   char app_name_req [SLEN + 1];
   char ovsdb_req_uuid[SLEN + 1];
+  char destination[SLEN + 1];
+  char destination_addr[SLEN + 1];
   char data [0];
 };
 

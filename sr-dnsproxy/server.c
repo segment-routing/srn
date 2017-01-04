@@ -193,7 +193,6 @@ static void *server_consumer_main(__attribute__((unused)) void *_arg) {
       fprintf(stderr, "A query was not parsed correctly and hence dropped\n");
       goto free_query;
     }
-    printf("name = %s \n", name); // TODO
 
     /* Look inside the DNS cache */
     struct reply *reply = get_from_dns_cache(name);
