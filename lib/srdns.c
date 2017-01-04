@@ -273,6 +273,8 @@ int sr_socket(int type, int proto, const char *dest, short dest_port,
     goto close_socket;
   }
 
+  return fd;
+
 close_socket:
   close(fd);
 free_srh:
