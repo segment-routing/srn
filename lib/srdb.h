@@ -80,6 +80,14 @@ struct srdb_flow_entry {
 	char request_id[SLEN + 1];
 	int ttl;
 	int idle;
+	int timestamp;
+	int status;
+};
+
+enum flow_status {
+	FLOW_STATUS_ACTIVE	= 0,
+	FLOW_STATUS_RUNNING	= 1,
+	FLOW_STATUS_EXPIRED	= 2,
 };
 
 struct srdb_flowreq_entry {
@@ -95,13 +103,13 @@ struct srdb_flowreq_entry {
 };
 
 enum flowreq_status {
-	STATUS_PENDING		= 0,
-	STATUS_ALLOWED		= 1,
-	STATUS_DENIED		= 2,
-	STATUS_UNAVAILABLE	= 3,
-	STATUS_ERROR		= 4,
-	STATUS_NOROUTER		= 6,
-	STATUS_NOPREFIX		= 7,
+	REQ_STATUS_PENDING	= 0,
+	REQ_STATUS_ALLOWED	= 1,
+	REQ_STATUS_DENIED	= 2,
+	REQ_STATUS_UNAVAILABLE	= 3,
+	REQ_STATUS_ERROR	= 4,
+	REQ_STATUS_NOROUTER	= 6,
+	REQ_STATUS_NOPREFIX	= 7,
 };
 
 struct srdb_linkstate_entry {

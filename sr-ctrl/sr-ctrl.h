@@ -59,6 +59,8 @@ struct flow {
 	uint32_t delay;
 	uint32_t ttl;
 	uint32_t idle;
+	time_t timestamp;
+	enum flow_status status;
 };
 
 #endif

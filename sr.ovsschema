@@ -35,6 +35,10 @@
         "ttl": {
           "type": "integer"},
         "idle": {
+          "type": "integer"},
+        "timestamp": {
+          "type": "integer"},
+        "status": {
           "type": "integer"}},
     "isRoot": true},
     "FlowReq": {

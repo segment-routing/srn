@@ -3,6 +3,7 @@
 #include <unistd.h>
 #include <string.h>
 #include <arpa/inet.h>
+#include <time.h>
 
 #include "arraylist.h"
 #include "misc.h"
@@ -141,6 +142,8 @@ static int commit_flow(struct srdb_flowreq_entry *req, struct router *rt,
 	flow_entry.delay = fl->delay;
 	flow_entry.ttl = fl->ttl;
 	flow_entry.idle = fl->idle;
+	flow_entry.timestamp = time(NULL);
+	flow_entry.status = FLOW_STATUS_ACTIVE;
 
 	memcpy(flow_entry.request_id, req->request_id, SLEN);
 
@@ -290,12 +293,12 @@ static void process_request(struct srdb_entry *entry)
 		rule = _cfg.defrule;
 
 	if (rule->type == RULE_ALLOW)
-		rstat = STATUS_ALLOWED;
+		rstat = REQ_STATUS_ALLOWED;
 	else
-		rstat = STATUS_DENIED;
+		rstat = REQ_STATUS_DENIED;
 
-	if (rstat == STATUS_DENIED) {
-		if (set_status(req, STATUS_DENIED) < 0)
+	if (rstat == REQ_STATUS_DENIED) {
+		if (set_status(req, rstat) < 0)
 			pr_err("failed to update row uuid %s to status %d\n",
 			       req->_row, rstat);
 		return;
@@ -305,7 +308,7 @@ static void process_request(struct srdb_entry *entry)
 
 	fl = calloc(1, sizeof(*fl));
 	if (!fl) {
-		set_status(req, STATUS_ERROR);
+		set_status(req, REQ_STATUS_ERROR);
 		return;
 	}
 
@@ -320,7 +323,7 @@ static void process_request(struct srdb_entry *entry)
 	rt = hmap_get(_cfg.routers, req->router);
 	if (!rt) {
 		free(fl);
-		set_status(req, STATUS_NOROUTER);
+		set_status(req, REQ_STATUS_NOROUTER);
 		return;
 	}
 
@@ -328,7 +331,7 @@ static void process_request(struct srdb_entry *entry)
 	dstrt = lpm_lookup(_cfg.prefixes, &addr);
 	if (!dstrt) {
 		free(fl);
-		set_status(req, STATUS_NOPREFIX);
+		set_status(req, REQ_STATUS_NOPREFIX);
 		return;
 	}
 
@@ -341,7 +344,7 @@ static void process_request(struct srdb_entry *entry)
 
 	if (!fl->segs) {
 		free(fl);
-		set_status(req, STATUS_UNAVAILABLE);
+		set_status(req, REQ_STATUS_UNAVAILABLE);
 		return;
 	}
 
@@ -350,7 +353,7 @@ static void process_request(struct srdb_entry *entry)
 	hmap_set(rt->flows, &fl->bsid, fl);
 	hmap_unlock(rt->flows);
 
-	set_status(req, STATUS_ALLOWED);
+	set_status(req, REQ_STATUS_ALLOWED);
 	commit_flow(req, rt, fl);
 }
 

@@ -396,6 +396,16 @@ static struct srdb_descriptor flowstate_desc_tmpl[] = {
 		.offset	= OFFSET_FLOWSTATE(idle),
 	},
 	{
+		.name	= "timestamp",
+		.type	= SRDB_INT,
+		.offset	= OFFSET_FLOWSTATE(timestamp),
+	},
+	{
+		.name	= "status",
+		.type	= SRDB_INT,
+		.offset	= OFFSET_FLOWSTATE(status),
+	},
+	{
 		.name	= NULL,
 	},
 };

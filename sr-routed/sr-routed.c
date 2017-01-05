@@ -123,6 +123,17 @@ static int init_dns_fifo(void)
 	return 0;
 }
 
+static int set_status(struct srdb_flow_entry *flow_entry, enum flow_status st)
+{
+	struct srdb_table *tbl;
+
+	tbl = srdb_table_by_name(_cfg.srdb->tables, "FlowState");
+	flow_entry->status = st;
+
+	return srdb_update(_cfg.srdb, tbl, (struct srdb_entry *)flow_entry,
+			   "status");
+}
+
 static void read_flowstate(struct srdb_entry *entry)
 {
 	struct srdb_flow_entry *flow_entry = (struct srdb_flow_entry *)entry;
@@ -136,6 +147,7 @@ static void read_flowstate(struct srdb_entry *entry)
 	add_fib_entry(flow_entry->bsid, flow_entry->segments);
 	send_flow(flow_entry->request_id, flow_entry->dstaddr,
 		  flow_entry->bsid);
+	set_status(flow_entry, FLOW_STATUS_RUNNING);
 }
 
 #define READ_STRING(b, arg, dst) sscanf(b, #arg " \"%[^\"]\"", (dst)->arg)

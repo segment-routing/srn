@@ -24,7 +24,7 @@ static void read_flowreq(__attribute__((unused)) struct srdb_entry *old_entry, s
 
 	print_debug("A modified entry in the flowreq table is considered with id %s and status %d\n", flowreq->request_id, flowreq->status);
 
-	if (flowreq->status != STATUS_PENDING && flowreq->status != STATUS_ALLOWED) {
+	if (flowreq->status != REQ_STATUS_PENDING && flowreq->status != REQ_STATUS_ALLOWED) {
 		print_debug("Check if the rejected reply is for this router\n");
 		/* Check if its not our request */
 		mqueue_walk_safe(&replies_waiting_controller, reply, tmp, struct reply *) {
