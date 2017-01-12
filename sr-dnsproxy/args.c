@@ -59,20 +59,20 @@ int load_config(const char *fname, int *optmask, struct ares_addr_node **servers
 			continue;
     }
     if (sscanf(buf, "dns_server \"%[^\"]\"", dns_server)) {
-      srvr = malloc(sizeof(*srvr));
+      srvr = malloc(sizeof(struct ares_addr_node));
       if (!srvr) {
         fprintf(stderr, "Out of memory!\n");
         goto out_err;
       }
       append_addr_list(servers, srvr);
-      if (ares_inet_pton(AF_INET, optarg, &srvr->addr.addr4) > 0)
+      if (ares_inet_pton(AF_INET, dns_server, &srvr->addr.addr4) > 0)
         srvr->family = AF_INET;
-      else if (ares_inet_pton(AF_INET6, optarg, &srvr->addr.addr6) > 0)
+      else if (ares_inet_pton(AF_INET6, dns_server, &srvr->addr.addr6) > 0)
         srvr->family = AF_INET6;
       else {
         hostent = gethostbyname(optarg);
         if (!hostent) {
-          fprintf(stderr, "adig: server %s not found.\n", optarg);
+          fprintf(stderr, "adig: server %s not found.\n", dns_server);
           goto out_err;
         }
         switch (hostent->h_addrtype) {
@@ -87,7 +87,7 @@ int load_config(const char *fname, int *optmask, struct ares_addr_node **servers
                  sizeof(srvr->addr.addr6));
           break;
         default:
-          fprintf(stderr, "adig: server %s unsupported address family.\n", optarg);
+          fprintf(stderr, "adig: server %s unsupported address family.\n", dns_server);
           goto out_err;
         }
       }

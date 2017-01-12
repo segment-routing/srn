@@ -3,10 +3,26 @@
 #include <unistd.h>
 #include <stdint.h>
 #include <arpa/inet.h>
-#include <srdns.h>
 
+#include "client.h"
 
-int test_srdns(const char *dst, short port, const char *dns_servername)
+struct client_conf conf;
+
+static void timespec_diff(struct timespec *start, struct timespec *stop,
+                          struct timespec *result)
+{
+    if ((stop->tv_nsec - start->tv_nsec) < 0) {
+        result->tv_sec = stop->tv_sec - start->tv_sec - 1;
+        result->tv_nsec = stop->tv_nsec - start->tv_nsec + 1000000000;
+    } else {
+        result->tv_sec = stop->tv_sec - start->tv_sec;
+        result->tv_nsec = stop->tv_nsec - start->tv_nsec;
+    }
+
+    return;
+}
+
+static int test_srdns(const char *dst, short port, const char *dns_servername)
 {
   static char buf[] = "Hello with Segment Routing :)\n";
   int fd = sr_socket(SOCK_STREAM, IPPROTO_TCP, dst, port, dns_servername,
@@ -27,12 +43,109 @@ int test_srdns(const char *dst, short port, const char *dns_servername)
   return 0;
 }
 
-int main(int ac, char **av)
+static int test_dns_only(const char *dst, const char *dns_servername)
 {
-    if (ac < 4) {
-        fprintf(stderr, "Usage: %s dst port servername\n", av[0]);
-        return -1;
+  struct in6_addr *dest_addr = malloc(2*sizeof(*dest_addr));
+  if (!dest_addr) {
+    fprintf(stderr, "Out of memory\n");
+    return -1;
+  }
+  struct in6_addr *binding_segment = dest_addr + 1;
+
+  int err = make_srdns_request(dst, dns_servername, "accessA", 5, 5,
+                               (char *) dest_addr, NULL,
+                               (char *) binding_segment);
+  if (err < 0) {
+    fprintf(stderr, "Request failed\n");
+  }
+  free(dest_addr);
+  return err;
+}
+
+static void *main_client_thread(void *_arg)
+{
+  struct timespec start;
+  struct timespec end;
+  struct timespec result;
+
+  FILE *logs = _arg; /* Logs stream for this thread */
+
+  pthread_mutex_lock(&conf.mutex);
+  for(conf.number_req--; conf.number_req >= 0; conf.number_req--) {
+    pthread_mutex_unlock(&conf.mutex);
+
+    int r = rand() % 100;
+    if (r < conf.probe_rate) {
+      if (clock_gettime(CLOCK_MONOTONIC, &start)) {
+        perror("Cannot get start time");
+        goto out;
+      }
     }
 
-    return test_srdns(av[1], atoi(av[2]), av[3]);
+    if (conf.only_requests)
+      test_dns_only(conf.destination,
+                    conf.custom_dns_servername ? conf.dns_servername : NULL);
+    else
+      test_srdns(conf.destination, conf.destination_port,
+                 conf.custom_dns_servername ? conf.dns_servername : NULL);
+
+    if (r < conf.probe_rate) {
+      if (clock_gettime(CLOCK_MONOTONIC, &end)) {
+        perror("Cannot get end time");
+        goto out;
+      }
+      timespec_diff(&start, &end, &result);
+      // TODO Change format to avoid floating point issues
+      fprintf(logs, "%ld.%ld\n", result.tv_sec, result.tv_nsec);
+    }
+
+    pthread_mutex_lock(&conf.mutex);
+  };
+  pthread_mutex_unlock(&conf.mutex);
+
+out:
+  fclose(logs);
+  return NULL;
+}
+
+int main(int argc, char * const argv[])
+{
+  int i = 0;
+  char file_path [STR_LEN + 1];
+  if (parse_args(argc, argv, &conf)) {
+      fprintf(stderr, "Usage: %s dst port [-r] [-s servername] [-n number_req] [-N number_parallel_req] [-p probe_rate]\n", argv[0]);
+      return -1;
+  }
+
+  pthread_t *thread = (pthread_t *) malloc(sizeof(*thread)*conf.number_parallel_req);
+  if (!thread) {
+    fprintf(stderr, "Out of memory\n");
+    return -1;
+  }
+
+  if (pthread_mutex_init(&conf.mutex, NULL) != 0)
+  {
+      fprintf(stderr, "\n mutex init failed\n");
+      free(thread);
+      return -1;
+  }
+
+  for (i = 0; i < conf.number_parallel_req; i++) {
+    snprintf(file_path, STR_LEN + 1, "latency_log_%d", i);
+    FILE *logs = fopen(file_path, "w");
+    if (!logs) {
+      perror("File couldn't be openned => thread not launched");
+      continue;
+    }
+    pthread_create(&thread[i], NULL, &main_client_thread, logs);
+  }
+
+  for (i=0; i < conf.number_parallel_req; i++) {
+    pthread_join(thread[i], NULL);
+  }
+
+  pthread_mutex_destroy(&conf.mutex);
+
+  free(thread);
+  return 0;
 }
