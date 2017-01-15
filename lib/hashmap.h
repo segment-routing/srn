@@ -79,4 +79,14 @@ static inline unsigned int hash_in6(void *key)
 		       hashint(in6->s6_addr32[2]) ^ hashint(in6->s6_addr32[3]));
 }
 
+static inline int compare_int(void *k1, void *k2)
+{
+	return (intptr_t)k1 != (intptr_t)k2;
+}
+
+static inline unsigned int hash_int(void *key)
+{
+	return hashint((uintptr_t)key);
+}
+
 #endif
