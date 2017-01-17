@@ -8,20 +8,6 @@
 
 struct client_conf conf;
 
-static void timespec_diff(struct timespec *start, struct timespec *stop,
-                          struct timespec *result)
-{
-    if ((stop->tv_nsec - start->tv_nsec) < 0) {
-        result->tv_sec = stop->tv_sec - start->tv_sec - 1;
-        result->tv_nsec = stop->tv_nsec - start->tv_nsec + 1000000000;
-    } else {
-        result->tv_sec = stop->tv_sec - start->tv_sec;
-        result->tv_nsec = stop->tv_nsec - start->tv_nsec;
-    }
-
-    return;
-}
-
 static int test_srdns(const char *dst, short port, const char *dns_servername)
 {
   static char buf[] = "Hello with Segment Routing :)\n";
@@ -66,7 +52,6 @@ static void *main_client_thread(void *_arg)
 {
   struct timespec start;
   struct timespec end;
-  struct timespec result;
 
   FILE *logs = _arg; /* Logs stream for this thread */
 
@@ -94,9 +79,8 @@ static void *main_client_thread(void *_arg)
         perror("Cannot get end time");
         goto out;
       }
-      timespec_diff(&start, &end, &result);
       // TODO Change format to avoid floating point issues
-      fprintf(logs, "%ld.%ld\n", result.tv_sec, result.tv_nsec);
+      fprintf(logs, "%ld.%ld -> %ld.%ld \n", start.tv_sec, start.tv_nsec, end.tv_sec, end.tv_nsec);
     }
 
     pthread_mutex_lock(&conf.mutex);

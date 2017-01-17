@@ -67,6 +67,12 @@ static void read_flowstate(char *uuid, char *prefix, char *binding_segment) {
 	int i = 0;
 
 	print_debug("A new entry in the flow state table is considered\n");
+#if DEBUG_PERF
+	struct timespec controller_reply_time;
+  if (clock_gettime(CLOCK_REALTIME, &controller_reply_time)) {
+    perror("Cannot get controller_reply time");
+  }
+#endif
 
   /* Find the concerned reply */
   mqueue_walk_safe(&replies_waiting_controller, reply, tmp, struct reply *) {
@@ -79,6 +85,9 @@ static void read_flowstate(char *uuid, char *prefix, char *binding_segment) {
 	if (((void *) reply) == (void *) &replies_waiting_controller) {
 		return; /* Not for us */
 	}
+#if DEBUG_PERF
+	reply->controller_reply_time = controller_reply_time;
+#endif
 
   /* Add the binding segment to the reply */
 
@@ -120,6 +129,29 @@ static void read_flowstate(char *uuid, char *prefix, char *binding_segment) {
 	memcpy(srh_rr, prefix_segment_addr, 16);
 	srh_rr += 16;
 	memcpy(srh_rr, binding_segment_addr, 16);
+
+
+#if DEBUG_PERF
+  if (clock_gettime(CLOCK_REALTIME, &reply->reply_forward_time)) {
+    perror("Cannot get reply_forward time");
+  }
+	struct timespec result;
+	clock_getres(CLOCK_REALTIME, &result);
+	printf("Query %d arrived at %ld.%ld with resolution %ld.%ld\n",
+       	 DNS_HEADER_QID(reply->data), reply->query_rcv_time.tv_sec, reply->query_rcv_time.tv_nsec, result.tv_sec, result.tv_nsec);
+	printf("Query %d was forwarded to the real DNS server at %ld.%ld\n",
+       	 DNS_HEADER_QID(reply->data), reply->query_forward_time.tv_sec, reply->query_forward_time.tv_nsec);
+ 	printf("Query %d got a reply from the real DNS server at %ld.%ld\n",
+       	 DNS_HEADER_QID(reply->data), reply->reply_rcv_time.tv_sec, reply->reply_rcv_time.tv_nsec);
+ 	printf("Query %d triggered a flow request to the controller at %ld.%ld\n",
+       	 DNS_HEADER_QID(reply->data), reply->controller_query_time.tv_sec, reply->controller_query_time.tv_nsec);
+ 	printf("Query %d after having triggered a flow request to the controller at %ld.%ld\n",
+       	 DNS_HEADER_QID(reply->data), reply->controller_after_query_time.tv_sec, reply->controller_after_query_time.tv_nsec);
+ 	printf("Query %d received a response from the controller at %ld.%ld\n",
+       	 DNS_HEADER_QID(reply->data), reply->controller_reply_time.tv_sec, reply->controller_reply_time.tv_nsec);
+ 	printf("Query %d triggered the final DNS reply at %ld.%ld\n",
+       	 DNS_HEADER_QID(reply->data), reply->reply_forward_time.tv_sec, reply->reply_forward_time.tv_nsec);
+#endif
 
   /* Send reply to the client */
 	print_debug("A reply is going to be sent to the application\n");

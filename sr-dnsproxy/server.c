@@ -6,6 +6,8 @@
 #include <unistd.h>
 #include <sys/types.h>
 #include <netdb.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 
 #include <ares.h>
 #include <ares_dns.h>
@@ -14,6 +16,8 @@
 
 int server_sfd = -1;
 struct queue_thread queries;
+
+int server_pipe_fd;
 
 static int dns_parse_edns(struct query *query, char **name) {
 
@@ -120,6 +124,11 @@ static void server_producer_process(fd_set *read_fds) {
       FREE_POINTER(query);
     } else {
       query->length = (uint16_t) length;
+#if DEBUG_PERF
+      if (clock_gettime(CLOCK_REALTIME, &query->query_rcv_time)) {
+        perror("Cannot get query_rcv time");
+      }
+#endif
       if (mqueue_append(&queries, (struct node *) query)) {
         /* Dropping request */
         FREE_POINTER(query);
@@ -184,9 +193,22 @@ static void *server_consumer_main(__attribute__((unused)) void *_arg) {
   struct callback_args *args = NULL;
   char *name = NULL;
 
+  server_pipe_fd = open(FIFO_CLIENT_SERVER_NAME, O_WRONLY);
+  if (server_pipe_fd < 0) {
+    perror("Cannot open pipe");
+    return NULL;
+  }
+  print_debug("Pipe opened on server side\n");
+
   mqueue_walk_dequeue(&queries, query, struct query *) {
 
     print_debug("A server consumer thread dequeues a query\n");
+
+#if DEBUG_PERF
+    if (clock_gettime(CLOCK_REALTIME, &query->query_forward_time)) {
+      perror("Cannot get query_forward time");
+    }
+#endif
 
     /* Parse Query and EDNS0 RR */
     if (dns_parse_edns(query, &name)) {
@@ -212,6 +234,10 @@ static void *server_consumer_main(__attribute__((unused)) void *_arg) {
       args->bandwidth_req = query->bandwidth_req;
       args->latency_req = query->latency_req;
       strncpy(args->app_name_req, query->app_name_req, SLEN + 1);
+#if DEBUG_PERF
+      args->query_rcv_time = query->query_rcv_time;
+      args->query_forward_time = query->query_forward_time;
+#endif
 
       if ((err = pthread_mutex_lock(&channel_mutex))) {
         perror("Cannot lock the mutex to append");
@@ -219,6 +245,16 @@ static void *server_consumer_main(__attribute__((unused)) void *_arg) {
       }
       ares_query(channel, name, C_IN, T_AAAA, client_callback, (void *) args);
       pthread_mutex_unlock(&channel_mutex);
+      if (write(server_pipe_fd, "1", 1) < 0) {
+        perror("Problem writing to pipe");
+      }
+#if DEBUG_PERF
+      if (clock_gettime(CLOCK_REALTIME, &query->query_after_query_time)) {
+        perror("Cannot get query_after_query time");
+      }
+      printf("Query %d has finished to send the query at %ld.%ld\n", args->qid,
+             query->query_after_query_time.tv_sec, query->query_after_query_time.tv_nsec);
+#endif
 
     } else {
       /* Bypass the interactions the DNS server and the client producer */
@@ -230,6 +266,13 @@ static void *server_consumer_main(__attribute__((unused)) void *_arg) {
       strncpy(reply->app_name_req, query->app_name_req, SLEN + 1);
       uint16_t qid = DNS_HEADER_QID((char *) query->data);
       DNS_HEADER_SET_QID((char *) reply->data, qid);
+#if DEBUG_PERF
+      reply->query_rcv_time = query->query_rcv_time;
+      reply->query_forward_time = query->query_forward_time;
+      if (clock_gettime(CLOCK_REALTIME, &reply->reply_rcv_time)) {
+        perror("Cannot get reply_rcv time (cache hit)");
+      }
+#endif
       if (mqueue_append(&replies, (struct node *) reply)) {
         /* Dropping reply */
         FREE_POINTER(reply);

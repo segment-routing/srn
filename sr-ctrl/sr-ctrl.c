@@ -286,8 +286,6 @@ static void process_request(struct srdb_entry *entry)
 	struct rule *rule;
 	struct flow *fl;
 
-	printf("processing request %s -> %s\n", req->source, req->destination);
-
 	rule = match_rules(_cfg.rules, req->source, req->destination);
 	if (!rule)
 		rule = _cfg.defrule;

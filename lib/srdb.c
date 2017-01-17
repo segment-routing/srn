@@ -628,9 +628,6 @@ static void srdb_read(const char *buf, void *arg)
 
 	action = (char *)entry + tbl->desc[idx].offset;
 
-	printf("table: %s, row: %s, action %s\n", tbl->name, entry->row,
-	       entry->action);
-
 	if (!strcmp(action, "insert") || !strcmp(action, "initial")) {
 		if (tbl->read)
 			tbl->read(entry);

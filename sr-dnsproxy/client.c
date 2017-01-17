@@ -3,6 +3,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <netdb.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 
 #include <ares.h>
 #include <ares_dns.h>
@@ -15,6 +18,7 @@ pthread_mutex_t channel_mutex;
 struct hashmap *dns_cache;
 
 struct queue inner_queue;
+int client_pipe_fd;
 
 void client_callback(void *arg, int status, __attribute__((unused)) int timeouts, unsigned char *abuf, int alen) {
 
@@ -37,6 +41,13 @@ void client_callback(void *arg, int status, __attribute__((unused)) int timeouts
     reply->latency_req = call_args->latency_req;
     strncpy(reply->app_name_req, call_args->app_name_req, SLEN +1);
     memcpy(reply->data, abuf, alen);
+#if DEBUG_PERF
+    reply->query_rcv_time = call_args->query_rcv_time;
+    reply->query_forward_time = call_args->query_forward_time;
+    if (clock_gettime(CLOCK_REALTIME, &reply->reply_rcv_time)) {
+      perror("Cannot get reply_rcv time");
+    }
+#endif
     DNS_HEADER_SET_QID((char *) reply->data, call_args->qid);
     if (queue_append(&inner_queue, (struct node *) reply)) {
       /* Dropping reply */
@@ -86,8 +97,17 @@ static void *client_producer_main(__attribute__((unused)) void *args) {
   fd_set read_fds, write_fds;
   struct timeval timeout;
   struct reply *reply = NULL;
+  char pipe_buffer [1000];
 
   print_debug("A client producer thread has started\n");
+
+  client_pipe_fd = open(FIFO_CLIENT_SERVER_NAME, O_RDONLY);
+  if (client_pipe_fd < 0) {
+    perror("Cannot open pipe");
+    return NULL;
+  }
+
+  print_debug("Pipe opened on client side\n");
 
   queue_init(&inner_queue);
   while (!stop) {
@@ -95,12 +115,16 @@ static void *client_producer_main(__attribute__((unused)) void *args) {
     FD_ZERO(&write_fds);
     timeout.tv_sec = TIMEOUT_LOOP;
     timeout.tv_usec = 0;
+    FD_SET(client_pipe_fd, &read_fds);
     nfds = ares_fds(channel, &read_fds, &write_fds);
     err = select(nfds, &read_fds, &write_fds, NULL, &timeout);
     if (err < 0) {
       perror("Select fail");
       break;
     }
+
+    if (FD_ISSET(client_pipe_fd, &read_fds) && read(client_pipe_fd, pipe_buffer, 1000) < 0)
+      perror("Cannot read pipe");
 
     if (pthread_mutex_lock(&channel_mutex)) {
       perror("Cannot lock the mutex in client producer");
@@ -181,8 +205,20 @@ static void *client_consumer_main(__attribute__((unused)) void *args) {
     strncpy(entry.router, cfg.router_name, SLEN + 1);
     strncpy(entry.request_id, reply->ovsdb_req_uuid, SLEN + 1);
 
+#if DEBUG_PERF
+    if (clock_gettime(CLOCK_REALTIME, &reply->controller_query_time)) {
+      perror("Cannot get controller_query time");
+    }
+#endif
+
     srdb_insert(srdb, tbl, (struct srdb_entry *) &entry, NULL);
     print_debug("Client consumer makes the insertion in the OVSDB table\n");
+
+#if DEBUG_PERF
+    if (clock_gettime(CLOCK_REALTIME, &reply->controller_after_query_time)) {
+      perror("Cannot get controller_after_query time");
+    }
+#endif
 
     req_counter++; /* The next request will have another id */
   }
@@ -195,6 +231,9 @@ int init_client(int optmask, struct ares_addr_node *servers, pthread_t *client_c
   int status = ARES_SUCCESS;
   struct ares_options options;
   memset(&options, 0, sizeof(struct ares_options));
+
+  /* Create pipe between the client and the server */
+  mkfifo(FIFO_CLIENT_SERVER_NAME, 0640);
 
   status = ares_library_init(ARES_LIB_INIT_ALL);
   if (status != ARES_SUCCESS) {
@@ -219,6 +258,7 @@ int init_client(int optmask, struct ares_addr_node *servers, pthread_t *client_c
 	/* Init DNS cache */
 	dns_cache = hmap_new(hash_str, compare_str);
   if (!dns_cache) {
+    status = -1;
     fprintf(stderr, "Cannot initalize dns cache\n");
     goto out_cleanup_cares;
   }

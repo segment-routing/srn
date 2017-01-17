@@ -25,7 +25,8 @@
   x = -1;\
 }
 
-#define DEBUG 1
+#define DEBUG 0
+#define DEBUG_PERF 1
 
 #if DEBUG
   #define print_debug(fmt, args...)					\
@@ -50,6 +51,8 @@
 #define T_OPT_OPCODE_BANDWIDTH 65002
 #define T_OPT_OPCODE_LATENCY 65003
 
+#define FIFO_CLIENT_SERVER_NAME "client_server_fifo"
+
 struct mapping_qid;
 
 struct query {
@@ -60,6 +63,11 @@ struct query {
   uint32_t bandwidth_req;
   uint32_t latency_req;
   char app_name_req [SLEN + 1];
+#if DEBUG_PERF
+  struct timespec query_rcv_time;
+  struct timespec query_forward_time;
+  struct timespec query_after_query_time;
+#endif
   char data [0];
 };
 
@@ -76,6 +84,15 @@ struct reply {
   char ovsdb_req_uuid[SLEN + 1];
   char destination[SLEN + 1];
   char destination_addr[SLEN + 1];
+#if DEBUG_PERF
+  struct timespec query_rcv_time;
+  struct timespec query_forward_time;
+  struct timespec reply_rcv_time;
+  struct timespec controller_query_time;
+  struct timespec controller_after_query_time;
+  struct timespec controller_reply_time;
+  struct timespec reply_forward_time;
+#endif
   char data [0];
 };
 
@@ -86,6 +103,10 @@ struct callback_args {
   uint32_t bandwidth_req;
   uint32_t latency_req;
   char app_name_req [SLEN + 1];
+#if DEBUG_PERF
+  struct timespec query_rcv_time;
+  struct timespec query_forward_time;
+#endif
 };
 
 struct monitor_arg {

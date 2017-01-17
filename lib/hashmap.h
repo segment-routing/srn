@@ -3,6 +3,7 @@
 
 #include <pthread.h>
 #include <linux/in6.h>
+#include <stdint.h>
 
 #include "arraylist.h"
 #include "misc.h"
