@@ -125,7 +125,7 @@ static void server_producer_process(fd_set *read_fds) {
     } else {
       query->length = (uint16_t) length;
 #if DEBUG_PERF
-      if (clock_gettime(CLOCK_REALTIME, &query->query_rcv_time)) {
+      if (clock_gettime(CLOCK_MONOTONIC, &query->query_rcv_time)) {
         perror("Cannot get query_rcv time");
       }
 #endif
@@ -205,7 +205,7 @@ static void *server_consumer_main(__attribute__((unused)) void *_arg) {
     print_debug("A server consumer thread dequeues a query\n");
 
 #if DEBUG_PERF
-    if (clock_gettime(CLOCK_REALTIME, &query->query_forward_time)) {
+    if (clock_gettime(CLOCK_MONOTONIC, &query->query_forward_time)) {
       perror("Cannot get query_forward time");
     }
 #endif
@@ -249,7 +249,7 @@ static void *server_consumer_main(__attribute__((unused)) void *_arg) {
         perror("Problem writing to pipe");
       }
 #if DEBUG_PERF
-      if (clock_gettime(CLOCK_REALTIME, &query->query_after_query_time)) {
+      if (clock_gettime(CLOCK_MONOTONIC, &query->query_after_query_time)) {
         perror("Cannot get query_after_query time");
       }
       printf("Query %d has finished to send the query at %ld.%ld\n", args->qid,
@@ -269,7 +269,7 @@ static void *server_consumer_main(__attribute__((unused)) void *_arg) {
 #if DEBUG_PERF
       reply->query_rcv_time = query->query_rcv_time;
       reply->query_forward_time = query->query_forward_time;
-      if (clock_gettime(CLOCK_REALTIME, &reply->reply_rcv_time)) {
+      if (clock_gettime(CLOCK_MONOTONIC, &reply->reply_rcv_time)) {
         perror("Cannot get reply_rcv time (cache hit)");
       }
 #endif

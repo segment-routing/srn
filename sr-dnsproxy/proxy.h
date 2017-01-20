@@ -26,7 +26,7 @@
 }
 
 #define DEBUG 0
-#define DEBUG_PERF 1
+#define DEBUG_PERF 0
 
 #if DEBUG
   #define print_debug(fmt, args...)					\

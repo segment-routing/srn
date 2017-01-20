@@ -69,7 +69,7 @@ static void read_flowstate(char *uuid, char *prefix, char *binding_segment) {
 	print_debug("A new entry in the flow state table is considered\n");
 #if DEBUG_PERF
 	struct timespec controller_reply_time;
-  if (clock_gettime(CLOCK_REALTIME, &controller_reply_time)) {
+  if (clock_gettime(CLOCK_MONOTONIC, &controller_reply_time)) {
     perror("Cannot get controller_reply time");
   }
 #endif
@@ -132,11 +132,11 @@ static void read_flowstate(char *uuid, char *prefix, char *binding_segment) {
 
 
 #if DEBUG_PERF
-  if (clock_gettime(CLOCK_REALTIME, &reply->reply_forward_time)) {
+  if (clock_gettime(CLOCK_MONOTONIC, &reply->reply_forward_time)) {
     perror("Cannot get reply_forward time");
   }
 	struct timespec result;
-	clock_getres(CLOCK_REALTIME, &result);
+	clock_getres(CLOCK_MONOTONIC, &result);
 	printf("Query %d arrived at %ld.%ld with resolution %ld.%ld\n",
        	 DNS_HEADER_QID(reply->data), reply->query_rcv_time.tv_sec, reply->query_rcv_time.tv_nsec, result.tv_sec, result.tv_nsec);
 	printf("Query %d was forwarded to the real DNS server at %ld.%ld\n",

@@ -44,7 +44,7 @@ void client_callback(void *arg, int status, __attribute__((unused)) int timeouts
 #if DEBUG_PERF
     reply->query_rcv_time = call_args->query_rcv_time;
     reply->query_forward_time = call_args->query_forward_time;
-    if (clock_gettime(CLOCK_REALTIME, &reply->reply_rcv_time)) {
+    if (clock_gettime(CLOCK_MONOTONIC, &reply->reply_rcv_time)) {
       perror("Cannot get reply_rcv time");
     }
 #endif
@@ -206,7 +206,7 @@ static void *client_consumer_main(__attribute__((unused)) void *args) {
     strncpy(entry.request_id, reply->ovsdb_req_uuid, SLEN + 1);
 
 #if DEBUG_PERF
-    if (clock_gettime(CLOCK_REALTIME, &reply->controller_query_time)) {
+    if (clock_gettime(CLOCK_MONOTONIC, &reply->controller_query_time)) {
       perror("Cannot get controller_query time");
     }
 #endif
@@ -215,7 +215,7 @@ static void *client_consumer_main(__attribute__((unused)) void *args) {
     print_debug("Client consumer makes the insertion in the OVSDB table\n");
 
 #if DEBUG_PERF
-    if (clock_gettime(CLOCK_REALTIME, &reply->controller_after_query_time)) {
+    if (clock_gettime(CLOCK_MONOTONIC, &reply->controller_after_query_time)) {
       perror("Cannot get controller_after_query time");
     }
 #endif
