@@ -13,7 +13,7 @@ int parse_args(int argc, char * const argv[], struct client_conf *conf)
   memset(conf, 0, sizeof(*conf));
   conf->number_req = 1;
   conf->number_parallel_req = 1;
-  while ((c = getopt(argc, argv, "s:rn:p:N:")) != -1) {
+  while ((c = getopt(argc, argv, "s:Drn:p:N:")) != -1) {
     switch (c) {
     case 's':
       conf->custom_dns_servername = 1;
@@ -42,6 +42,9 @@ int parse_args(int argc, char * const argv[], struct client_conf *conf)
         fprintf(stderr, "Invalid number of parallel requests given\n");
         return -1;
       }
+      break;
+    case 'D':
+      conf->regular_dns = 1;
       break;
     case '?':
       if (optopt == 's' || optopt == 'n' || optopt == 'p' || optopt == 'N')

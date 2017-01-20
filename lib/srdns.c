@@ -61,6 +61,117 @@ static void append_addr_list(struct ares_addr_node **head,
     *head = node;
 }
 
+static void plain_callback(void *_arg, int status, __attribute__((unused)) int timeouts, unsigned char *abuf, int alen) {
+
+  struct callback_args *args = (struct callback_args *) _arg;
+  struct hostent *host = NULL;
+  int *stop = args->stop;
+
+  if (status != ARES_SUCCESS) {
+    fprintf(stderr, "DNS server error: %s\n", ares_strerror(status));
+    return;
+  }
+
+  if (ares_parse_aaaa_reply(abuf, alen, &host, NULL, NULL) != ARES_SUCCESS) {
+    fprintf(stderr, "Problem parsing the AAAA record: %s\n", ares_strerror(status));
+    return;
+  }
+  memcpy(args->dest_addr, host->h_addr, 16);
+  *stop = 1;
+  ares_free_hostent(host);
+}
+
+int make_dns_request(const char *destination, const char *servername, char *dest_addr) {
+  struct ares_addr_node *srvr = NULL, *servers = NULL;
+  ares_channel channel = NULL;
+  struct ares_options options;
+  memset(&options, 0, sizeof(options));
+  int optmask = ARES_OPT_FLAGS, dnsclass = C_IN, type = T_AAAA;
+  options.ednspsz = 1280;
+  optmask |= ARES_OPT_EDNSPSZ;
+  options.flags |= ARES_FLAG_EDNS;
+
+  fd_set read_fds, write_fds;
+  int nfds = 0;
+  struct timeval *tvp, tv;
+  int stop = 0;
+  struct callback_args args = {
+    .dest_addr = dest_addr,
+    .stop = &stop
+  };
+
+  int status = ares_library_init(ARES_LIB_INIT_ALL);
+  if (status != ARES_SUCCESS) {
+    fprintf(stderr, "ares_library_init: %s\n", ares_strerror(status));
+    goto free_server_list;
+  }
+
+  if (servername) {
+    srvr = malloc(sizeof(struct ares_addr_node));
+    if (!srvr) {
+      fprintf(stderr, "Out of memory!\n");
+      status = -1;
+      goto free_cares_lib;
+    }
+    append_addr_list(&servers, srvr);
+    if (ares_inet_pton(AF_INET, servername, &srvr->addr.addr4) > 0)
+      srvr->family = AF_INET;
+    else if (ares_inet_pton(AF_INET6, servername, &srvr->addr.addr6) > 0)
+      srvr->family = AF_INET6;
+    else {
+      fprintf(stderr, "%s is not an IPv4 nor IPv6 address\n", servername);
+      status = -1;
+      goto free_cares_lib;
+    }
+    optmask |= ARES_OPT_SERVERS;
+  }
+
+  status = ares_init_options(&channel, &options, optmask);
+  if (status != ARES_SUCCESS) {
+    fprintf(stderr, "ares_init_options: %s\n", ares_strerror(status));
+    goto free_cares_lib;
+  }
+  if (srvr) {
+    status = ares_set_servers(channel, servers);
+    destroy_addr_list(servers);
+    servers = NULL;
+    if (status != ARES_SUCCESS) {
+      fprintf(stderr, "ares_init_options: %s\n", ares_strerror(status));
+      goto free_cares_lib;
+    }
+  }
+
+  ares_query(channel, destination, dnsclass, type, plain_callback, (char *) &args);
+
+  /* Wait for all queries to complete. */
+  for (;!stop;) {
+    FD_ZERO(&read_fds);
+    FD_ZERO(&write_fds);
+    nfds = ares_fds(channel, &read_fds, &write_fds);
+    if (nfds == 0) {
+      fprintf(stderr, "Did not manage to get an answer\n");
+      status = -1;
+      goto close_channel;
+    }
+    tvp = ares_timeout(channel, NULL, &tv);
+    status = select(nfds, &read_fds, &write_fds, NULL, tvp);
+    if (status < 0) {
+      fprintf(stderr, "select fail: %d", status);
+      goto close_channel;
+    }
+    ares_process(channel, &read_fds, &write_fds);
+  }
+
+close_channel:
+  ares_destroy(channel);
+free_server_list:
+  if (servers)
+    destroy_addr_list(servers);
+free_cares_lib:
+  ares_library_cleanup();
+  return status;
+}
+
 static void callback(void *_arg, int status, __attribute__((unused)) int timeouts, unsigned char *abuf, int alen) {
 
   struct callback_args *args = (struct callback_args *) _arg;

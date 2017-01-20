@@ -3,6 +3,7 @@
 #include <unistd.h>
 #include <stdint.h>
 #include <arpa/inet.h>
+#include <time.h>
 
 #include "client.h"
 
@@ -48,10 +49,27 @@ static int test_dns_only(const char *dst, const char *dns_servername)
   return err;
 }
 
+static int test_regular_dns_only(const char *dst, const char *dns_servername)
+{
+  struct in6_addr *dest_addr = malloc(sizeof(*dest_addr));
+  if (!dest_addr) {
+    fprintf(stderr, "Out of memory\n");
+    return -1;
+  }
+
+  int err = make_dns_request(dst, dns_servername, (char *) dest_addr);
+  if (err < 0) {
+    fprintf(stderr, "Request failed\n");
+  }
+  free(dest_addr);
+  return err;
+}
+
 static void *main_client_thread(void *_arg)
 {
   struct timespec start;
   struct timespec end;
+  struct timespec sleep_time = {.tv_sec = 0, .tv_nsec = 100000000};
 
   FILE *logs = _arg; /* Logs stream for this thread */
 
@@ -67,7 +85,10 @@ static void *main_client_thread(void *_arg)
       }
     }
 
-    if (conf.only_requests)
+    if (conf.regular_dns)
+      test_regular_dns_only(conf.destination,
+                            conf.custom_dns_servername ? conf.dns_servername : NULL);
+    else if (conf.only_requests)
       test_dns_only(conf.destination,
                     conf.custom_dns_servername ? conf.dns_servername : NULL);
     else
@@ -81,6 +102,10 @@ static void *main_client_thread(void *_arg)
       }
       // TODO Change format to avoid floating point issues
       fprintf(logs, "%ld.%ld -> %ld.%ld \n", start.tv_sec, start.tv_nsec, end.tv_sec, end.tv_nsec);
+    }
+
+    if (nanosleep(&sleep_time, NULL)) {
+      perror("Cannot sleep");
     }
 
     pthread_mutex_lock(&conf.mutex);
@@ -97,7 +122,7 @@ int main(int argc, char * const argv[])
   int i = 0;
   char file_path [STR_LEN + 1];
   if (parse_args(argc, argv, &conf)) {
-      fprintf(stderr, "Usage: %s dst port [-r] [-s servername] [-n number_req] [-N number_parallel_req] [-p probe_rate]\n", argv[0]);
+      fprintf(stderr, "Usage: %s dst port [-Dr] [-s servername] [-n number_req] [-N number_parallel_req] [-p probe_rate] \n", argv[0]);
       return -1;
   }
 

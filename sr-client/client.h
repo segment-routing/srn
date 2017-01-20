@@ -17,6 +17,8 @@ struct client_conf {
 
   char destination [STR_LEN + 1];
   short destination_port;
+
+  int regular_dns;
 };
 
 int parse_args(int argc, char * const argv[], struct client_conf *conf);

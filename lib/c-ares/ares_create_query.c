@@ -202,7 +202,7 @@ int ares_create_query_edns(const char *name, int dnsclass, int type,
       q += (EDNSFIXEDSZ-1);
 
       /* Add EDNS options in the DNS query */
-      for (i = 0; (opt = options[i]); i++) {
+      for (i = 0; options && (opt = options[i]); i++) {
         DNS_OPT_SET_CODE(q, opt->option_code);
         DNS_OPT_SET_LEN(q, opt->option_length);
         q += 4;
