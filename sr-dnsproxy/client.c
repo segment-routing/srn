@@ -15,7 +15,10 @@
 ares_channel channel;
 struct queue_thread replies;
 pthread_mutex_t channel_mutex;
+
+#if USE_DNS_CACHE
 struct hashmap *dns_cache;
+#endif
 
 struct queue inner_queue;
 int client_pipe_fd;
@@ -72,6 +75,7 @@ static int parse_aaaa_reply(struct reply *reply) {
   return 0;
 }
 
+#if USE_DNS_CACHE
 static int push_to_dns_cache(struct reply *dns_reply) {
   int err = 0;
   struct reply *stored_reply = malloc(REPLY_ALLOC);
@@ -89,6 +93,7 @@ static int push_to_dns_cache(struct reply *dns_reply) {
   hmap_unlock(dns_cache);
   return err;
 }
+#endif
 
 static void *client_producer_main(__attribute__((unused)) void *args) {
 
@@ -148,12 +153,14 @@ static void *client_producer_main(__attribute__((unused)) void *args) {
         FREE_POINTER(reply);
         continue;
       }
+#if USE_DNS_CACHE
       /* Place in cache */
       print_debug("Client producer will push the reply to the DNS cache\n");
       if (push_to_dns_cache(reply)) {
         fprintf(stderr, "Cannot insert entry in the DNS cache\n");
         /* Ignores this error */
       }
+#endif
     }
   }
   queue_destroy(&inner_queue);
@@ -255,6 +262,7 @@ int init_client(int optmask, struct ares_addr_node *servers, pthread_t *client_c
     }
   }
 
+#if USE_DNS_CACHE
 	/* Init DNS cache */
 	dns_cache = hmap_new(hash_str, compare_str);
   if (!dns_cache) {
@@ -262,6 +270,7 @@ int init_client(int optmask, struct ares_addr_node *servers, pthread_t *client_c
     fprintf(stderr, "Cannot initalize dns cache\n");
     goto out_cleanup_cares;
   }
+#endif
 
   mqueue_init(&replies, max_queries);
 
@@ -282,7 +291,9 @@ int init_client(int optmask, struct ares_addr_node *servers, pthread_t *client_c
 out:
   return status;
 out_cleanup_queue_mutex:
+#if USE_DNS_CACHE
   hmap_destroy(dns_cache);
+#endif
   mqueue_destroy(&replies);
   pthread_mutex_destroy(&channel_mutex);
 out_cleanup_cares:
@@ -295,6 +306,7 @@ out_err:
   goto out;
 }
 
+#if USE_DNS_CACHE
 static void destroy_dns_cache() {
 
   /* Free DNS names and DNS replies along with the arraylists */
@@ -309,9 +321,12 @@ static void destroy_dns_cache() {
   /* Destroy the hmap structure */
   hmap_destroy(dns_cache);
 }
+#endif
 
 void close_client() {
+#if USE_DNS_CACHE
   destroy_dns_cache();
+#endif
   mqueue_destroy(&replies);
   if (channel) {
     ares_destroy(channel);

@@ -164,6 +164,7 @@ out:
   return NULL;
 }
 
+#if USE_DNS_CACHE
 static struct reply *get_from_dns_cache(char *dns_name) {
 
   hmap_read_lock(dns_cache);
@@ -183,6 +184,7 @@ static struct reply *get_from_dns_cache(char *dns_name) {
   }
   return dns_reply;
 }
+#endif
 
 static void *server_consumer_main(__attribute__((unused)) void *_arg) {
 
@@ -217,7 +219,10 @@ static void *server_consumer_main(__attribute__((unused)) void *_arg) {
     }
 
     /* Look inside the DNS cache */
-    struct reply *reply = get_from_dns_cache(name);
+    struct reply *reply = NULL;
+#if USE_DNS_CACHE
+    reply = get_from_dns_cache(name);
+#endif
     if (!reply) {
       /* Makes a new request to the controller */
       print_debug("DNS cache miss !\n");
