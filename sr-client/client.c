@@ -69,7 +69,7 @@ static void *main_client_thread(void *_arg)
 {
   struct timespec start;
   struct timespec end;
-  struct timespec sleep_time = {.tv_sec = 0, .tv_nsec = 100000000};
+  struct timespec sleep_time = {.tv_sec = 1, .tv_nsec = 900000000};
 
   FILE *logs = _arg; /* Logs stream for this thread */
 
