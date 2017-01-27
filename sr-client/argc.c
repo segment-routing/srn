@@ -12,15 +12,26 @@ int parse_args(int argc, char * const argv[], struct client_conf *conf)
 
   memset(conf, 0, sizeof(*conf));
   conf->number_req = 1;
-  conf->number_parallel_req = 1;
-  while ((c = getopt(argc, argv, "s:Drn:p:N:")) != -1) {
+  conf->request_rate = 1;
+  while ((c = getopt(argc, argv, "S:s:CDrn:p:R:")) != -1) {
     switch (c) {
+    case 'S':
+      conf->custom_file_suffix = 1;
+      strncpy(conf->file_suffix, optarg, STR_LEN + 1);
+      break;
     case 's':
       conf->custom_dns_servername = 1;
       strncpy(conf->dns_servername, optarg, STR_LEN + 1);
       break;
     case 'r':
       conf->only_requests = 1;
+      break;
+    case 'R':
+      conf->request_rate = strtod(optarg, &ptr);
+      if (*ptr != '\0' || conf->request_rate < 0) {
+        fprintf(stderr, "Invalid request rate given\n");
+        return -1;
+      }
       break;
     case 'n':
       conf->number_req = strtol(optarg, &ptr, 10);
@@ -36,18 +47,13 @@ int parse_args(int argc, char * const argv[], struct client_conf *conf)
         return -1;
       }
       break;
-    case 'N':
-      conf->number_parallel_req = strtol(optarg, &ptr, 10);
-      if (*ptr != '\0' || conf->number_parallel_req < 0) {
-        fprintf(stderr, "Invalid number of parallel requests given\n");
-        return -1;
-      }
-      break;
     case 'D':
       conf->regular_dns = 1;
       break;
+    case 'C':
+      conf->no_cache = 1;
     case '?':
-      if (optopt == 's' || optopt == 'n' || optopt == 'p' || optopt == 'N')
+      if (optopt == 's' || optopt == 'S' || optopt == 'n' || optopt == 'p' || optopt == 'R')
         fprintf(stderr, "Option -%c requires an argument.\n", optopt);
       else
         fprintf(stderr, "Unknown option character `\\x%x'.\n", optopt);
