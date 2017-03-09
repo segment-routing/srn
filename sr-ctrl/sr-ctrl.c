@@ -137,6 +137,7 @@ static int commit_flow(struct srdb_flowreq_entry *req, struct router *rt,
 	}
 
 	memcpy(flow_entry.router, rt->name, SLEN);
+	memcpy(flow_entry.proxy, req->proxy, SLEN);
 
 	flow_entry.bandwidth = fl->bw;
 	flow_entry.delay = fl->delay;

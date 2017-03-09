@@ -4,6 +4,7 @@
 #include <netdb.h>
 
 #include <ares_dns.h>
+#include <srdns.h>
 
 #include "proxy.h"
 
@@ -60,11 +61,12 @@ static void read_flowreq(__attribute__((unused)) struct srdb_entry *old_entry, s
 	}
 }
 
-static void read_flowstate(char *uuid, char *prefix, char *binding_segment) {
+static void read_flowstate(struct srdb_entry *entry) {
 
   struct reply *reply = NULL;
   struct reply *tmp = NULL;
 	int i = 0;
+	struct srdb_flow_entry *flowstate = (struct srdb_flow_entry *) entry;
 
 	print_debug("A new entry in the flow state table is considered\n");
 #if DEBUG_PERF
@@ -76,7 +78,7 @@ static void read_flowstate(char *uuid, char *prefix, char *binding_segment) {
 
   /* Find the concerned reply */
   mqueue_walk_safe(&replies_waiting_controller, reply, tmp, struct reply *) {
-    if (!strncmp(uuid, reply->ovsdb_req_uuid, SLEN + 1)) {
+    if (!strncmp(flowstate->request_id, reply->ovsdb_req_uuid, SLEN + 1)) {
 			print_debug("A matching with a pending reply was found\n");
       mqueue_remove(&replies_waiting_controller, (struct node *) reply);
       break;
@@ -92,15 +94,15 @@ static void read_flowstate(char *uuid, char *prefix, char *binding_segment) {
   /* Add the binding segment to the reply */
 
 	char *srh_rr = reply->data + reply->data_length;
-	char *name = reply->data + DNS_RR_NAME_OFFSET;
+	char *name = reply->data + DNS_HEADER_LENGTH;
 	unsigned char binding_segment_addr[16];
-	if (inet_pton(AF_INET6, binding_segment, binding_segment_addr) != 1) {
-		fprintf(stderr, "Not a valid IPv6 address received: %s\n", binding_segment);
+	if (inet_pton(AF_INET6, flowstate->bsid, binding_segment_addr) != 1) {
+		fprintf(stderr, "Not a valid IPv6 address received: %s\n", flowstate->bsid);
 		goto free_reply;
 	}
 	unsigned char prefix_segment_addr[16];
-	if (inet_pton(AF_INET6, prefix, prefix_segment_addr) != 1) {
-		fprintf(stderr, "Not a valid IPv6 address received: %s\n", prefix);
+	if (inet_pton(AF_INET6, flowstate->dstaddr, prefix_segment_addr) != 1) { // TODO This should be changed by a real source prefix
+		fprintf(stderr, "Not a valid IPv6 address received: %s\n", flowstate->dstaddr); // TODO This should be changed by a real source prefix
 		goto free_reply;
 	}
 
@@ -180,66 +182,6 @@ static void *thread_monitor(void *_arg) {
 	return (void *)(intptr_t)ret;
 }
 
-static void *thread_flowstate_monitor(void *_arg) {
-
-	char *pipe_path = (char *) _arg;
-  int err = 0;
-	int i = 0;
-  fd_set read_fds;
-  struct timeval timeout;
-	FILE *fp;
-	int fd = -1;
-
-	print_debug("A monitor thread for the flow state has started\n");
-
-	fp = fopen(pipe_path, "r");
-	if (!fp) {
-		perror("Cannot open file");
-		return NULL;
-	}
-	fd = fileno(fp);
-
-	while (!stop) {
-
-    FD_ZERO(&read_fds);
-		FD_SET(fd, &read_fds);
-    timeout.tv_sec = TIMEOUT_LOOP;
-    timeout.tv_usec = 0;
-    err = select(fd + 1, &read_fds, NULL, NULL, &timeout);
-    if (err < 0) {
-      perror("Select fail");
-      break;
-    }
-
-		if (FD_ISSET(fd, &read_fds)) {
-			char line [MAX_LINE_LENGTH];
-			if (!fgets(line, MAX_LINE_LENGTH, fp)) {
-				perror("Cannot read line");
-				break;
-			}
-
-			/* Line parsing */
-			char *uuid = line;
-			for (i = 0; line[i] != ' '; i++);
-			line[i] = '\0';
-			char *prefix = line + i + 1;
-			for (i++; line[i] != ' '; i++);
-			line[i] = '\0';
-			char *binding_segment = line + i + 1;
-			for (i++; line[i] != '\n' && line[i] != '\0'; i++);
-			line[i] = '\0';
-
-			/* Send back a reply to the application */
-			read_flowstate(uuid, prefix, binding_segment);
-		}
-	}
-
-	fclose(fp);
-
-	print_debug("A monitor thread for the flow state has stopped\n");
-	return NULL;
-}
-
 int init_monitor(struct monitor_arg *args, __attribute__((unused)) pthread_t *monitor_flowreqs_thread, pthread_t *monitor_flows_thread) {
 
   struct addrinfo hints;
@@ -257,7 +199,7 @@ int init_monitor(struct monitor_arg *args, __attribute__((unused)) pthread_t *mo
   hints.ai_addr = NULL;
   hints.ai_next = NULL;
 
-  status = getaddrinfo(NULL, cfg.propxy_listen_port, &hints, &result);
+  status = getaddrinfo(NULL, cfg.proxy_listen_port, &hints, &result);
   if (status != 0) {
     fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(status));
     goto out_err;
@@ -296,9 +238,14 @@ int init_monitor(struct monitor_arg *args, __attribute__((unused)) pthread_t *mo
 	args[0].srdb = srdb;
 	args[0].table = tbl;
 	args[0].columns = "!initial,!delete,!insert";
-	pthread_create(monitor_flowreqs_thread, NULL, thread_monitor, (void *)&args[0]);
+	pthread_create(monitor_flowreqs_thread, NULL, thread_monitor, (void *) &args[0]);
 
-	pthread_create(monitor_flows_thread, NULL, thread_flowstate_monitor, (void *) cfg.dns_fifo);
+	tbl = srdb_table_by_name(srdb->tables, "FlowState");
+	tbl->read = read_flowstate;
+	args[1].srdb = srdb;
+	args[1].table = tbl;
+	args[1].columns = "!initial,!delete,!modify";
+	pthread_create(monitor_flows_thread, NULL, thread_monitor, (void *) &args[1]);
 
   mqueue_init(&replies_waiting_controller, max_queries);
 

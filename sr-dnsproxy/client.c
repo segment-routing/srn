@@ -43,6 +43,7 @@ void client_callback(void *arg, int status, __attribute__((unused)) int timeouts
     reply->bandwidth_req = call_args->bandwidth_req;
     reply->latency_req = call_args->latency_req;
     strncpy(reply->app_name_req, call_args->app_name_req, SLEN +1);
+    strncpy(reply->access_router, call_args->access_router, SLEN + 1);
     memcpy(reply->data, abuf, alen);
 #if DEBUG_PERF
     reply->query_rcv_time = call_args->query_rcv_time;
@@ -209,8 +210,9 @@ static void *client_consumer_main(__attribute__((unused)) void *args) {
     strncpy(entry.source, reply->app_name_req, SLEN + 1);
     entry.bandwidth = reply->bandwidth_req;
     entry.delay = reply->latency_req;
-    strncpy(entry.router, cfg.router_name, SLEN + 1);
+    strncpy(entry.router, reply->access_router, SLEN + 1);
     strncpy(entry.request_id, reply->ovsdb_req_uuid, SLEN + 1);
+    strncpy(entry.proxy, cfg.router_name, SLEN + 1);
 
 #if DEBUG_PERF
     if (clock_gettime(CLOCK_MONOTONIC, &reply->controller_query_time)) {
@@ -248,6 +250,9 @@ int init_client(int optmask, struct ares_addr_node *servers, pthread_t *client_c
     goto out_err;
   }
 
+  options.udp_port = (unsigned short) strtol(cfg.dns_server_port, NULL, 0);
+  optmask |= ARES_OPT_UDP_PORT;
+  options.flags |= ARES_FLAG_NOCHECKRESP; /* In order not to ignore REFUSED DNS replies */
   status = ares_init_options(&channel, &options, optmask);
   if (status != ARES_SUCCESS) {
     fprintf(stderr, "ares_init_options: %s\n", ares_strerror(status));
@@ -332,5 +337,6 @@ void close_client() {
     ares_destroy(channel);
     channel = NULL;
   }
+  pthread_mutex_destroy(&channel_mutex);
   ares_library_cleanup();
 }

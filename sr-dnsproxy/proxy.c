@@ -42,7 +42,8 @@ void inthand(int signum) {
 
   } else if (signum == SIGUSR1) {
     print_debug("Thread is stopped gracefully\n");
-    if (pthread_equal(monitor_flowreqs_thread, pthread_self())) {
+    if (pthread_equal(monitor_flowreqs_thread, pthread_self()) ||
+        pthread_equal(monitor_flows_thread, pthread_self())) {
       /* The other threads will stop because of the "stop" variable
        * This interruption allows them to leave blocking calls
        */

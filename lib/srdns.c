@@ -8,9 +8,6 @@
 
 #include "srdns.h"
 
-#define C_IN 1
-#define T_AAAA 28
-
 #ifndef __u8
 #define __u8 uint8_t
 #endif
@@ -126,6 +123,7 @@ int make_dns_request(const char *destination, const char *servername, char *dest
     optmask |= ARES_OPT_SERVERS;
   }
 
+  options.flags |= ARES_FLAG_NOCHECKRESP; /* In order not to ignore REFUSED DNS replies */
   status = ares_init_options(&channel, &options, optmask);
   if (status != ARES_SUCCESS) {
     fprintf(stderr, "ares_init_options: %s\n", ares_strerror(status));

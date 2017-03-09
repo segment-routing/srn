@@ -48,7 +48,7 @@ int load_config(const char *fname, int *optmask, struct ares_addr_node **servers
 			continue;
     if (READ_STRING(buf, dns_server_port, &cfg))
       continue;
-    if (READ_STRING(buf, propxy_listen_port, &cfg))
+    if (READ_STRING(buf, proxy_listen_port, &cfg))
       continue;
 		if (READ_STRING(buf, max_parallel_queries, &cfg)) {
       max_queries = strtol(cfg.max_parallel_queries, &ptr, 10);
@@ -116,8 +116,8 @@ out_err:
     strncpy(cfg.dns_server_port, DEFAULT_DNS_PORT, SLEN + 1);
   }
 
-  if (*cfg.propxy_listen_port == '\0') {
-    strncpy(cfg.propxy_listen_port, DEFAULT_DNS_PORT, SLEN + 1);
+  if (*cfg.proxy_listen_port == '\0') {
+    strncpy(cfg.proxy_listen_port, DEFAULT_DNS_PORT, SLEN + 1);
   }
 
 	fclose(fp);

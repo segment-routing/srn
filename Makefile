@@ -1,4 +1,4 @@
-BINDIRS=sr-client sr-ctrl sr-dnsproxy sr-routed tfoproxy
+BINDIRS=sr-client sr-ctrl sr-dnsproxy sr-routed tfoproxy sr-dnsfwd
 OVSDIR=tools/openvswitch-2.6.1
 OVSTARGETS=include/odp-netlink.h lib/vswitch-idl.h ovsdb/ovsdb-tool ovsdb/ovsdb-client ovsdb/ovsdb-server
 clean_BINDIRS=$(addprefix clean_,$(BINDIRS))

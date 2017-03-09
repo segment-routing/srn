@@ -25,8 +25,8 @@
   x = -1;\
 }
 
-#define DEBUG 0
-#define DEBUG_PERF 0
+#define DEBUG 1
+#define DEBUG_PERF 1
 #define USE_DNS_CACHE 0
 
 #if DEBUG
@@ -37,20 +37,6 @@
 #endif
 
 #define TIMEOUT_LOOP 1 /* (sec) */
-
-#define C_IN 1
-#define T_AAAA 28
-#define T_SRH 65280
-#define T_OPT 41
-
-#define DNS_HEADER_LENGTH 12
-#define DNS_FIXED_HEADER_QUERY 4
-#define EDNSFIXEDSZ 11
-#define DNS_RR_NAME_OFFSET DNS_HEADER_LENGTH
-
-#define T_OPT_OPCODE_APP_NAME 65001
-#define T_OPT_OPCODE_BANDWIDTH 65002
-#define T_OPT_OPCODE_LATENCY 65003
 
 #define FIFO_CLIENT_SERVER_NAME "client_server_fifo"
 
@@ -64,6 +50,7 @@ struct query {
   uint32_t bandwidth_req;
   uint32_t latency_req;
   char app_name_req [SLEN + 1];
+  char access_router [SLEN + 1];
 #if DEBUG_PERF
   struct timespec query_rcv_time;
   struct timespec query_forward_time;
@@ -82,6 +69,7 @@ struct reply {
   uint32_t bandwidth_req;
   uint32_t latency_req;
   char app_name_req [SLEN + 1];
+  char access_router [SLEN + 1];
   char ovsdb_req_uuid[SLEN + 1];
   char destination[SLEN + 1];
   char destination_addr[SLEN + 1];
@@ -104,6 +92,7 @@ struct callback_args {
   uint32_t bandwidth_req;
   uint32_t latency_req;
   char app_name_req [SLEN + 1];
+  char access_router [SLEN + 1];
 #if DEBUG_PERF
   struct timespec query_rcv_time;
   struct timespec query_forward_time;
@@ -121,7 +110,7 @@ struct config {
 	char dns_fifo[SLEN + 1];
   char router_name[SLEN + 1];
   char max_parallel_queries[SLEN + 1];
-  char propxy_listen_port[SLEN + 1];
+  char proxy_listen_port[SLEN + 1];
   char dns_server_port[SLEN + 1];
 };
 

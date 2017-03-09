@@ -302,6 +302,12 @@ static struct srdb_descriptor flowreq_desc_tmpl[] = {
 		.offset = OFFSET_FLOWREQ(router),
 	},
 	{
+		.name	= "proxy",
+		.type	= SRDB_STR,
+		.maxlen	= SLEN,
+		.offset	= OFFSET_FLOWREQ(proxy),
+	},
+	{
 		.name	= "status",
 		.type	= SRDB_INT,
 		.maxlen	= sizeof(int),
@@ -366,6 +372,12 @@ static struct srdb_descriptor flowstate_desc_tmpl[] = {
 		.type	= SRDB_STR,
 		.maxlen	= SLEN,
 		.offset	= OFFSET_FLOWSTATE(router),
+	},
+	{
+		.name	= "proxy",
+		.type	= SRDB_STR,
+		.maxlen	= SLEN,
+		.offset	= OFFSET_FLOWSTATE(proxy),
 	},
 	{
 		.name	= "interface",

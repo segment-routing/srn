@@ -74,7 +74,8 @@ struct srdb_flow_entry {
 	int delay;
 	int policing;
 	char source[SLEN + 1];
-	char router[SLEN + 1];
+	char router[SLEN + 1]; /* Name of the access router */
+	char proxy[SLEN + 1]; /* Name of the DNS proxy that inserts the rule in the database */
 	char interface[SLEN + 1];
 	char reverse_flow_uuid[SLEN + 1];
 	char request_id[SLEN + 1];
@@ -98,7 +99,8 @@ struct srdb_flowreq_entry {
 	char source[SLEN + 1];
 	int bandwidth;
 	int delay;
-	char router[SLEN + 1];
+	char router[SLEN + 1]; /* Name of the access router */
+	char proxy[SLEN + 1]; /* Name of the DNS proxy that inserts the rule in the database */
 	int status;
 };
 
