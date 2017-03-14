@@ -25,8 +25,8 @@
   x = -1;\
 }
 
-#define DEBUG 1
-#define DEBUG_PERF 1
+#define DEBUG 0
+#define DEBUG_PERF 0
 #define USE_DNS_CACHE 0
 
 #if DEBUG
