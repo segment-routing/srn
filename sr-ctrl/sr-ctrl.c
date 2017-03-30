@@ -356,14 +356,16 @@ static void process_request(struct srdb_entry *entry)
 	commit_flow(req, rt, fl);
 }
 
-static void read_flowreq(struct srdb_entry *entry)
+static int read_flowreq(struct srdb_entry *entry)
 {
 	struct srdb_flowreq_entry *req = (struct srdb_flowreq_entry *)entry;
 
 	mq_push(_cfg.req_queue, &req);
+
+	return 0;
 }
 
-static void read_nodestate(struct srdb_entry *entry)
+static int read_nodestate(struct srdb_entry *entry)
 {
 	struct srdb_nodestate_entry *node_entry;
 	struct router *rt;
@@ -377,12 +379,12 @@ static void read_nodestate(struct srdb_entry *entry)
 	rt = hmap_get(_cfg.routers, node_entry->name);
 	if (rt) {
 		pr_err("duplicate router entry `%s'.", node_entry->name);
-		return;
+		return 0;
 	}
 
 	rt = calloc(1, sizeof(*rt));
 	if (!rt)
-		return;
+		return -1;
 
 	memcpy(rt->name, node_entry->name, SLEN);
 	inet_pton(AF_INET6, node_entry->addr, &rt->addr);
@@ -411,9 +413,11 @@ static void read_nodestate(struct srdb_entry *entry)
 	graph_unlock(_cfg.graph);
 
 	hmap_set(_cfg.routers, rt->name, rt);
+
+	return 0;
 }
 
-static void read_linkstate(struct srdb_entry *entry)
+static int read_linkstate(struct srdb_entry *entry)
 {
 	struct srdb_linkstate_entry *link_entry;
 	struct router *rt1, *rt2;
@@ -424,14 +428,14 @@ static void read_linkstate(struct srdb_entry *entry)
 
 	link = calloc(1, sizeof(*link));
 	if (!link)
-		return;
+		return -1;
 
 	rt1 = hmap_get(_cfg.routers, link_entry->name1);
 	rt2 = hmap_get(_cfg.routers, link_entry->name2);
 	if (!rt1 || !rt2) {
 		pr_err("unknown router entry for link (`%s', `%s').",
 		       link_entry->name1, link_entry->name2);
-		return;
+		return 0; // TODO Discussion here if we stop monitoring
 	}
 
 	inet_pton(AF_INET6, link_entry->addr1, &link->local);
@@ -444,6 +448,8 @@ static void read_linkstate(struct srdb_entry *entry)
 	edge = graph_add_edge(_cfg.graph, rt1->node, rt2->node, true, link);
 	edge->metric = (uint32_t)link_entry->metric ?: UINT32_MAX;
 	graph_unlock(_cfg.graph);
+
+	return 0;
 }
 
 #define READ_STRING(b, arg, dst) sscanf(b, #arg " \"%[^\"]\"", (dst)->arg)
@@ -509,7 +515,10 @@ static void *thread_worker(void *arg __unused)
 struct monitor_arg {
 	struct srdb *srdb;
 	struct srdb_table *table;
-	const char *columns;
+	int modify;
+	int initial;
+	int insert;
+	int delete;
 };
 
 static void *thread_monitor(void *_arg)
@@ -517,7 +526,7 @@ static void *thread_monitor(void *_arg)
 	struct monitor_arg *arg = _arg;
 	int ret;
 
-	ret = srdb_monitor(arg->srdb, arg->table, arg->columns);
+	ret = srdb_monitor(arg->srdb, arg->table, arg->modify, arg->initial, arg->insert, arg->delete);
 
 	return (void *)(intptr_t)ret;
 }
@@ -541,7 +550,10 @@ static void launch_srdb(pthread_t *thr, struct monitor_arg *args)
 	srdb_set_read_cb(_cfg.srdb, "NodeState", read_nodestate);
 	args[0].srdb = _cfg.srdb;
 	args[0].table = tbl;
-	args[0].columns = "";
+	args[0].initial = 1;
+	args[0].modify = 1;
+	args[0].insert = 1;
+	args[0].delete = 1;
 
 	printf("starting nodestate\n");
 
@@ -559,7 +571,10 @@ static void launch_srdb(pthread_t *thr, struct monitor_arg *args)
 	srdb_set_read_cb(_cfg.srdb, "LinkState", read_linkstate);
 	args[1].srdb = _cfg.srdb;
 	args[1].table = tbl;
-	args[1].columns = "";
+	args[1].initial = 1;
+	args[1].modify = 1;
+	args[1].insert = 1;
+	args[1].delete = 1;
 
 	gettimeofday(&tbl->last_read, NULL);
 	pthread_create(&thr[1], NULL, thread_monitor, (void *)&args[1]);
@@ -576,7 +591,10 @@ static void launch_srdb(pthread_t *thr, struct monitor_arg *args)
 	tbl->delayed_free = true;
 	args[2].srdb = _cfg.srdb;
 	args[2].table = tbl;
-	args[2].columns = "!delete,!modify";
+	args[2].initial = 1;
+	args[2].modify = 0;
+	args[2].insert = 1;
+	args[2].delete = 0;
 
 	pthread_create(&thr[2], NULL, thread_monitor, (void *)&args[2]);
 }

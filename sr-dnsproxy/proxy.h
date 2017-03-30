@@ -102,7 +102,10 @@ struct callback_args {
 struct monitor_arg {
 	struct srdb *srdb;
 	struct srdb_table *table;
-	const char *columns;
+	int modify;
+  int initial;
+  int insert;
+  int delete;
 };
 
 struct config {

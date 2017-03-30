@@ -2,45 +2,189 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
+
+#include <jansson.h>
 
 #include "srdb.h"
 #include "misc.h"
 
 #define BUFLEN 1024
+#define JSON_BUFLEN 5000
+#define READ_OVSDB_SERVER(b, addr, port) sscanf(b, "tcp:[%[^]]]:%hu", addr, port)
+#define BOOL_TO_STR(boolean) boolean ? "true" : "false"
 
-static int ovsdb_monitor(const struct ovsdb_config *conf, const char *table,
-			 const char *columns,
-			 void (*callback)(const char *buf, void *), void *arg)
+static int parse_ovsdb_update_tables(json_t *table_updates, int initial, int (*callback)(const char *uuid, json_t *buf, int initial, void *), void *arg)
 {
-	char line[BUFLEN+1];
-	char cmd[BUFLEN+1];
-	FILE *fp;
-	int ret;
+	int ret = 0;
+	json_t *modification = NULL;
+	const char *uuid = NULL;
 
-	snprintf(cmd, BUFLEN,
-		 "%s monitor '%s' '%s' '%s' '%s' -f csv 2>/dev/null",
-		 conf->ovsdb_client, conf->ovsdb_server, conf->ovsdb_database,
-		 table, columns);
+	char *json_str = json_dumps(table_updates, 0); // TODO
+	printf("%s: table updates = %s\n" ,__func__, json_str); // TODO
+	free(json_str); // TODO
 
-	fp = popen(cmd, "r");
-	if (!fp) {
-		perror("popen");
-		return -1;
+	json_object_foreach(table_updates, uuid, modification) {
+		if ((ret = callback(uuid, modification, initial, arg))) {
+			json_str = json_dumps(modification, 0); // TODO
+			printf("%s: Non-zero value for the table update = %s\n" ,__func__, json_str); // TODO
+			free(json_str); // TODO
+			break;
+		}
 	}
-
-	while (fgets(line, BUFLEN, fp)) {
-		strip_crlf(line);
-		callback(line, arg);
-	}
-
-	ret = pclose(fp);
-	if (ret < 0)
-		perror("pclose");
-
-	/* ret = 256 => server closed connection */
-
 	return ret;
 }
+
+static int parse_ovsdb_monitor_reply(json_t *monitor_reply, const char *table,
+	                                   int (*callback)(const char *uuid, json_t *buf, int initial, void *), void *arg)
+{
+	if (!json_is_null(json_object_get(monitor_reply, "error"))) {
+		fprintf(stderr, "There is a non-null error message in the monitor reply\n");
+		return -1;
+	}
+	json_t *updates = json_object_get(monitor_reply, "result");
+	if (!updates) {
+		fprintf(stderr, "Monitor reply parsing issue: No result found\n");
+		return -1;
+	}
+	json_t *table_updates = json_object_get(updates, table);
+	if (!table_updates) {
+		// No initial data
+		return 0;
+	}
+	return parse_ovsdb_update_tables(table_updates, 1, callback, arg);
+}
+
+static int parse_ovsdb_update(json_t *update, const char *table,
+	                            int (*callback)(const char *uuid, json_t *buf, int initial, void *), void *arg)
+{
+	json_t *params = json_object_get(update, "params");
+	if (!params) {
+		fprintf(stderr, "Update parsing issue: params key not found\n");
+		return -1;
+	}
+	if (json_array_size(params) < 2) {
+		fprintf(stderr, "Update parsing issue: No params\n");
+		return -1;
+	}
+	json_t *updates = json_array_get(params, 1);
+	if (!updates) {
+		fprintf(stderr, "Update parsing issue: No update found\n");
+		return -1;
+	}
+	json_t *table_updates = json_object_get(updates, table);
+	if (!table_updates) {
+		fprintf(stderr, "Update parsing issue: No update for table %s found\n", table);
+		return -1;
+	}
+	return parse_ovsdb_update_tables(table_updates, 0, callback, arg);
+}
+
+static inline int parse_ovsdb_echo(json_t *msg)
+{
+	json_t *method = json_object_get(msg, "method");
+	return (!method || !json_is_string(method) || strcmp(json_string_value(method), "echo"));
+}
+
+static int ovsdb_monitor(const struct ovsdb_config *conf, const char *table,
+			 int modify, int initial, int insert, int delete,
+			 int (*callback)(const char *uuid, json_t *buf, int initial, void *), void *arg)
+{
+	int ret;
+	int i = 1;
+	char str_addr[BUFLEN+1];
+	char buf[JSON_BUFLEN+1];
+	unsigned short port;
+	json_t *json = NULL;
+	json_error_t json_error;
+	size_t length = 0;
+	size_t position = 0;
+	int stop = 0;
+	int err = 0;
+	char *echo_reply = "{\"id\":\"echo\",\"result\":[],\"error\":null}";
+	size_t echo_reply_len = strlen(echo_reply);
+
+	/* Init monitoring socket */
+
+	READ_OVSDB_SERVER(conf->ovsdb_server, str_addr, &port);
+	struct sockaddr_in6 addr = {
+		.sin6_family = AF_INET6,
+		.sin6_port = htons(port),
+		.sin6_flowinfo = 0,
+		.sin6_scope_id = 0
+	};
+	inet_pton(AF_INET6, str_addr, &addr.sin6_addr);
+
+	int sfd = socket(AF_INET6, SOCK_STREAM | SOCK_CLOEXEC, 0);
+	connect(sfd, (struct sockaddr *) &addr, sizeof(addr));
+
+	if (setsockopt(sfd, SOL_TCP, TCP_NODELAY, &i, sizeof(i)) < 0) {
+		perror("setsockopt");
+		goto close_sfd;
+	}
+
+	/* Request monitoring */
+	ret = snprintf(buf, JSON_BUFLEN + 1, "{\"id\":0,\"method\":\"monitor\",\"params\":[\"%s\",null,{\"%s\":[{\"select\":{\"modify\":%s,\"initial\":%s,\"insert\":%s,\"delete\":%s}}]}]}",
+                 conf->ovsdb_database, table, BOOL_TO_STR(modify), BOOL_TO_STR(initial), BOOL_TO_STR(insert), BOOL_TO_STR(delete));
+	if (ret < 0) {
+		fprintf(stderr, "%s: snprintf to create monitoring command failed\n", __func__);
+		goto close_sfd;
+	}
+	if ((ret = send(sfd, buf, ret, 0)) <= 0) {
+		perror("Cannot send monitoring command");
+		goto close_sfd;
+	}
+
+	/* Handle ovsdb monitor reply and updates */
+	while (!stop && (ret = recv(sfd, buf + length, JSON_BUFLEN - length, 0)) > 0) { // TODO Assumes jsons of less than JSON_BUFLEN bytes
+
+		length += ret;
+		position = 0;
+		while(!stop && position < length - 1 && (json = json_loadb(buf + position, length - position, JSON_DISABLE_EOF_CHECK, &json_error))) {
+
+			position += json_error.position;
+
+			char *json_str = json_dumps(json, 0); // TODO
+			printf("%s: begin inner loop received json = %s - length = %lu - position = %lu\n" ,__func__, json_str, length, position); // TODO
+			free(json_str); // TODO
+
+			if (!parse_ovsdb_echo(json)) {
+				if ((err = send(sfd, echo_reply, echo_reply_len, 0)) < 0) {
+					perror("Cannot send an echo reply");
+				}
+			} else {
+				if (json_is_integer(json_object_get(json, "id"))) {
+					stop = parse_ovsdb_monitor_reply(json, table, callback, arg);
+				} else {
+					stop = parse_ovsdb_update(json, table, callback, arg);
+				}
+				json_decref(json);
+			}
+			printf("%s: end inner loop - length = %lu - position = %lu\n" ,__func__, length, position); // TODO
+		}
+		if (!json) /* The full json is not yet in the buffer => wait for it */
+			memcpy(buf, buf + position, length - position);
+		else
+			length = 0;
+		printf("%s: end outer loop - length = %lu - position = %lu\n" ,__func__, length, position); // TODO
+	}
+
+	if (ret < 0) {
+		perror("recv() from ovsdb_monitor() failed");
+	}
+
+	printf("%s: END OF FUNCTION\n", __func__); //TODO
+
+close_sfd:
+	close(sfd);
+	return ret;
+}
+
+// TODO Start socket for update + put nodelay
+
+// TODO Close socket for update
 
 static int ovsdb_update(const struct ovsdb_config *conf, const char *table,
 			const char *uuid, const char *fields)
@@ -49,6 +193,8 @@ static int ovsdb_update(const struct ovsdb_config *conf, const char *table,
 	char cmd[BUFLEN];
 	int ret = 0;
 	FILE *fp;
+
+	// TODO Forge json object as below + send it on the socket in argument
 
 	snprintf(cmd, BUFLEN, "%s transact '%s' '[\"%s\", {\"op\": \"update\", "
 			   "\"table\": \"%s\", \"where\": [[\"_uuid\", \"==\","
@@ -128,52 +274,50 @@ static int find_desc_fromname(struct srdb_descriptor *desc, const char *name)
 	return -1;
 }
 
-static int find_desc_fromidx(struct srdb_descriptor *desc, int idx)
-{
-	int i;
-
-	for (i = 0; desc[i].name; i++) {
-		if (desc[i].index == idx)
-			return i;
-	}
-
-	return -1;
-}
-
-static void fill_srdb_index(struct srdb_descriptor *desc, char **vargs)
-{
-	int i, idx;
-
-	for (i = 0; *vargs; vargs++, i++) {
-		idx = find_desc_fromname(desc, *vargs);
-		if (idx < 0)
-			continue;
-		desc[idx].index = i;
-	}
-}
-
 static void fill_srdb_entry(struct srdb_descriptor *desc,
-			    struct srdb_entry *entry, char **vargs)
+			    struct srdb_entry *entry, const char *uuid, json_t *line_json)
 {
 	void *data;
-	int i, idx;
+	int i;
+	json_t *column_value;
 
-	for (i = 0; *vargs; vargs++, i++) {
-		idx = find_desc_fromidx(desc, i);
-		if (idx < 0)
+	for (i = 0; desc[i].name; i++) {
+		if (!strcmp(desc[i].name, "row")) {
+			strncpy(entry->row, uuid, desc[i].maxlen);
 			continue;
+		}
 
-		data = (unsigned char *)entry + desc[idx].offset;
+		column_value = json_object_get(line_json, desc[i].name);
+		if (!column_value) {
+			if (strcmp(desc[i].name, "action"))
+				fprintf(stderr, "The column %s cannot be found !\n", desc[i].name);
+			continue;
+		}
+		if (!strcmp(desc[i].name, "_version")) {
+			column_value = json_object_get(line_json, "_version");
+			column_value = json_array_get(column_value, 1);
+		}
 
-		switch (desc[idx].type) {
+		data = (unsigned char *)entry + desc[i].offset;
+
+		switch (desc[i].type) {
 		case SRDB_STR:
-			strncpy((char *)data, *vargs, desc[idx].maxlen);
+			if (!json_is_string(column_value))
+				fprintf(stderr, "String is expected for %s but the json is not of that type\n", desc[i].name);
+			else
+				strncpy((char *)data, json_string_value(column_value), desc[i].maxlen);
 			break;
 		case SRDB_INT:
-			*(int *)data = strtol(*vargs, NULL, 10);
+			if (!json_is_integer(column_value))
+				fprintf(stderr, "Integer is expected for %s but the json is not of that type\n", desc[i].name);
+			else
+				*(int *)data = (int) ntohl((long) json_integer_value(column_value));
 			break;
 		case SRDB_VARSTR:
-			*(char **)data = strndup(*vargs, desc[idx].maxlen);
+			if (!json_is_string(column_value))
+				fprintf(stderr, "String is expected for %s but the json is not of that type\n", desc[i].name);
+			else
+				*(char **)data = strndup(json_string_value(column_value), desc[i].maxlen);
 			break;
 		}
 	}
@@ -192,29 +336,6 @@ void free_srdb_entry(struct srdb_descriptor *desc,
 	}
 
 	free(entry);
-}
-
-static char *normalize_rowbuf(const char *buf)
-{
-	size_t n = 0;
-	const char *s;
-	char *buf2;
-
-	for (s = buf; *s; s++) {
-		if (*s != '"')
-			n++;
-	}
-
-	buf2 = calloc(1, n+1);
-	if (!buf2)
-		return NULL;
-
-	for (n = 0, s = buf; *s; s++) {
-		if (*s != '"')
-			buf2[n++] = *s;
-	}
-
-	return buf2;
 }
 
 #define SRDB_BUILTIN_ENTRIES()					\
@@ -586,84 +707,111 @@ struct srdb_table *srdb_table_by_name(struct srdb_table *tables,
 	return NULL;
 }
 
-static void srdb_read(const char *buf, void *arg)
+static int srdb_read(const char *uuid, json_t *json, int initial, void *arg)
 {
-	struct srdb_table *tbl = arg;
-	struct srdb_entry *entry;
-	char *action;
-	char **vargs;
-	char *buf2;
-	int vargc;
 	int idx;
+	struct srdb_table *tbl = arg;
+	struct srdb_entry *entry = NULL;
+	char *action;
+	json_t *new = NULL;
+	json_t *old = NULL;
+	int ret = 0;
 
 	gettimeofday(&tbl->last_read, NULL);
 
-	if (!buf || !*buf)
-		return;
+	if (!uuid || !json)
+		return -1;
 
-	buf2 = normalize_rowbuf(buf);
-	if (!buf2)
-		return;
+	new = json_object_get(json, "new");
+	old = json_object_get(json, "old");
 
-	vargs = strsplit(buf2, &vargc, ',');
-	if (!vargs) {
-		free(buf2);
-		return;
-	}
-
-	if (!strcmp(*vargs, "row")) {
-		fill_srdb_index(tbl->desc, vargs);
-		free(vargs);
-		free(buf2);
-		return;
-	}
-
-	entry = calloc(1, tbl->entry_size);
-	if (!entry) {
-		free(vargs);
-		free(buf2);
-		return;
-	}
-
-	fill_srdb_entry(tbl->desc, entry, vargs);
-
-	free(vargs);
-	free(buf2);
+	char *json_str = json_dumps(json, 0); // TODO
+	printf("\n%s: json = %s - old %d - new %d - initial %d\n" ,__func__, json_str, !!old, !!new, initial); // TODO
+	free(json_str); // TODO
 
 	idx = find_desc_fromname(tbl->desc, "action");
-
 	if (idx < 0) {
 		pr_err("field `action' not present in row.");
 		free_srdb_entry(tbl->desc, entry);
-		return;
+		ret = -1;
+		goto out;
 	}
 
-	action = (char *)entry + tbl->desc[idx].offset;
+	if (new) {
+		entry = calloc(1, tbl->entry_size);
+		action = (char *)entry + tbl->desc[idx].offset;
+		if (!entry) {
+			ret = -1;
+			goto out;
+		}
+	}
+	if (old) {
+		tbl->update_entry = calloc(1, tbl->entry_size);
+		if (!tbl->update_entry) {
+			ret = -1;
+			goto free_new;
+		}
+	}
 
-	if (!strcmp(action, "insert") || !strcmp(action, "initial")) {
+
+	if (new) {
+		sprintf(action, "%s", initial ? "initial" : "insert");
+		fill_srdb_entry(tbl->desc, entry, uuid, new);
+
+		printf("%s: entry uuid %s\n" ,__func__, entry->row); // TODO
+		printf("%s: entry action %s\n" ,__func__, action); // TODO
+		printf("%s: entry version %s\n" ,__func__, entry->version); // TODO
+
 		if (tbl->read)
-			tbl->read(entry);
+			ret = tbl->read(entry);
 		if (!tbl->delayed_free)
 			free_srdb_entry(tbl->desc, entry);
-	} else if (!strcmp(action, "old")) {
-		tbl->update_entry = entry;
-	} else if (!strcmp(action, "new")) { /* TODO fix for delayed free / MT */
+	} else if (new && old) { /* TODO fix for delayed free / MT */
+		strcpy(action, "update");
+		fill_srdb_entry(tbl->desc, entry, uuid, new);
+		memcpy(entry, tbl->update_entry, tbl->entry_size);
+		fill_srdb_entry(tbl->desc, tbl->update_entry, uuid, old);
+
+		printf("%s: entry uuid %s\n" ,__func__, entry->row); // TODO
+		printf("%s: entry action %s\n" ,__func__, action); // TODO
+		printf("%s: entry version %s\n" ,__func__, entry->version); // TODO
+
+		printf("%s: old entry uuid %s\n" ,__func__, tbl->update_entry->row); // TODO
+		printf("%s: old entry action %s\n" ,__func__, action); // TODO
+		printf("%s: old entry version %s\n" ,__func__, tbl->update_entry->version); // TODO
+
 		if (tbl->read_update)
-			tbl->read_update(tbl->update_entry, entry);
+			ret = tbl->read_update(tbl->update_entry, entry);
 		free_srdb_entry(tbl->desc, tbl->update_entry);
 		free_srdb_entry(tbl->desc, entry);
+		tbl->update_entry = NULL;
+	} else if (old) {
+		action = (char *)(tbl->update_entry) + tbl->desc[idx].offset;
+		strcpy(action, "delete");
+		fill_srdb_entry(tbl->desc, tbl->update_entry, uuid, old);
+		if (tbl->read_delete)
+			ret = tbl->read_delete(tbl->update_entry);
+		free_srdb_entry(tbl->desc, tbl->update_entry);
 		tbl->update_entry = NULL;
 	} else {
 		free_srdb_entry(tbl->desc, entry);
 		pr_err("unknown action type `%s'.", action);
+		ret = -1;
 	}
+
+out:
+	return ret;
+free_new:
+	if (entry)
+		free_srdb_entry(tbl->desc, entry);
+	goto out;
 }
 
-int srdb_monitor(struct srdb *srdb, struct srdb_table *tbl, const char *columns)
+int srdb_monitor(struct srdb *srdb, struct srdb_table *tbl, int modify, int initial, int insert, int delete)
 {
 	int ret;
 
-	ret = ovsdb_monitor(&srdb->conf, tbl->name, columns, srdb_read, tbl);
+	ret = ovsdb_monitor(&srdb->conf, tbl->name, modify, initial, insert, delete, srdb_read, tbl);
 
 	return ret;
 }
@@ -708,7 +856,9 @@ int srdb_update(struct srdb *srdb, struct srdb_table *tbl,
 
 	desc = &tbl->desc[idx];
 
+	// TODO Update the creation of the json
 	write_desc_data(field_update, SLEN, desc, entry);
+	// TODO Update the creation of the json
 
 	ret = ovsdb_update(&srdb->conf, tbl->name, entry->row, field_update);
 
@@ -727,7 +877,9 @@ int srdb_insert(struct srdb *srdb, struct srdb_table *tbl,
 
 	for (tmp = tbl->desc; tmp->name; tmp++) {
 		if (!tmp->builtin) {
+			// TODO Update the creation of the json
 			ret = write_desc_data(field, SLEN, tmp, entry);
+			// TODO Update the creation of the json
 			if (ret < 0)
 				return ret;
 
@@ -769,7 +921,7 @@ void srdb_destroy(struct srdb *srdb)
 }
 
 void srdb_set_read_cb(struct srdb *srdb, const char *table,
-		      void (*cb)(struct srdb_entry *))
+		      int (*cb)(struct srdb_entry *))
 {
 	struct srdb_table *tbl;
 

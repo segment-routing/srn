@@ -17,7 +17,7 @@ struct queue_thread replies_waiting_controller;
 
 struct srdb *srdb;
 
-static void read_flowreq(__attribute__((unused)) struct srdb_entry *old_entry, struct srdb_entry *entry) {
+static int read_flowreq(__attribute__((unused)) struct srdb_entry *old_entry, struct srdb_entry *entry) {
 
 	struct srdb_flowreq_entry *flowreq = (struct srdb_flowreq_entry *) entry;
   struct reply *reply = NULL;
@@ -37,7 +37,7 @@ static void read_flowreq(__attribute__((unused)) struct srdb_entry *old_entry, s
 	    }
 	  }
 		if (((void *) reply) == (void *) &replies_waiting_controller) {
-			return; /* Not for us or not rejected */
+			return stop; /* Not for us or not rejected */
 		}
 
 		/* Send a DNS reject by changing the RCODE and by leaving only the query record */
@@ -59,9 +59,11 @@ static void read_flowreq(__attribute__((unused)) struct srdb_entry *old_entry, s
 
 		FREE_POINTER(reply);
 	}
+
+	return stop;
 }
 
-static void read_flowstate(struct srdb_entry *entry) {
+static int read_flowstate(struct srdb_entry *entry) {
 
   struct reply *reply = NULL;
   struct reply *tmp = NULL;
@@ -85,7 +87,7 @@ static void read_flowstate(struct srdb_entry *entry) {
     }
   }
 	if (((void *) reply) == (void *) &replies_waiting_controller) {
-		return; /* Not for us */
+		return stop; /* Not for us */
 	}
 #if DEBUG_PERF
 	reply->controller_reply_time = controller_reply_time;
@@ -166,6 +168,7 @@ static void read_flowstate(struct srdb_entry *entry) {
 
 free_reply:
   FREE_POINTER(reply);
+	return stop;
 }
 
 static void *thread_monitor(void *_arg) {
@@ -175,7 +178,7 @@ static void *thread_monitor(void *_arg) {
 
 	print_debug("A monitor thread has started\n");
 
-	ret = srdb_monitor(arg->srdb, arg->table, arg->columns);
+	ret = srdb_monitor(arg->srdb, arg->table, arg->modify, arg->initial, arg->insert, arg->delete);
 
 	print_debug("A monitor thread has finished\n");
 
@@ -237,14 +240,20 @@ int init_monitor(struct monitor_arg *args, __attribute__((unused)) pthread_t *mo
 	tbl->read_update = read_flowreq;
 	args[0].srdb = srdb;
 	args[0].table = tbl;
-	args[0].columns = "!initial,!delete,!insert";
+	args[0].initial = 0;
+	args[0].modify = 1;
+	args[0].insert = 0;
+	args[0].delete = 0;
 	pthread_create(monitor_flowreqs_thread, NULL, thread_monitor, (void *) &args[0]);
 
 	tbl = srdb_table_by_name(srdb->tables, "FlowState");
 	tbl->read = read_flowstate;
 	args[1].srdb = srdb;
 	args[1].table = tbl;
-	args[1].columns = "!initial,!delete,!modify";
+	args[1].initial = 0;
+	args[1].modify = 0;
+	args[1].insert = 1;
+	args[1].delete = 0;
 	pthread_create(monitor_flows_thread, NULL, thread_monitor, (void *) &args[1]);
 
   mqueue_init(&replies_waiting_controller, max_queries);

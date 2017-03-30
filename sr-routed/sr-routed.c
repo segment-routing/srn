@@ -134,7 +134,7 @@ static int set_status(struct srdb_flow_entry *flow_entry, enum flow_status st)
 			   "status");
 }
 
-static void read_flowstate(struct srdb_entry *entry)
+static int read_flowstate(struct srdb_entry *entry)
 {
 	struct srdb_flow_entry *flow_entry = (struct srdb_flow_entry *)entry;
 
@@ -148,6 +148,8 @@ static void read_flowstate(struct srdb_entry *entry)
 	send_flow(flow_entry->request_id, flow_entry->dstaddr,
 		  flow_entry->bsid);
 	set_status(flow_entry, FLOW_STATUS_RUNNING);
+
+	return 0;
 }
 
 #define READ_STRING(b, arg, dst) sscanf(b, #arg " \"%[^\"]\"", (dst)->arg)
@@ -192,7 +194,10 @@ static int load_config(const char *fname, struct config *cfg)
 struct monitor_arg {
 	struct srdb *srdb;
 	struct srdb_table *table;
-	const char *columns;
+	int modify;
+	int initial;
+	int insert;
+	int delete;
 };
 
 static void *thread_monitor(void *_arg)
@@ -200,7 +205,7 @@ static void *thread_monitor(void *_arg)
 	struct monitor_arg *arg = _arg;
 	int ret;
 
-	ret = srdb_monitor(arg->srdb, arg->table, arg->columns);
+	ret = srdb_monitor(arg->srdb, arg->table, arg->modify, arg->initial, arg->insert, arg->delete);
 
 	return (void *)(intptr_t)ret;
 }
@@ -213,7 +218,10 @@ static void launch_srdb(pthread_t *thr, struct monitor_arg *args)
 	srdb_set_read_cb(_cfg.srdb, "FlowState", read_flowstate);
 	args[0].srdb = _cfg.srdb;
 	args[0].table = tbl;
-	args[0].columns = "";
+	args[0].initial = 1;
+	args[0].modify = 1;
+	args[0].insert = 1;
+	args[0].delete = 1;
 
 	pthread_create(&thr[0], NULL, thread_monitor, (void *)&args[0]);
 }

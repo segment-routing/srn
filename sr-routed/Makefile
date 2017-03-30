@@ -1,6 +1,6 @@
 CC=gcc
 CFLAGS=-g -Wall -W -O0 -I../lib
-LDFLAGS=-L../lib -lsr -pthread
+LDFLAGS=-L../lib -lsr -pthread -ljansson
 SRC=sr-routed.c
 OBJ=$(SRC:.c=.o)
 EXEC=sr-routed

@@ -35,8 +35,9 @@ struct srdb_table {
 	struct srdb_descriptor *desc;
 	size_t desc_size;
 	size_t entry_size;
-	void (*read)(struct srdb_entry *);
-	void (*read_update)(struct srdb_entry *, struct srdb_entry *);
+	int (*read)(struct srdb_entry *);
+	int (*read_update)(struct srdb_entry *, struct srdb_entry *);
+	int (*read_delete)(struct srdb_entry *);
 	struct srdb_entry *update_entry;
 	struct timeval last_read;
 	bool delayed_free;
@@ -135,7 +136,7 @@ struct srdb_nodestate_entry {
 };
 
 int srdb_monitor(struct srdb *srdb, struct srdb_table *tbl,
-		 const char *columns);
+		int modify, int initial, int insert, int delete);
 int srdb_update(struct srdb *srdb, struct srdb_table *tbl,
 		struct srdb_entry *entry, const char *fieldname);
 int srdb_insert(struct srdb *srdb, struct srdb_table *tbl,
@@ -148,7 +149,7 @@ struct srdb_table *srdb_table_by_name(struct srdb_table *tables,
 struct srdb *srdb_new(const struct ovsdb_config *conf);
 void srdb_destroy(struct srdb *srdb);
 void srdb_set_read_cb(struct srdb *srdb, const char *table,
-		      void (*cb)(struct srdb_entry *));
+		      int (*cb)(struct srdb_entry *));
 void free_srdb_entry(struct srdb_descriptor *desc,
  		     struct srdb_entry *entry);
 

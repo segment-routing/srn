@@ -1,6 +1,6 @@
 CC=gcc
 AR=ar
-CFLAGS=-g -Wall -W -O0
+CFLAGS=-g -Wall -W -O0 -Wall -Werror
 CFLAGS += -I./c-ares
 SRC=arraylist.c hashmap.c lpm.c misc.c mq.c srdb.c srdns.c linked_list.c
 OBJ=$(SRC:.c=.o)
