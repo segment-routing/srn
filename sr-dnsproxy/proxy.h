@@ -25,7 +25,7 @@
   x = -1;\
 }
 
-#define DEBUG 0
+#define DEBUG 1
 #define DEBUG_PERF 0
 #define USE_DNS_CACHE 0
 
@@ -43,7 +43,7 @@
 struct mapping_qid;
 
 struct query {
-  struct node node;
+  struct llnode node;
   struct sockaddr_in6 addr;
   socklen_t addr_len;
   size_t length;
@@ -60,7 +60,7 @@ struct query {
 };
 
 struct reply {
-  struct node node;
+  struct llnode node;
   struct sockaddr_in6 addr;
   socklen_t addr_len;
   size_t data_length;
@@ -130,6 +130,9 @@ extern int server_sfd;
 extern struct hashmap *dns_cache;
 extern struct srdb *srdb;
 
+extern struct queue_thread transact_input;
+extern struct queue_thread transact_output;
+
 #define MAX_DNS_PACKET_SIZE 512 /* TODO Advertize value with EDNS0 */
 #define MAX_SRH_RR_SIZE 100 /* TODO Discuss */
 #define QUERY_ALLOC (MAX_DNS_PACKET_SIZE + sizeof(struct query))
@@ -169,7 +172,7 @@ void client_callback(void *arg, int status, __attribute__((unused)) int timeouts
 int init_client(int optmask, struct ares_addr_node *servers, pthread_t *client_consumer_thread, pthread_t *client_producer_thread);
 void close_client();
 
-int init_monitor(struct monitor_arg *args, pthread_t *monitor_flowreqs_thread, pthread_t *monitor_flows_thread);
+int init_monitor(struct monitor_arg *args, pthread_t *monitor_flowreqs_thread, pthread_t *monitor_flows_thread, pthread_t *transact_thread);
 void close_monitor();
 
 #endif /* PROXY__H */

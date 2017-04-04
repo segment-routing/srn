@@ -53,7 +53,7 @@ void client_callback(void *arg, int status, __attribute__((unused)) int timeouts
     }
 #endif
     DNS_HEADER_SET_QID((char *) reply->data, call_args->qid);
-    if (queue_append(&inner_queue, (struct node *) reply)) {
+    if (queue_append(&inner_queue, (struct llnode *) reply)) {
       /* Dropping reply */
       FREE_POINTER(reply);
     }
@@ -149,7 +149,7 @@ static void *client_producer_main(__attribute__((unused)) void *args) {
         continue;
       }
       print_debug("Client producer will append a reply to the appropriate queue\n");
-      if (mqueue_append(&replies, (struct node *) reply)) {
+      if (mqueue_append(&replies, (struct llnode *) reply)) {
         /* Dropping reply */
         FREE_POINTER(reply);
         continue;
@@ -188,7 +188,8 @@ static void *client_consumer_main(__attribute__((unused)) void *args) {
 
   /* Get the OpenFlow ID of this thread */
   strncpy(router_entry.router, cfg.router_name, SLEN + 1);
-  if (srdb_insert(srdb, router_tbl, (struct srdb_entry *) &router_entry, thread_id)) {
+  if (srdb_insert(srdb, router_tbl, (struct srdb_entry *) &router_entry, thread_id,
+                  &transact_input, &transact_output)) {
     fprintf(stderr, "Problem during extraction of thread ID -> stop thread\n");
     return NULL;
   }
@@ -199,7 +200,7 @@ static void *client_consumer_main(__attribute__((unused)) void *args) {
     print_debug("Client consumer dequeues a reply\n");
 
     snprintf(reply->ovsdb_req_uuid, SLEN + 1, "%s-%ld", thread_id, req_counter);
-    if (mqueue_append(&replies_waiting_controller, (struct node *) reply)) {
+    if (mqueue_append(&replies_waiting_controller, (struct llnode *) reply)) {
       FREE_POINTER(reply);
       break;
     }
@@ -220,7 +221,8 @@ static void *client_consumer_main(__attribute__((unused)) void *args) {
     }
 #endif
 
-    srdb_insert(srdb, tbl, (struct srdb_entry *) &entry, NULL);
+    srdb_insert(srdb, tbl, (struct srdb_entry *) &entry, NULL, &transact_input,
+                &transact_output);
     print_debug("Client consumer makes the insertion in the OVSDB table\n");
 
 #if DEBUG_PERF

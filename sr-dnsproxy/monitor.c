@@ -17,6 +17,9 @@ struct queue_thread replies_waiting_controller;
 
 struct srdb *srdb;
 
+struct queue_thread transact_input;
+struct queue_thread transact_output;
+
 static int read_flowreq(__attribute__((unused)) struct srdb_entry *old_entry, struct srdb_entry *entry) {
 
 	struct srdb_flowreq_entry *flowreq = (struct srdb_flowreq_entry *) entry;
@@ -32,7 +35,7 @@ static int read_flowreq(__attribute__((unused)) struct srdb_entry *old_entry, st
 			print_debug("Check an entry with uuid %s\n", reply->ovsdb_req_uuid);
 	    if (!strncmp(flowreq->request_id, reply->ovsdb_req_uuid, SLEN + 1)) {
 				print_debug("A matching with a pending reply was found\n");
-	      mqueue_remove(&replies_waiting_controller, (struct node *) reply);
+	      mqueue_remove(&replies_waiting_controller, (struct llnode *) reply);
 	      break;
 	    }
 	  }
@@ -82,7 +85,7 @@ static int read_flowstate(struct srdb_entry *entry) {
   mqueue_walk_safe(&replies_waiting_controller, reply, tmp, struct reply *) {
     if (!strncmp(flowstate->request_id, reply->ovsdb_req_uuid, SLEN + 1)) {
 			print_debug("A matching with a pending reply was found\n");
-      mqueue_remove(&replies_waiting_controller, (struct node *) reply);
+      mqueue_remove(&replies_waiting_controller, (struct llnode *) reply);
       break;
     }
   }
@@ -185,7 +188,15 @@ static void *thread_monitor(void *_arg) {
 	return (void *)(intptr_t)ret;
 }
 
-int init_monitor(struct monitor_arg *args, __attribute__((unused)) pthread_t *monitor_flowreqs_thread, pthread_t *monitor_flows_thread) {
+static void *thread_transact(__attribute__((unused)) void *_arg) {
+
+	srdb_transaction(&cfg.ovsdb_conf, &transact_input, &transact_output);
+	return NULL;
+}
+
+int init_monitor(struct monitor_arg *args, pthread_t *monitor_flowreqs_thread,
+		 pthread_t *monitor_flows_thread,
+		 pthread_t *transact_thread) {
 
   struct addrinfo hints;
   struct addrinfo *result, *rp;
@@ -258,6 +269,11 @@ int init_monitor(struct monitor_arg *args, __attribute__((unused)) pthread_t *mo
 
   mqueue_init(&replies_waiting_controller, max_queries);
 
+	/* Init transaction threads */
+	mqueue_init(&transact_input, max_queries);
+	mqueue_init(&transact_output, max_queries);
+	pthread_create(transact_thread, NULL, thread_transact, NULL);
+
 out_err:
   return status;
 }
@@ -265,4 +281,6 @@ out_err:
 void close_monitor() {
   srdb_destroy(srdb);
   mqueue_destroy(&replies_waiting_controller);
+  mqueue_destroy(&transact_input);
+  mqueue_destroy(&transact_output);
 }

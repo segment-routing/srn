@@ -6,8 +6,8 @@
 
 void queue_init(struct queue *queue) {
   queue->length = 0;
-  queue->node.next = (struct node *) queue;
-  queue->node.prev = (struct node *) queue;
+  queue->node.next = (struct llnode *) queue;
+  queue->node.prev = (struct llnode *) queue;
 }
 
 void mqueue_init(struct queue_thread *queue, size_t max_size) {
@@ -17,12 +17,12 @@ void mqueue_init(struct queue_thread *queue, size_t max_size) {
 	sem_init(&queue->full, 0, 0);
 }
 
-int queue_append(struct queue *queue, struct node *elem) {
+int queue_append(struct queue *queue, struct llnode *elem) {
 
-  struct node *tmp = NULL;
+  struct llnode *tmp = NULL;
 
   tmp = queue->node.prev;
-  elem->next = (struct node *) queue;
+  elem->next = (struct llnode *) queue;
   elem->prev = queue->node.prev;
   tmp->next = elem;
   queue->node.prev = elem;
@@ -31,7 +31,7 @@ int queue_append(struct queue *queue, struct node *elem) {
   return 0;
 }
 
-int mqueue_append(struct queue_thread *queue, struct node *elem) {
+int mqueue_append(struct queue_thread *queue, struct llnode *elem) {
 
   int err = 0;
 
@@ -61,17 +61,17 @@ out_err:
   return err;
 }
 
-struct node *queue_dequeue(struct queue *queue) {
-  struct node *tmp = queue->node.next;
+struct llnode *queue_dequeue(struct queue *queue) {
+  struct llnode *tmp = queue->node.next;
   queue->node.next = tmp->next;
-  queue->node.next->prev = (struct node *) queue;
+  queue->node.next->prev = (struct llnode *) queue;
   queue->length -= 1;
   return tmp;
 }
 
-struct node *mqueue_dequeue(struct queue_thread *queue) {
+struct llnode *mqueue_dequeue(struct queue_thread *queue) {
 
-  struct node *tmp = NULL;
+  struct llnode *tmp = NULL;
 
   if (sem_wait(&queue->full)) {
     perror("Cannot wait for the semaphore 'full'");
@@ -95,10 +95,10 @@ struct node *mqueue_dequeue(struct queue_thread *queue) {
 out_free_sem:
   sem_post(&queue->full);
 out_err:
-  return (struct node *) queue;
+  return (struct llnode *) queue;
 }
 
-int queue_remove(struct queue *queue, struct node *elem) {
+int queue_remove(struct queue *queue, struct llnode *elem) {
 
   elem->prev->next = elem->next;
   elem->next->prev = elem->prev;
@@ -108,7 +108,7 @@ int queue_remove(struct queue *queue, struct node *elem) {
   return 0;
 }
 
-int mqueue_remove(struct queue_thread *queue, struct node *elem) {
+int mqueue_remove(struct queue_thread *queue, struct llnode *elem) {
 
   int err = 0;
 
@@ -151,9 +151,9 @@ void mqueue_close(struct queue_thread *queue, int consumer_threads, int producer
 }
 
 void queue_destroy(struct queue *queue) {
-  struct node *elem = NULL;
+  struct llnode *elem = NULL;
   for (elem = queue_dequeue(queue);
-       elem != (struct node *) queue;
+       elem != (struct llnode *) queue;
        elem = queue_dequeue(queue)) {
     free(elem);
   }

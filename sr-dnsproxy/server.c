@@ -134,7 +134,7 @@ static void server_producer_process(fd_set *read_fds) {
         perror("Cannot get query_rcv time");
       }
 #endif
-      if (mqueue_append(&queries, (struct node *) query)) {
+      if (mqueue_append(&queries, (struct llnode *) query)) {
         /* Dropping request */
         FREE_POINTER(query);
         return;
@@ -285,7 +285,7 @@ static void *server_consumer_main(__attribute__((unused)) void *_arg) {
         perror("Cannot get reply_rcv time (cache hit)");
       }
 #endif
-      if (mqueue_append(&replies, (struct node *) reply)) {
+      if (mqueue_append(&replies, (struct llnode *) reply)) {
         /* Dropping reply */
         FREE_POINTER(reply);
       }

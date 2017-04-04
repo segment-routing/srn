@@ -81,18 +81,21 @@ static void config_set_defaults(struct config *cfg)
 	cfg->req_queue_size = 16;
 }
 
-static int set_status(struct srdb_flowreq_entry *req, enum flowreq_status st)
+static int set_status(struct srdb_flowreq_entry *req, enum flowreq_status st,
+		      struct queue_thread *input, struct queue_thread *output)
 {
 	struct srdb_table *tbl;
 
 	tbl = srdb_table_by_name(_cfg.srdb->tables, "FlowReq");
 	req->status = st;
 
-	return srdb_update(_cfg.srdb, tbl, (struct srdb_entry *)req, "status");
+	return srdb_update(_cfg.srdb, tbl, (struct srdb_entry *)req, "status",
+			   input, output);
 }
 
 static int commit_flow(struct srdb_flowreq_entry *req, struct router *rt,
-		       struct flow *fl)
+		       struct flow *fl, struct queue_thread *input,
+		       struct queue_thread *output)
 {
 	struct srdb_flow_entry flow_entry;
 	char addr[INET6_ADDRSTRLEN];
@@ -150,7 +153,7 @@ static int commit_flow(struct srdb_flowreq_entry *req, struct router *rt,
 
 	ret = srdb_insert(_cfg.srdb,
 			  srdb_table_by_name(_cfg.srdb->tables, "FlowState"),
-			  (struct srdb_entry *)&flow_entry, NULL);
+			  (struct srdb_entry *)&flow_entry, NULL, input, output);
 
 	free(flow_entry.segments);
 
@@ -278,7 +281,9 @@ out_error:
 	return NULL;
 }
 
-static void process_request(struct srdb_entry *entry)
+static void process_request(struct srdb_entry *entry,
+			    struct queue_thread *input,
+			    struct queue_thread *output)
 {
 	struct srdb_flowreq_entry *req = (struct srdb_flowreq_entry *)entry;
 	struct router *rt, *dstrt;
@@ -297,7 +302,7 @@ static void process_request(struct srdb_entry *entry)
 		rstat = REQ_STATUS_DENIED;
 
 	if (rstat == REQ_STATUS_DENIED) {
-		if (set_status(req, rstat) < 0)
+		if (set_status(req, rstat, input, output) < 0)
 			pr_err("failed to update row uuid %s to status %d\n",
 			       req->_row, rstat);
 		return;
@@ -307,7 +312,7 @@ static void process_request(struct srdb_entry *entry)
 
 	fl = calloc(1, sizeof(*fl));
 	if (!fl) {
-		set_status(req, REQ_STATUS_ERROR);
+		set_status(req, REQ_STATUS_ERROR, input, output);
 		return;
 	}
 
@@ -322,7 +327,7 @@ static void process_request(struct srdb_entry *entry)
 	rt = hmap_get(_cfg.routers, req->router);
 	if (!rt) {
 		free(fl);
-		set_status(req, REQ_STATUS_NOROUTER);
+		set_status(req, REQ_STATUS_NOROUTER, input, output);
 		return;
 	}
 
@@ -330,7 +335,7 @@ static void process_request(struct srdb_entry *entry)
 	dstrt = lpm_lookup(_cfg.prefixes, &addr);
 	if (!dstrt) {
 		free(fl);
-		set_status(req, REQ_STATUS_NOPREFIX);
+		set_status(req, REQ_STATUS_NOPREFIX, input, output);
 		return;
 	}
 
@@ -343,7 +348,7 @@ static void process_request(struct srdb_entry *entry)
 
 	if (!fl->segs) {
 		free(fl);
-		set_status(req, REQ_STATUS_UNAVAILABLE);
+		set_status(req, REQ_STATUS_UNAVAILABLE, input, output);
 		return;
 	}
 
@@ -352,8 +357,8 @@ static void process_request(struct srdb_entry *entry)
 	hmap_set(rt->flows, &fl->bsid, fl);
 	hmap_unlock(rt->flows);
 
-	set_status(req, REQ_STATUS_ALLOWED);
-	commit_flow(req, rt, fl);
+	commit_flow(req, rt, fl, input, output);
+	set_status(req, REQ_STATUS_ALLOWED, input, output);
 }
 
 static int read_flowreq(struct srdb_entry *entry)
@@ -494,20 +499,45 @@ static int load_config(const char *fname, struct config *cfg)
 	return ret;
 }
 
+static void *thread_transact(__attribute__((unused)) void *_arg)
+{
+	struct queue_thread *input = _arg;
+	struct queue_thread *output = input + 1;
+	srdb_transaction(&_cfg.srdb->conf, input, output);
+	return NULL;
+}
+
 static void *thread_worker(void *arg __unused)
 {
 	struct srdb_entry *entry;
 	struct srdb_table *tbl;
 
+	pthread_t transact_thread;
+
 	tbl = srdb_table_by_name(_cfg.srdb->tables, "FlowReq");
+
+	struct queue_thread queues[2];
+	struct queue_thread *transact_input = &queues[0];
+	struct queue_thread *transact_output = &queues[1];
+	mqueue_init(transact_input, _cfg.req_queue_size);
+	mqueue_init(transact_output, _cfg.req_queue_size);
+	pthread_create(&transact_thread, NULL, thread_transact, queues);
 
 	for (;;) {
 		mq_pop(_cfg.req_queue, &entry);
 		if (!entry)
 			break;
-		process_request(entry);
+		process_request(entry, transact_input, transact_output);
 		free_srdb_entry(tbl->desc, entry);
 	}
+
+	mqueue_close(transact_input, 1, 2);
+        mqueue_close(transact_output, 1, 2);
+
+	pthread_join(transact_thread, NULL);
+
+        mqueue_destroy(transact_input);
+        mqueue_destroy(transact_output);
 
 	return NULL;
 }

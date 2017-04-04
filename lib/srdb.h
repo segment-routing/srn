@@ -6,6 +6,8 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
+#include "linked_list.h"
+
 #define SLEN	127
 
 enum srdb_type {
@@ -137,10 +139,15 @@ struct srdb_nodestate_entry {
 
 int srdb_monitor(struct srdb *srdb, struct srdb_table *tbl,
 		int modify, int initial, int insert, int delete);
+int srdb_transaction(const struct ovsdb_config *conf,
+		     struct queue_thread *input,
+		     struct queue_thread *output);
 int srdb_update(struct srdb *srdb, struct srdb_table *tbl,
-		struct srdb_entry *entry, const char *fieldname);
+		struct srdb_entry *entry, const char *fieldname,
+		struct queue_thread *input, struct queue_thread *output);
 int srdb_insert(struct srdb *srdb, struct srdb_table *tbl,
-		struct srdb_entry *entry, char *uuid);
+		struct srdb_entry *entry, char *uuid,
+		struct queue_thread *input, struct queue_thread *output);
 
 struct srdb_table *srdb_get_tables(void);
 void srdb_free_tables(struct srdb_table *tbl);
