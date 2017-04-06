@@ -233,10 +233,6 @@ static void *ovsdb_transaction_read(void *arg)
 
 			position += json_error.position;
 			if (json) {
-				char *debug_json_str = json_dumps(json, 0); // TODO
-				fprintf(stderr, "%s: JSON read ! - json = %s\n",__func__, debug_json_str); // TODO
-				free(debug_json_str); // TODO
-
 				struct json_node *node = calloc(1, sizeof(*node));
 				node->json = json;
 				stop = mqueue_append(jsons_received, (struct llnode *) node);
@@ -247,8 +243,6 @@ static void *ovsdb_transaction_read(void *arg)
 		else
 			length = 0;
 	}
-
-	printf("%s: End of READ transaction thread with error code %d\n", __func__, ret); // TODO
 
 	/* If the user closed the queue with a lower number of thread_consumers */
 	mqueue_close(jsons_received, 1, 2);
@@ -287,17 +281,11 @@ int srdb_transaction(const struct ovsdb_config *conf, struct queue_thread *input
 		json_t *method = json_object_get(json, "method");
 		json_t *error = json_object_get(json, "error");
 
-		char *debug_json_str = json_dumps(json, 0); // TODO
-		fprintf(stderr, "%s: loop start - json = %s\n",__func__, debug_json_str); // TODO
-		free(debug_json_str); // TODO
-
 		if (!json) {
 			fprintf(stderr, "Null json given\n");
 			free(json_node);
 			continue;
 		} else if (!method && error) {
-
-			fprintf(stderr, "%s: Receive transaction results\n",__func__); // TODO
 
 			/* Transaction result */
 			struct srdb_transact_reply *transact_result = calloc(1, sizeof(*transact_result));
@@ -308,30 +296,17 @@ int srdb_transaction(const struct ovsdb_config *conf, struct queue_thread *input
 				free(error_str);
 				transact_result->error = 1;
 			} else {
-				fprintf(stderr, "%s: HEEERE\n",__func__); // TODO
-				json_t *result = json_array_get(json_object_get(json, "result"), 0);
-				fprintf(stderr, "%s: HEEERE 2 - result %p\n",__func__, result); // TODO
 				json_t *count = json_object_get(result, "count");
-				fprintf(stderr, "%s: HEEERE 3 - count %p\n",__func__, count); // TODO
 				if (!count) {
-					fprintf(stderr, "%s: HEEERE 4\n",__func__); // TODO
 					json_t *uuid = json_array_get(json_object_get(result, "uuid"), 1);
-					fprintf(stderr, "%s: HEEERE 5 uuid = %p\n",__func__, uuid); // TODO
 					strncpy(transact_result->uuid, json_string_value(uuid), SLEN + 1);
-					fprintf(stderr, "%s: HEEERE 6\n",__func__); // TODO
 				} else {
-					fprintf(stderr, "%s: HEEERE 7\n",__func__); // TODO
 					transact_result->count = json_integer_value(count);
-					fprintf(stderr, "%s: HEEERE 8\n",__func__); // TODO
 				}
 			}
-			fprintf(stderr, "%s: Receive transaction results - before appending error = %d - address %p\n",__func__, transact_result->error, transact_result); // TODO
 			mqueue_append(output, (struct llnode *) transact_result);
-			fprintf(stderr, "%s: Receive transaction results - before appending error = %d - address %p\n",__func__, transact_result->error, transact_result); // TODO
 
 		} else if (method && !strcmp(json_string_value(method), "transact")) {
-
-			fprintf(stderr, "%s: Send transaction request\n",__func__); // TODO
 
 			/* Transaction request */
 			json_object_set_new(json, "id", json_integer(transact_id));
@@ -350,8 +325,6 @@ int srdb_transaction(const struct ovsdb_config *conf, struct queue_thread *input
 			}
 		} else if (method && !strcmp(json_string_value(method), "echo")) {
 
-			fprintf(stderr, "%s: Echo send\n",__func__); // TODO
-
 			/* Echo request */
 			if ((ret = send(sfd, echo_reply, echo_reply_len, 0)) < 0) {
 				perror("Cannot send an echo reply");
@@ -364,15 +337,11 @@ int srdb_transaction(const struct ovsdb_config *conf, struct queue_thread *input
 end_loop:
 		json_decref(json);
 		free(json_node);
-		fprintf(stderr, "%s: loop end\n",__func__); // TODO
 	}
 
 	if (ret < 0) {
 		perror("srdb_transaction() failed");
 	}
-
-	printf("%s: End of transaction thread with error code %d\n", __func__, ret); // TODO
-	fflush(stdout); // TODO
 
 	/* These actions trigger the end of the reader thread */
 	close(sfd);
@@ -936,10 +905,6 @@ static int srdb_read(const char *uuid, json_t *json, int initial, void *arg)
 	new = json_object_get(json, "new");
 	old = json_object_get(json, "old");
 
-	char *json_str = json_dumps(json, 0); // TODO
-	printf("\n%s: json = %s - old %d - new %d - initial %d\n" ,__func__, json_str, !!old, !!new, initial); // TODO
-	free(json_str); // TODO
-
 	idx = find_desc_fromname(tbl->desc, "action");
 	if (idx < 0) {
 		pr_err("field `action' not present in row.");
@@ -969,10 +934,6 @@ static int srdb_read(const char *uuid, json_t *json, int initial, void *arg)
 		sprintf(action, "%s", initial ? "initial" : "insert");
 		fill_srdb_entry(tbl->desc, entry, uuid, new);
 
-		printf("%s: entry uuid %s\n" ,__func__, entry->row); // TODO
-		printf("%s: entry action %s\n" ,__func__, action); // TODO
-		printf("%s: entry version %s\n" ,__func__, entry->version); // TODO
-
 		if (tbl->read)
 			ret = tbl->read(entry);
 		if (!tbl->delayed_free)
@@ -982,14 +943,6 @@ static int srdb_read(const char *uuid, json_t *json, int initial, void *arg)
 		fill_srdb_entry(tbl->desc, entry, uuid, new);
 		memcpy(entry, tbl->update_entry, tbl->entry_size);
 		fill_srdb_entry(tbl->desc, tbl->update_entry, uuid, old);
-
-		printf("%s: entry uuid %s\n" ,__func__, entry->row); // TODO
-		printf("%s: entry action %s\n" ,__func__, action); // TODO
-		printf("%s: entry version %s\n" ,__func__, entry->version); // TODO
-
-		printf("%s: old entry uuid %s\n" ,__func__, tbl->update_entry->row); // TODO
-		printf("%s: old entry action %s\n" ,__func__, action); // TODO
-		printf("%s: old entry version %s\n" ,__func__, tbl->update_entry->version); // TODO
 
 		if (tbl->read_update)
 			ret = tbl->read_update(tbl->update_entry, entry);
