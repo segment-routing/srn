@@ -16,13 +16,13 @@
 #include "linked_list.h"
 
 #define FREE_POINTER(x) if (x) {\
-  free(x);\
-  x = NULL;\
+	free(x);\
+	x = NULL;\
 }
 
 #define CLOSE_FD(x) if (x >= 0) {\
-  close(x);\
-  x = -1;\
+	close(x);\
+	x = -1;\
 }
 
 #define DEBUG 1
@@ -30,10 +30,10 @@
 #define USE_DNS_CACHE 0
 
 #if DEBUG
-  #define print_debug(fmt, args...)					\
-  			fprintf(stderr, __FILE__ ": %s: " fmt, __func__ , ##args);
+	#define print_debug(fmt, args...)					\
+                fprintf(stderr, __FILE__ ": %s: " fmt, __func__ , ##args);
 #else
-  #define print_debug(fmt, args...)
+	#define print_debug(fmt, args...)
 #endif
 
 #define TIMEOUT_LOOP 1 /* (sec) */
@@ -43,59 +43,59 @@
 struct mapping_qid;
 
 struct query {
-  struct llnode node;
-  struct sockaddr_in6 addr;
-  socklen_t addr_len;
-  size_t length;
-  uint32_t bandwidth_req;
-  uint32_t latency_req;
-  char app_name_req [SLEN + 1];
-  char access_router [SLEN + 1];
+	struct llnode node;
+	struct sockaddr_in6 addr;
+	socklen_t addr_len;
+	size_t length;
+	uint32_t bandwidth_req;
+	uint32_t latency_req;
+	char app_name_req [SLEN + 1];
+	char access_router [SLEN + 1];
 #if DEBUG_PERF
-  struct timespec query_rcv_time;
-  struct timespec query_forward_time;
-  struct timespec query_after_query_time;
+	struct timespec query_rcv_time;
+	struct timespec query_forward_time;
+	struct timespec query_after_query_time;
 #endif
-  char data [0];
+	char data [0];
 };
 
 struct reply {
-  struct llnode node;
-  struct sockaddr_in6 addr;
-  socklen_t addr_len;
-  size_t data_length;
-  size_t buffer_size;
-  uint16_t additional_record_count;
-  uint32_t bandwidth_req;
-  uint32_t latency_req;
-  char app_name_req [SLEN + 1];
-  char access_router [SLEN + 1];
-  char ovsdb_req_uuid[SLEN + 1];
-  char destination[SLEN + 1];
-  char destination_addr[SLEN + 1];
+	struct llnode node;
+	struct sockaddr_in6 addr;
+	socklen_t addr_len;
+	size_t data_length;
+	size_t buffer_size;
+	uint16_t additional_record_count;
+	uint32_t bandwidth_req;
+	uint32_t latency_req;
+	char app_name_req [SLEN + 1];
+	char access_router [SLEN + 1];
+	char ovsdb_req_uuid[SLEN + 1];
+	char destination[SLEN + 1];
+	char destination_addr[SLEN + 1];
 #if DEBUG_PERF
-  struct timespec query_rcv_time;
-  struct timespec query_forward_time;
-  struct timespec reply_rcv_time;
-  struct timespec controller_query_time;
-  struct timespec controller_after_query_time;
-  struct timespec controller_reply_time;
-  struct timespec reply_forward_time;
+	struct timespec query_rcv_time;
+	struct timespec query_forward_time;
+	struct timespec reply_rcv_time;
+	struct timespec controller_query_time;
+	struct timespec controller_after_query_time;
+	struct timespec controller_reply_time;
+	struct timespec reply_forward_time;
 #endif
-  char data [0];
+	char data [0];
 };
 
 struct callback_args {
-  uint16_t qid;
-  struct sockaddr_in6 addr;
-  socklen_t addr_len;
-  uint32_t bandwidth_req;
-  uint32_t latency_req;
-  char app_name_req [SLEN + 1];
-  char access_router [SLEN + 1];
+	uint16_t qid;
+	struct sockaddr_in6 addr;
+	socklen_t addr_len;
+	uint32_t bandwidth_req;
+	uint32_t latency_req;
+	char app_name_req [SLEN + 1];
+	char access_router [SLEN + 1];
 #if DEBUG_PERF
-  struct timespec query_rcv_time;
-  struct timespec query_forward_time;
+	struct timespec query_rcv_time;
+	struct timespec query_forward_time;
 #endif
 };
 
@@ -103,18 +103,18 @@ struct monitor_arg {
 	struct srdb *srdb;
 	struct srdb_table *table;
 	int modify;
-  int initial;
-  int insert;
-  int delete;
+	int initial;
+	int insert;
+	int delete;
 };
 
 struct config {
 	struct ovsdb_config ovsdb_conf;
 	char dns_fifo[SLEN + 1];
-  char router_name[SLEN + 1];
-  char max_parallel_queries[SLEN + 1];
-  char proxy_listen_port[SLEN + 1];
-  char dns_server_port[SLEN + 1];
+	char router_name[SLEN + 1];
+	char max_parallel_queries[SLEN + 1];
+	char proxy_listen_port[SLEN + 1];
+	char dns_server_port[SLEN + 1];
 };
 
 extern volatile sig_atomic_t stop;
@@ -140,27 +140,27 @@ extern struct queue_thread transact_output;
 
 static inline void destroy_addr_list(struct ares_addr_node *head) {
 
-  while(head) {
-    struct ares_addr_node *detached = head;
-    head = head->next;
-    free(detached);
-  }
+	while(head) {
+		struct ares_addr_node *detached = head;
+		head = head->next;
+		free(detached);
+	}
 }
 
 static inline void append_addr_list(struct ares_addr_node **head, struct ares_addr_node *node) {
 
-  struct ares_addr_node *last;
+	struct ares_addr_node *last;
 
-  node->next = NULL;
+	node->next = NULL;
 
-  if(*head) {
-    last = *head;
-    while(last->next)
-      last = last->next;
-    last->next = node;
-  }
-  else
-    *head = node;
+	if(*head) {
+		last = *head;
+		while(last->next)
+			last = last->next;
+		last->next = node;
+	}
+	else
+		*head = node;
 }
 
 int load_config(const char *fname, int *optmask, struct ares_addr_node **servers);

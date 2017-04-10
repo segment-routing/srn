@@ -20,11 +20,11 @@ struct srdb *srdb;
 struct queue_thread transact_input;
 struct queue_thread transact_output;
 
-static int read_flowreq(__attribute__((unused)) struct srdb_entry *old_entry, struct srdb_entry *entry) {
-
+static int read_flowreq(__attribute__((unused)) struct srdb_entry *old_entry, struct srdb_entry *entry)
+{
 	struct srdb_flowreq_entry *flowreq = (struct srdb_flowreq_entry *) entry;
-  struct reply *reply = NULL;
-  struct reply *tmp = NULL;
+	struct reply *reply = NULL;
+	struct reply *tmp = NULL;
 
 	print_debug("A modified entry in the flowreq table is considered with id %s and status %d\n", flowreq->request_id, flowreq->status);
 
@@ -33,12 +33,12 @@ static int read_flowreq(__attribute__((unused)) struct srdb_entry *old_entry, st
 		/* Check if its not our request */
 		mqueue_walk_safe(&replies_waiting_controller, reply, tmp, struct reply *) {
 			print_debug("Check an entry with uuid %s\n", reply->ovsdb_req_uuid);
-	    if (!strncmp(flowreq->request_id, reply->ovsdb_req_uuid, SLEN + 1)) {
+			if (!strncmp(flowreq->request_id, reply->ovsdb_req_uuid, SLEN + 1)) {
 				print_debug("A matching with a pending reply was found\n");
-	      mqueue_remove(&replies_waiting_controller, (struct llnode *) reply);
-	      break;
-	    }
-	  }
+				mqueue_remove(&replies_waiting_controller, (struct llnode *) reply);
+				break;
+			}
+		}
 		if (((void *) reply) == (void *) &replies_waiting_controller) {
 			return stop; /* Not for us or not rejected */
 		}
@@ -53,12 +53,12 @@ static int read_flowreq(__attribute__((unused)) struct srdb_entry *old_entry, st
 		reply->data_length = DNS_HEADER_LENGTH + i + 1 + 4; /* 4 bytes of Type and Class */
 
 		print_debug("A DNS reject is going to be sent to the application\n");
-	  if (sendto(server_sfd, reply->data, reply->data_length, 0,
-	                 (struct sockaddr *) &reply->addr,
-	                 reply->addr_len) != (int) reply->data_length) {
-	    /* Drop the reject */
-	    perror("Error sending the DNS reject to the client");
-	  }
+		if (sendto(server_sfd, reply->data, reply->data_length, 0,
+									 (struct sockaddr *) &reply->addr,
+									 reply->addr_len) != (int) reply->data_length) {
+			/* Drop the reject */
+			perror("Error sending the DNS reject to the client");
+		}
 
 		FREE_POINTER(reply);
 	}
@@ -66,29 +66,29 @@ static int read_flowreq(__attribute__((unused)) struct srdb_entry *old_entry, st
 	return stop;
 }
 
-static int read_flowstate(struct srdb_entry *entry) {
-
-  struct reply *reply = NULL;
-  struct reply *tmp = NULL;
+static int read_flowstate(struct srdb_entry *entry)
+{
+	struct reply *reply = NULL;
+	struct reply *tmp = NULL;
 	int i = 0;
 	struct srdb_flow_entry *flowstate = (struct srdb_flow_entry *) entry;
 
 	print_debug("A new entry in the flow state table is considered\n");
 #if DEBUG_PERF
 	struct timespec controller_reply_time;
-  if (clock_gettime(CLOCK_MONOTONIC, &controller_reply_time)) {
-    perror("Cannot get controller_reply time");
-  }
+	if (clock_gettime(CLOCK_MONOTONIC, &controller_reply_time)) {
+		perror("Cannot get controller_reply time");
+	}
 #endif
 
-  /* Find the concerned reply */
-  mqueue_walk_safe(&replies_waiting_controller, reply, tmp, struct reply *) {
-    if (!strncmp(flowstate->request_id, reply->ovsdb_req_uuid, SLEN + 1)) {
+	/* Find the concerned reply */
+	mqueue_walk_safe(&replies_waiting_controller, reply, tmp, struct reply *) {
+		if (!strncmp(flowstate->request_id, reply->ovsdb_req_uuid, SLEN + 1)) {
 			print_debug("A matching with a pending reply was found\n");
-      mqueue_remove(&replies_waiting_controller, (struct llnode *) reply);
-      break;
-    }
-  }
+			mqueue_remove(&replies_waiting_controller, (struct llnode *) reply);
+			break;
+		}
+	}
 	if (((void *) reply) == (void *) &replies_waiting_controller) {
 		return stop; /* Not for us */
 	}
@@ -96,7 +96,7 @@ static int read_flowstate(struct srdb_entry *entry) {
 	reply->controller_reply_time = controller_reply_time;
 #endif
 
-  /* Add the binding segment to the reply */
+	/* Add the binding segment to the reply */
 
 	char *srh_rr = reply->data + reply->data_length;
 	char *name = reply->data + DNS_HEADER_LENGTH;
@@ -139,108 +139,116 @@ static int read_flowstate(struct srdb_entry *entry) {
 
 
 #if DEBUG_PERF
-  if (clock_gettime(CLOCK_MONOTONIC, &reply->reply_forward_time)) {
-    perror("Cannot get reply_forward time");
-  }
+	if (clock_gettime(CLOCK_MONOTONIC, &reply->reply_forward_time)) {
+		perror("Cannot get reply_forward time");
+	}
 	struct timespec result;
 	clock_getres(CLOCK_MONOTONIC, &result);
 	printf("Query %d arrived at %ld.%ld with resolution %ld.%ld\n",
-       	 DNS_HEADER_QID(reply->data), reply->query_rcv_time.tv_sec, reply->query_rcv_time.tv_nsec, result.tv_sec, result.tv_nsec);
+		DNS_HEADER_QID(reply->data), reply->query_rcv_time.tv_sec,
+		reply->query_rcv_time.tv_nsec, result.tv_sec, result.tv_nsec);
 	printf("Query %d was forwarded to the real DNS server at %ld.%ld\n",
-       	 DNS_HEADER_QID(reply->data), reply->query_forward_time.tv_sec, reply->query_forward_time.tv_nsec);
+		DNS_HEADER_QID(reply->data), reply->query_forward_time.tv_sec,
+		reply->query_forward_time.tv_nsec);
  	printf("Query %d got a reply from the real DNS server at %ld.%ld\n",
-       	 DNS_HEADER_QID(reply->data), reply->reply_rcv_time.tv_sec, reply->reply_rcv_time.tv_nsec);
+		DNS_HEADER_QID(reply->data), reply->reply_rcv_time.tv_sec,
+		reply->reply_rcv_time.tv_nsec);
  	printf("Query %d triggered a flow request to the controller at %ld.%ld\n",
-       	 DNS_HEADER_QID(reply->data), reply->controller_query_time.tv_sec, reply->controller_query_time.tv_nsec);
+		DNS_HEADER_QID(reply->data), reply->controller_query_time.tv_sec,
+		reply->controller_query_time.tv_nsec);
  	printf("Query %d after having triggered a flow request to the controller at %ld.%ld\n",
-       	 DNS_HEADER_QID(reply->data), reply->controller_after_query_time.tv_sec, reply->controller_after_query_time.tv_nsec);
+		DNS_HEADER_QID(reply->data), reply->controller_after_query_time.tv_sec,
+		reply->controller_after_query_time.tv_nsec);
  	printf("Query %d received a response from the controller at %ld.%ld\n",
-       	 DNS_HEADER_QID(reply->data), reply->controller_reply_time.tv_sec, reply->controller_reply_time.tv_nsec);
+		DNS_HEADER_QID(reply->data), reply->controller_reply_time.tv_sec,
+		reply->controller_reply_time.tv_nsec);
  	printf("Query %d triggered the final DNS reply at %ld.%ld\n",
-       	 DNS_HEADER_QID(reply->data), reply->reply_forward_time.tv_sec, reply->reply_forward_time.tv_nsec);
+		DNS_HEADER_QID(reply->data), reply->reply_forward_time.tv_sec,
+		reply->reply_forward_time.tv_nsec);
 #endif
 
-  /* Send reply to the client */
+	/* Send reply to the client */
 	print_debug("A reply is going to be sent to the application\n");
-  if (sendto(server_sfd, reply->data, reply->data_length, 0,
-                 (struct sockaddr *) &reply->addr,
-                 reply->addr_len) != (int) reply->data_length) {
-    /* Drop the reply */
-    perror("Error sending the reply to the client");
-  }
+	if (sendto(server_sfd, reply->data, reply->data_length, 0,
+		   (struct sockaddr *) &reply->addr,
+		   reply->addr_len) != (int) reply->data_length) {
+		/* Drop the reply */
+		perror("Error sending the reply to the client");
+	}
 
 free_reply:
-  FREE_POINTER(reply);
+	FREE_POINTER(reply);
 	return stop;
 }
 
-static void *thread_monitor(void *_arg) {
-
-  struct monitor_arg *arg = _arg;
+static void *thread_monitor(void *_arg)
+{
+	struct monitor_arg *arg = _arg;
 	int ret;
 
 	print_debug("A monitor thread has started\n");
 
-	ret = srdb_monitor(arg->srdb, arg->table, arg->modify, arg->initial, arg->insert, arg->delete);
+	ret = srdb_monitor(arg->srdb, arg->table, arg->modify, arg->initial,
+			   arg->insert, arg->delete);
 
 	print_debug("A monitor thread has finished\n");
 
 	return (void *)(intptr_t)ret;
 }
 
-static void *thread_transact(__attribute__((unused)) void *_arg) {
-
+static void *thread_transact(__attribute__((unused)) void *_arg)
+{
 	srdb_transaction(&cfg.ovsdb_conf, &transact_input, &transact_output);
 	return NULL;
 }
 
 int init_monitor(struct monitor_arg *args, pthread_t *monitor_flowreqs_thread,
 		 pthread_t *monitor_flows_thread,
-		 pthread_t *transact_thread) {
+		 pthread_t *transact_thread)
+{
+	struct addrinfo hints;
+	struct addrinfo *result, *rp;
 
-  struct addrinfo hints;
-  struct addrinfo *result, *rp;
+	int status = 0;
 
-  int status = 0;
+	/* Init server socket */
+	memset(&hints, 0, sizeof(struct addrinfo));
+	hints.ai_family = AF_INET6;		/* Allow IPv4 or IPv6 */
+	hints.ai_socktype = SOCK_DGRAM; /* Datagram socket */
+	hints.ai_flags = AI_PASSIVE;		/* For wildcard IP address */
+	hints.ai_protocol = 0;					/* Any protocol */
+	hints.ai_canonname = NULL;
+	hints.ai_addr = NULL;
+	hints.ai_next = NULL;
 
-  /* Init server socket */
-  memset(&hints, 0, sizeof(struct addrinfo));
-  hints.ai_family = AF_INET6;    /* Allow IPv4 or IPv6 */
-  hints.ai_socktype = SOCK_DGRAM; /* Datagram socket */
-  hints.ai_flags = AI_PASSIVE;    /* For wildcard IP address */
-  hints.ai_protocol = 0;          /* Any protocol */
-  hints.ai_canonname = NULL;
-  hints.ai_addr = NULL;
-  hints.ai_next = NULL;
+	status = getaddrinfo(NULL, cfg.proxy_listen_port, &hints, &result);
+	if (status != 0) {
+		fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(status));
+		goto out_err;
+	}
 
-  status = getaddrinfo(NULL, cfg.proxy_listen_port, &hints, &result);
-  if (status != 0) {
-    fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(status));
-    goto out_err;
-  }
+	for (rp = result; rp != NULL; rp = rp->ai_next) {
+		server_sfd = socket(rp->ai_family, rp->ai_socktype | SOCK_CLOEXEC, rp->ai_protocol);
+		if (server_sfd == -1)
+			continue;
 
-  for (rp = result; rp != NULL; rp = rp->ai_next) {
-    server_sfd = socket(rp->ai_family, rp->ai_socktype | SOCK_CLOEXEC, rp->ai_protocol);
-    if (server_sfd == -1)
-      continue;
+		if (bind(server_sfd, rp->ai_addr, rp->ai_addrlen) == 0)
+			break;
 
-    if (bind(server_sfd, rp->ai_addr, rp->ai_addrlen) == 0)
-      break;
+		CLOSE_FD(server_sfd);
+	}
 
-    CLOSE_FD(server_sfd);
-  }
+	freeaddrinfo(result);
 
-  freeaddrinfo(result);
+	if (rp == NULL) {
+		fprintf(stderr, "Could not bind\n");
+		status = -1;
+		goto out_err;
+	}
 
-  if (rp == NULL) {
-    fprintf(stderr, "Could not bind\n");
-    status = -1;
-    goto out_err;
-  }
-
-  /* Init ovsdb monitoring */
+	/* Init ovsdb monitoring */
 	struct srdb_table *tbl;
-  srdb = srdb_new(&cfg.ovsdb_conf);
+	srdb = srdb_new(&cfg.ovsdb_conf);
 	if (!srdb) {
 		fprintf(stderr, "Cannot connect to the database\n");
 		status = -1;
@@ -267,7 +275,7 @@ int init_monitor(struct monitor_arg *args, pthread_t *monitor_flowreqs_thread,
 	args[1].delete = 0;
 	pthread_create(monitor_flows_thread, NULL, thread_monitor, (void *) &args[1]);
 
-  mqueue_init(&replies_waiting_controller, max_queries);
+	mqueue_init(&replies_waiting_controller, max_queries);
 
 	/* Init transaction threads */
 	mqueue_init(&transact_input, max_queries);
@@ -275,12 +283,13 @@ int init_monitor(struct monitor_arg *args, pthread_t *monitor_flowreqs_thread,
 	pthread_create(transact_thread, NULL, thread_transact, NULL);
 
 out_err:
-  return status;
+	return status;
 }
 
-void close_monitor() {
-  srdb_destroy(srdb);
-  mqueue_destroy(&replies_waiting_controller);
-  mqueue_destroy(&transact_input);
-  mqueue_destroy(&transact_output);
+void close_monitor()
+{
+	srdb_destroy(srdb);
+	mqueue_destroy(&replies_waiting_controller);
+	mqueue_destroy(&transact_input);
+	mqueue_destroy(&transact_output);
 }
