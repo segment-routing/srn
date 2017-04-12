@@ -47,14 +47,23 @@ struct link {
 	uint32_t delay;
 };
 
-struct flow {
+struct src_prefix {
+	char router[SLEN + 1];
+	char addr[SLEN + 1];
+	char prefix_len;
+	int priority;
 	struct in6_addr bsid;
+	struct arraylist *segs;
+};
+
+struct flow {
 	char src[SLEN + 1];
 	char dst[SLEN + 1];
 	struct in6_addr dstaddr;
+	struct src_prefix *src_prefixes;
+	unsigned int nb_prefixes;
 	struct router *srcrt;
 	struct router *dstrt;
-	struct arraylist *segs;
 	uint32_t bw;
 	uint32_t delay;
 	uint32_t ttl;

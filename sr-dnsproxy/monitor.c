@@ -6,6 +6,8 @@
 #include <ares_dns.h>
 #include <srdns.h>
 
+#include <jansson.h>
+
 #include "proxy.h"
 
 #define DNS_RCODE_REJECT 0x5
@@ -54,8 +56,7 @@ static int read_flowreq(__attribute__((unused)) struct srdb_entry *old_entry, st
 
 		print_debug("A DNS reject is going to be sent to the application\n");
 		if (sendto(server_sfd, reply->data, reply->data_length, 0,
-									 (struct sockaddr *) &reply->addr,
-									 reply->addr_len) != (int) reply->data_length) {
+			   (struct sockaddr *) &reply->addr, reply->addr_len) != (int) reply->data_length) {
 			/* Drop the reject */
 			perror("Error sending the DNS reject to the client");
 		}
@@ -70,8 +71,11 @@ static int read_flowstate(struct srdb_entry *entry)
 {
 	struct reply *reply = NULL;
 	struct reply *tmp = NULL;
-	int i = 0;
+	int i = 0, j = 0;
 	struct srdb_flow_entry *flowstate = (struct srdb_flow_entry *) entry;
+	char *dns_fixed_hdr = NULL;
+	char *srh_rr = NULL;
+	char *name = NULL;
 
 	print_debug("A new entry in the flow state table is considered\n");
 #if DEBUG_PERF
@@ -95,48 +99,67 @@ static int read_flowstate(struct srdb_entry *entry)
 #if DEBUG_PERF
 	reply->controller_reply_time = controller_reply_time;
 #endif
+	printf("DNS packet of length %zd initially\n", reply->data_length); // TODO
 
-	/* Add the binding segment to the reply */
+	json_t *providers = json_loads(flowstate->sourceIPs, 0, NULL);
+	json_t *bsids = json_loads(flowstate->bsid, 0, NULL);
+	json_t *provider = NULL;
+	json_array_foreach(providers, i, provider) {
 
-	char *srh_rr = reply->data + reply->data_length;
-	char *name = reply->data + DNS_HEADER_LENGTH;
-	unsigned char binding_segment_addr[16];
-	if (inet_pton(AF_INET6, flowstate->bsid, binding_segment_addr) != 1) {
-		fprintf(stderr, "Not a valid IPv6 address received: %s\n", flowstate->bsid);
-		goto free_reply;
+		if (!json_is_integer(json_array_get(provider, 0)) ||
+		    !json_is_string(json_array_get(provider, 1)) ||
+		    !json_is_integer(json_array_get(provider, 2))) {
+			fprintf(stderr, "Malformed Provider %dth field: %s\n", i, flowstate->sourceIPs);
+			goto free_json;
+		}  else if (!json_is_string(json_array_get(bsids, i))) {
+			fprintf(stderr, "Malformed bsid %dth field: %s\n", i, flowstate->bsid);
+			goto free_json;
+		}
+
+		unsigned short prefix_priority = (unsigned short) json_integer_value(json_array_get(provider, 0));
+		const char *prefix_addr_str = json_string_value(json_array_get(provider, 1));
+		unsigned char prefix_length = (unsigned char) json_integer_value(json_array_get(provider, 2));
+		const char *bsid_str = json_string_value(json_array_get(bsids, i));
+
+		DNS_HEADER_SET_ARCOUNT(reply->data, DNS_HEADER_ARCOUNT(reply->data) + 1);
+
+		dns_fixed_hdr = reply->data + reply->data_length;
+		name = reply->data + DNS_HEADER_LENGTH;
+
+		/* Set name */
+		for (j = 0; name[j] != 0; j++) {
+			dns_fixed_hdr[j] = name[j];
+		}
+		dns_fixed_hdr[j] = name[j];
+		reply->data_length = reply->data_length + j + 1;
+		dns_fixed_hdr = reply->data + reply->data_length;
+
+		/* Set RR fields */
+		DNS_RR_SET_TYPE(dns_fixed_hdr, T_SRH);
+		DNS_RR_SET_CLASS(dns_fixed_hdr, C_IN);
+		DNS_RR_SET_LEN(dns_fixed_hdr, 35);
+		DNS_RR_SET_TTL(dns_fixed_hdr, 0); /* TODO Change this value */
+		srh_rr = dns_fixed_hdr + RRFIXEDSZ;
+
+		DNS__SET16BIT(srh_rr, prefix_priority);
+		printf("prefix_priority = %u prefix_priority = %u byte %u byte %u", DNS__16BIT(srh_rr), prefix_priority, (unsigned char) srh_rr[0], (unsigned char) srh_rr[1]);
+		srh_rr += 2;
+		if (inet_pton(AF_INET6, prefix_addr_str, srh_rr) != 1) {
+			fprintf(stderr, "Not a valid IPv6 address received as Provider prefix: %s\n", prefix_addr_str);
+			goto free_json;
+		}
+		srh_rr += 16;
+		*srh_rr = prefix_length;
+		srh_rr++;
+		if (inet_pton(AF_INET6, bsid_str, srh_rr) != 1) {
+			fprintf(stderr, "Not a valid IPv6 address received as BSID: %s\n", bsid_str);
+			goto free_json;
+		}
+		srh_rr += 16;
+
+		reply->data_length += RRFIXEDSZ + DNS_RR_LEN(dns_fixed_hdr);
 	}
-	unsigned char prefix_segment_addr[16];
-	if (inet_pton(AF_INET6, flowstate->dstaddr, prefix_segment_addr) != 1) { // TODO This should be changed by a real source prefix
-		fprintf(stderr, "Not a valid IPv6 address received: %s\n", flowstate->dstaddr); // TODO This should be changed by a real source prefix
-		goto free_reply;
-	}
-
-	/* Change DNS header */
-	DNS_HEADER_SET_ARCOUNT(reply->data, DNS_HEADER_ARCOUNT(reply->data) + 1);
-
-	/* Set name */
-	for (i = 0; name[i] != 0; i++) {
-		srh_rr[i] = name[i];
-	}
-	srh_rr[i] = name[i];
-	reply->data_length = reply->data_length + i + 1;
-	srh_rr = reply->data + reply->data_length;
-
-	/* Set RR fields */
-	DNS_RR_SET_TYPE(srh_rr, T_SRH);
-	DNS_RR_SET_CLASS(srh_rr, C_IN);
-	DNS_RR_SET_TTL(srh_rr, 0); /* TODO Change this value */
-	DNS_RR_SET_LEN(srh_rr, 2 + 2*16); /* Status + 1 prefix + 1 binding segment */
-	reply->data_length = reply->data_length + RRFIXEDSZ + 2 + 2*16;
-	srh_rr += RRFIXEDSZ;
-
-	/* Set RR data (status + prefix + binding segment) */
-	DNS__SET16BIT(srh_rr, 0);
-	srh_rr += 2;
-	memcpy(srh_rr, prefix_segment_addr, 16);
-	srh_rr += 16;
-	memcpy(srh_rr, binding_segment_addr, 16);
-
+	printf("DNS packet of length %zd at the end\n", reply->data_length); // TODO
 
 #if DEBUG_PERF
 	if (clock_gettime(CLOCK_MONOTONIC, &reply->reply_forward_time)) {
@@ -176,7 +199,9 @@ static int read_flowstate(struct srdb_entry *entry)
 		perror("Error sending the reply to the client");
 	}
 
-free_reply:
+free_json:
+	json_decref(providers);
+	json_decref(bsids);
 	FREE_POINTER(reply);
 	return stop;
 }

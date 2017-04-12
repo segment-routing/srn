@@ -8,6 +8,8 @@
 #include <fcntl.h>
 #include <pthread.h>
 
+#include <jansson.h>
+
 #include "misc.h"
 #include "srdb.h"
 
@@ -102,13 +104,19 @@ static void add_fib_entry(const char *bsid, const char *segments)
 	exec_sr_set_bsid_map(bsid, vnh);
 }
 
-static void send_flow(const char *req, const char *dst, const char *bsid)
+static void send_flow(const json_t *bsids)
 {
-	char line[BUFLEN];
+	char line [SLEN + 1];
+	json_t * bsid = NULL;
+	unsigned int i = 0;
+	unsigned int j = 0;
+	json_array_foreach(bsids, i, bsid) {
+		j += snprintf(line + j, SLEN - j, "%s%s", json_string_value(bsid),
+			      i == json_array_size(bsids) - 1 ? "" : ",");
+	}
+	line[j] = '\n';
 
-	snprintf(line, BUFLEN, "%s %s %s\n", req, dst, bsid);
-
-	if (write(_cfg.dns_fd, line, strlen(line)) < 0)
+	if (write(_cfg.dns_fd, line, j+1) < 0)
 		perror("write");
 }
 
@@ -140,17 +148,41 @@ static int set_status(struct srdb_flow_entry *flow_entry, enum flow_status st)
 static int read_flowstate(struct srdb_entry *entry)
 {
 	struct srdb_flow_entry *flow_entry = (struct srdb_flow_entry *)entry;
+	json_t *segs = NULL;
+	json_t *segment = NULL;
+	char segs_str [SLEN + 1];
+	int i = 0;
+	unsigned int j = 0;
 
-	strreplace(flow_entry->segments, ';', ',');
+	json_t *segment_lists = json_loads(flow_entry->segments, 0, NULL);
+	if (!segment_lists) {
+		fprintf(stderr, "Invalid json format for segment lists: %s\n", flow_entry->segments);
+		return 0;
+	}
+	json_t *bsids = json_loads(flow_entry->bsid, 0, NULL);
+	if (!bsids) {
+		fprintf(stderr, "Invalid json format for bsids: %s\n", flow_entry->bsid);
+		return 0;
+	}
 
-	/* to dns fifo: <req_uuid, addr, bsid> (LAST OPERATION)
-	 * to kernel: map bsid -> vnh && route vnh/128 -> encap seg6
+	/* to dns fifo: <bsid_1,bsid_2,...> (LAST OPERATION)
+	 * to kernel: map bsid_i -> vnh && route vnh/128 -> encap seg6
 	 */
 
-	add_fib_entry(flow_entry->bsid, flow_entry->segments);
-	send_flow(flow_entry->request_id, flow_entry->dstaddr,
-		  flow_entry->bsid);
+	json_array_foreach(segment_lists, i, segs) {
+		unsigned int k = 0;
+		json_array_foreach(segs, j, segment)
+			k += snprintf(segs_str + k, SLEN + 1 - k, "%s%s",
+				      json_string_value(segment),
+				      j == json_array_size(segs) - 1 ? "" : ",");
+		add_fib_entry(json_string_value(json_array_get(bsids, i)), segs_str);
+	}
+
+	send_flow(bsids);
 	set_status(flow_entry, FLOW_STATUS_RUNNING);
+
+	json_decref(segment_lists);
+	json_decref(bsids);
 
 	return 0;
 }

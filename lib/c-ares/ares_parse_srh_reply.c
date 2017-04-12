@@ -12,7 +12,7 @@
 #include "ares_private.h"
 
 #define T_SRH 65280
-#define SRH_MIN_LEN (2 + sizeof(struct ares_in6_addr))
+#define SRH_LEN (3 + 2*sizeof(struct ares_in6_addr))
 
 int ares_parse_srh_reply(const unsigned char *abuf, int alen,
                          struct ares_srh_reply **srh_out)
@@ -25,6 +25,7 @@ int ares_parse_srh_reply(const unsigned char *abuf, int alen,
   long len;
   char *hostname = NULL, *rr_name = NULL;
   struct ares_srh_reply *srh = NULL;
+  struct ares_srh_reply *first_srh = NULL;
 
   /* Set *srh_out to NULL for all failure cases. */
   *srh_out = NULL;
@@ -86,24 +87,28 @@ int ares_parse_srh_reply(const unsigned char *abuf, int alen,
     if (rr_class == C_IN && rr_type == T_SRH)
     {
       srh_found = 1;
-      if (rr_len < SRH_MIN_LEN) {
+      if (rr_len != SRH_LEN) {
         status = ARES_EBADRESP;
         break;
       }
 
-      srh = ares_malloc_data(ARES_DATATYPE_SRH_REPLY);
-      if (!srh) {
+      struct ares_srh_reply *next_srh = ares_malloc_data(ARES_DATATYPE_SRH_REPLY);
+      if (!next_srh) {
         status = ARES_ENOMEM;
         break;
       }
+      if (!first_srh)
+        first_srh = next_srh;
+      else
+        srh->next = next_srh;
+      srh = next_srh;
 
       srh->rr_ttl = rr_ttl;
-      srh->success = *aptr;
-      aptr += 2;
-      memcpy(&srh->prefix.addr, aptr + 1, sizeof(struct ares_in6_addr));
-      srh->prefix.length = 64;
-      aptr += sizeof(struct ares_in6_addr);
-      memcpy(&srh->binding_segment, aptr, sizeof(struct ares_in6_addr));
+      srh->priority = DNS__16BIT(aptr);
+      memcpy(&srh->prefix.addr, aptr + 2, sizeof(struct ares_in6_addr));
+      srh->prefix.length = *(aptr + 2 + sizeof(struct ares_in6_addr));
+      memcpy(&srh->binding_segment, aptr + 3 + sizeof(struct ares_in6_addr),
+             sizeof(struct ares_in6_addr));
     }
 
     /* Propagate any failures */

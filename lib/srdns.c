@@ -169,6 +169,7 @@ free_cares_lib:
 	return status;
 }
 
+/* XXX Only chooses the highest priority SRH (a MPTCP-friendly function could be provided) */
 static void callback(void *_arg, int status, __attribute__((unused)) int timeouts,
                      unsigned char *abuf, int alen)
 {
@@ -176,6 +177,8 @@ static void callback(void *_arg, int status, __attribute__((unused)) int timeout
 	struct ares_srh_reply *srh_out = NULL;
 	struct hostent *host = NULL;
 	int *stop = args->stop;
+        struct ares_srh_reply *best_srh = NULL;
+        struct ares_srh_reply *curr_srh = NULL;
 
 	if (status != ARES_SUCCESS) {
 		fprintf(stderr, "DNS server error: %s\n", ares_strerror(status));
@@ -192,10 +195,15 @@ static void callback(void *_arg, int status, __attribute__((unused)) int timeout
 		fprintf(stderr, "Problem parsing the SRH record: %s\n", ares_strerror(status));
 		goto free_aaaa;
 	}
+        best_srh = srh_out;
+        for (curr_srh = best_srh; curr_srh->next; curr_srh = curr_srh->next) {
+                if (best_srh->priority < curr_srh->priority)
+                        best_srh = curr_srh;
+        }
 	if (args->src_prefix) { /* Optional */
-		memcpy(args->src_prefix, &srh_out->prefix.addr, 16);
+		memcpy(args->src_prefix, &best_srh->prefix.addr, 16);
 	}
-	memcpy(args->binding_segment, &srh_out->binding_segment, 16);
+	memcpy(args->binding_segment, &best_srh->binding_segment, 16);
 
 	*stop = 1;
 

@@ -549,13 +549,14 @@ struct ares_soa_reply {
 };
 
 struct ares_srh_reply {
-  unsigned char           success;
+  struct ares_srh_reply *next;
   struct {
     struct ares_in6_addr  addr;
     unsigned char         length;
   } prefix;
   struct ares_in6_addr    binding_segment;
   unsigned int            rr_ttl;
+  int                     priority;
 };
 
 /*

@@ -296,6 +296,7 @@ int srdb_transaction(const struct ovsdb_config *conf, struct queue_thread *input
 				free(error_str);
 				transact_result->error = 1;
 			} else {
+				json_t *result = json_array_get(json_object_get(json, "result"), 0);
 				json_t *count = json_object_get(result, "count");
 				if (!count) {
 					json_t *uuid = json_array_get(json_object_get(result, "uuid"), 1);
@@ -667,6 +668,12 @@ static struct srdb_descriptor flowstate_desc_tmpl[] = {
 		.type	= SRDB_STR,
 		.maxlen	= SLEN,
 		.offset	= OFFSET_FLOWSTATE(source),
+	},
+	{
+		.name	= "sourceIPs",
+		.type	= SRDB_STR,
+		.maxlen	= SLEN,
+		.offset	= OFFSET_FLOWSTATE(sourceIPs),
 	},
 	{
 		.name	= "router",

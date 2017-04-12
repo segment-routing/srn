@@ -53,11 +53,28 @@
 
 #define DEFAULT_CONFIG	"sr-ctrl.conf"
 
+struct provider {
+	char router[SLEN + 1];
+	char name[SLEN + 1];
+	char addr[SLEN + 1];
+	char prefix_len;
+	int priority;
+};
+
+struct provider internal_provider = {
+	.name = "internal",
+	.addr = "::",
+	.prefix_len = 0,
+	.priority = 0
+};
+
 struct config {
 	char rules_file[SLEN + 1];
 	struct ovsdb_config ovsdb_conf;
 	unsigned int worker_threads;
 	unsigned int req_queue_size;
+	struct provider *providers;
+	unsigned int nb_providers;
 
 	/* internal data */
 	struct srdb *srdb;
@@ -79,6 +96,8 @@ static void config_set_defaults(struct config *cfg)
 	strcpy(cfg->ovsdb_conf.ovsdb_database, "SR_test");
 	cfg->worker_threads = 1;
 	cfg->req_queue_size = 16;
+	cfg->providers = &internal_provider;
+	cfg->nb_providers = 1;
 }
 
 static int set_status(struct srdb_flowreq_entry *req, enum flowreq_status st,
@@ -98,8 +117,11 @@ static int commit_flow(struct srdb_flowreq_entry *req, struct router *rt,
 		       struct queue_thread *output)
 {
 	struct srdb_flow_entry flow_entry;
-	char addr[INET6_ADDRSTRLEN];
 	unsigned int i;
+	unsigned int j = 0;
+	unsigned int k = 0;
+	unsigned int p = 0;
+	unsigned int m = 0;
 	int ret;
 
 	memset(&flow_entry, 0, sizeof(flow_entry));
@@ -107,36 +129,57 @@ static int commit_flow(struct srdb_flowreq_entry *req, struct router *rt,
 	memcpy(flow_entry.destination, fl->dst, SLEN);
 	memcpy(flow_entry.source, fl->src, SLEN);
 	inet_ntop(AF_INET6, &fl->dstaddr, flow_entry.dstaddr, INET6_ADDRSTRLEN);
-	inet_ntop(AF_INET6, &fl->bsid, flow_entry.bsid, INET6_ADDRSTRLEN);
 
-	flow_entry.segments = calloc(fl->segs->elem_count, INET6_ADDRSTRLEN);
 
+	flow_entry.segments = calloc(1, SLEN + 1);
 	if (!flow_entry.segments)
 		return -1;
 
-	for (i = 0; i < fl->segs->elem_count; i++) {
-		struct segment *s;
-		struct in6_addr *seg_addr;
+	for (i = 0; i < fl->nb_prefixes; i++) {
+		j += snprintf(flow_entry.sourceIPs + j, SLEN + 1 - j,
+			      "%s[%d,\"%s\",%d]%s", i == 0 ? "[" : "",
+			      fl->src_prefixes[i].priority, fl->src_prefixes[i].addr,
+			      fl->src_prefixes[i].prefix_len,
+			      i == fl->nb_prefixes - 1 ? "]" : ",");
 
-		s = alist_elem(fl->segs, i);
-		if (!s->adjacency) {
-			struct router *r;
+		k += snprintf(flow_entry.bsid + k, SLEN + 1 - k, "%s\"", i == 0 ? "[" : "");
+		inet_ntop(AF_INET6, &fl->src_prefixes[i].bsid, flow_entry.bsid + k, INET6_ADDRSTRLEN);
+		k += strlen(flow_entry.bsid + k);
+		k += snprintf(flow_entry.bsid + k, SLEN + 1 - k, "\"%s",
+			      i == fl->nb_prefixes - 1 ? "]" : ",");
 
-			r = s->node->data;
-			seg_addr = &r->addr;
-		} else {
-			struct link *l;
+		m += snprintf(flow_entry.segments + m, SLEN + 1 - m, "%s[", i == 0 ? "[" : "");
+	      	for (p = 0; p < fl->src_prefixes[i].segs->elem_count; p++) {
+	      		struct segment *s;
+	      		struct in6_addr *seg_addr;
 
-			l = s->edge->data;
-			seg_addr = &l->remote;
-		}
+			flow_entry.segments[m] = '"';
+			m++;
 
-		inet_ntop(AF_INET6, seg_addr, addr, INET6_ADDRSTRLEN);
+	      		s = alist_elem(fl->src_prefixes[i].segs, p);
+	      		if (!s->adjacency) {
+	      			struct router *r;
 
-		// TODO fix that horrible stuff
-		strcat(flow_entry.segments, addr);
-		if (i < fl->segs->elem_count - 1)
-			strcat(flow_entry.segments, ";");
+	      			r = s->node->data;
+	      			seg_addr = &r->addr;
+	      		} else {
+	      			struct link *l;
+
+	      			l = s->edge->data;
+	      			seg_addr = &l->remote;
+	      		}
+
+	      		inet_ntop(AF_INET6, seg_addr, flow_entry.segments + m, INET6_ADDRSTRLEN);
+			m += strlen(flow_entry.segments + m);
+			flow_entry.segments[m] = '"';
+			m++;
+	      		if (p < fl->src_prefixes[i].segs->elem_count - 1) {
+	      			flow_entry.segments[m] = ',';
+				m++;
+			}
+	      	}
+		m += snprintf(flow_entry.segments + m, SLEN + 1 - m, "]%s",
+			      i == fl->nb_prefixes - 1 ? "]" : ",");
 	}
 
 	memcpy(flow_entry.router, rt->name, SLEN);
@@ -281,6 +324,27 @@ out_error:
 	return NULL;
 }
 
+static int select_providers(struct flow *fl)
+{
+	/* XXX A real decision algorithm can be designed with monitoring data */
+	/* XXX Lookup to BGP routing tables
+	 * (for now every provider is assumed to be able to access anything)
+	 */
+	/* XXX Rules could also be used */
+	unsigned int i = 0;
+	fl->nb_prefixes = _cfg.nb_providers;
+	fl->src_prefixes = calloc(fl->nb_prefixes, sizeof(struct src_prefix));
+	if (fl->src_prefixes) {
+		for (; i < fl->nb_prefixes; i++) {
+			strncpy(fl->src_prefixes[i].addr, _cfg.providers[i].addr, SLEN + 1);
+			strncpy(fl->src_prefixes[i].router, _cfg.providers[i].router, SLEN + 1);
+			fl->src_prefixes[i].prefix_len = _cfg.providers[i].prefix_len;
+			fl->src_prefixes[i].priority = 0; /* XXX Play with it */
+		}
+	}
+	return !fl->src_prefixes;
+}
+
 static void process_request(struct srdb_entry *entry,
 			    struct queue_thread *input,
 			    struct queue_thread *output)
@@ -291,6 +355,9 @@ static void process_request(struct srdb_entry *entry,
 	struct in6_addr addr;
 	struct rule *rule;
 	struct flow *fl;
+	unsigned int i = 0;
+
+	printf("Processing request !\n"); // TODO
 
 	rule = match_rules(_cfg.rules, req->source, req->destination);
 	if (!rule)
@@ -308,8 +375,6 @@ static void process_request(struct srdb_entry *entry,
 		return;
 	}
 
-	/* XXX currently assume only internal flows */
-
 	fl = calloc(1, sizeof(*fl));
 	if (!fl) {
 		set_status(req, REQ_STATUS_ERROR, input, output);
@@ -326,39 +391,84 @@ static void process_request(struct srdb_entry *entry,
 
 	rt = hmap_get(_cfg.routers, req->router);
 	if (!rt) {
-		free(fl);
 		set_status(req, REQ_STATUS_NOROUTER, input, output);
-		return;
+		goto free_flow;
 	}
 
 	inet_pton(AF_INET6, req->dstaddr, &addr);
 	dstrt = lpm_lookup(_cfg.prefixes, &addr);
-	if (!dstrt) {
-		free(fl);
-		set_status(req, REQ_STATUS_NOPREFIX, input, output);
-		return;
-	}
 
 	fl->srcrt = rt;
 	fl->dstrt = dstrt;
 
-	graph_read_lock(_cfg.graph);
-	fl->segs = build_segpath(_cfg.graph, fl, rule->path);
-	graph_unlock(_cfg.graph);
-
-	if (!fl->segs) {
-		free(fl);
-		set_status(req, REQ_STATUS_UNAVAILABLE, input, output);
-		return;
+	if (select_providers(fl)) {
+		if (set_status(req, REQ_STATUS_ERROR, input, output) < 0)
+			pr_err("failed to update row uuid %s to status %d\n",
+			       req->_row, REQ_STATUS_ERROR);
+		goto free_flow;
+	} else if (!fl->src_prefixes || !fl->nb_prefixes) {
+		if (set_status(req, REQ_STATUS_ERROR, input, output) < 0)
+			pr_err("failed to update row uuid %s to status %d\n",
+			       req->_row, REQ_STATUS_ERROR);
+		goto free_flow;
 	}
 
-	hmap_write_lock(rt->flows);
-	generate_unique_bsid(rt, &fl->bsid);
-	hmap_set(rt->flows, &fl->bsid, fl);
-	hmap_unlock(rt->flows);
+	/* XXX A segment list could be used to select the path to the egress router */
+	if (dstrt) { /* Internal destination */
+		graph_read_lock(_cfg.graph);
+		fl->src_prefixes[0].segs = build_segpath(_cfg.graph, fl, rule->path);
+		graph_unlock(_cfg.graph);
+		if (!fl->src_prefixes[0].segs) {
+			set_status(req, REQ_STATUS_UNAVAILABLE, input, output);
+			goto free_src_prefixes;
+		}
 
+		hmap_write_lock(rt->flows);
+		generate_unique_bsid(rt, &fl->src_prefixes[0].bsid);
+		hmap_set(rt->flows, &fl->src_prefixes[0].bsid, fl);
+		hmap_unlock(rt->flows);
+		for (i = 1; i < fl->nb_prefixes; i++) {/* XXX Too simplistic strategy */
+			memcpy(&fl->src_prefixes[i].bsid, &fl->src_prefixes[0].bsid, 16);
+			fl->src_prefixes[i].segs = fl->src_prefixes[0].segs;
+		}
+	} else { /* XXX Assumes that every provider can reach every destination */
+		for (i = 0; i < fl->nb_prefixes; i++) {
+			graph_read_lock(_cfg.graph);
+			fl->src_prefixes[i].segs = build_segpath(_cfg.graph, fl, rule->path);
+			graph_unlock(_cfg.graph);
+			if (!fl->src_prefixes[i].segs) {
+				if (set_status(req, REQ_STATUS_UNAVAILABLE, input, output) < 0)
+					pr_err("failed to update row uuid %s to status %d\n",
+					       req->_row, REQ_STATUS_UNAVAILABLE);
+				goto free_segs;
+			}
+
+			hmap_write_lock(rt->flows);
+			generate_unique_bsid(rt, &fl->src_prefixes[i].bsid);
+			hmap_set(rt->flows, &fl->src_prefixes[i].bsid, fl);
+			hmap_unlock(rt->flows);
+		}
+	}
+
+	printf("Processing request (before committing flow) !\n"); // TODO
 	commit_flow(req, rt, fl, input, output);
+	printf("Processing request (flow committed) !\n"); // TODO
 	set_status(req, REQ_STATUS_ALLOWED, input, output);
+	printf("Processing request (almost over) !\n"); // TODO
+
+free_segs:
+	if (dstrt) { // TODO Ugly
+		alist_destroy(fl->src_prefixes[0].segs);
+	} else {
+		for (; i != 0; i--)
+			alist_destroy(fl->src_prefixes[i-1].segs);
+	}
+free_src_prefixes:
+	if (fl->src_prefixes)
+		free(fl->src_prefixes);
+free_flow:
+	free(fl);
+	printf("Processing request (end) !\n"); // TODO
 }
 
 static int read_flowreq(struct srdb_entry *entry)
@@ -490,6 +600,31 @@ static int load_config(const char *fname, struct config *cfg)
 				cfg->req_queue_size = 1;
 			continue;
 		}
+		if (!strncmp(buf, "providers ", 10)) {
+			unsigned int i = 0;
+			char *ptr = buf + 10;
+			for (ptr = buf; *ptr; ptr++) {
+				if (*ptr == ' ' || *ptr == '/') {
+					*ptr = '\0';
+					i++;
+				}
+			}
+			ptr = buf + 10;
+			cfg->nb_providers = i / 4;
+			cfg->providers = malloc(sizeof(struct provider) * cfg->nb_providers);
+			for (i = 0; i < cfg->nb_providers; i++) {
+				strncpy(cfg->providers[i].name, ptr, SLEN + 1);
+				ptr += strlen(ptr) + 1;
+				strncpy(cfg->providers[i].addr, ptr, SLEN + 1);
+				ptr += strlen(ptr) + 1;
+				cfg->providers[i].prefix_len = (char) strtol(ptr, NULL, 10);
+				ptr += strlen(ptr) + 1;
+				ptr += strlen(ptr) + 1; /* via */
+				strncpy(cfg->providers[i].router, ptr, SLEN + 1);
+				ptr += strlen(ptr) + 1;
+			}
+			continue;
+		}
 		pr_err("parse error: unknown line `%s'.", buf);
 		ret = -1;
 		break;
@@ -556,7 +691,8 @@ static void *thread_monitor(void *_arg)
 	struct monitor_arg *arg = _arg;
 	int ret;
 
-	ret = srdb_monitor(arg->srdb, arg->table, arg->modify, arg->initial, arg->insert, arg->delete);
+	ret = srdb_monitor(arg->srdb, arg->table, arg->modify, arg->initial,
+			   arg->insert, arg->delete);
 
 	return (void *)(intptr_t)ret;
 }
@@ -718,6 +854,8 @@ int main(int argc, char **argv)
 	hmap_destroy(_cfg.routers);
 	graph_destroy(_cfg.graph, false);
 	srdb_destroy(_cfg.srdb);
+	if (_cfg.providers && _cfg.providers != &internal_provider)
+		free(_cfg.providers);
 
 	return 0;
 }

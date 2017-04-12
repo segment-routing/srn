@@ -76,7 +76,8 @@ struct srdb_flow_entry {
 	int bandwidth;
 	int delay;
 	int policing;
-	char source[SLEN + 1];
+	char source[SLEN + 1]; /* Name of the source */
+	char sourceIPs[SLEN + 1]; /* List of source prefixes that can be used with a priority (e.g., "[[5,2001:abcd::,64],[-12,2001:beef::,64]]") */
 	char router[SLEN + 1]; /* Name of the access router */
 	char proxy[SLEN + 1]; /* Name of the DNS proxy that inserts the rule in the database */
 	char interface[SLEN + 1];
@@ -120,7 +121,7 @@ enum flowreq_status {
 struct srdb_linkstate_entry {
 	struct srdb_entry entry;
 	char name1[SLEN + 1];
-	char addr1[SLEN + 1];
+	char addr1[SLEN + 1]; /* List of prefixes on the prefixes available */
 	char name2[SLEN + 1];
 	char addr2[SLEN + 1];
 	int metric;
