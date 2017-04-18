@@ -4,29 +4,29 @@
 #include <pthread.h>
 #include <semaphore.h>
 
-#define queue_walk_dequeue(queue, elem, type)           \
-  for (elem = (type) (queue_dequeue(queue));	          \
-       (struct llnode *) elem != (struct llnode *) (queue); \
-       elem = (type) (queue_dequeue(queue)))
+#define queue_walk_dequeue(queue, elem, type) \
+	for (elem = (type) (queue_dequeue(queue)); \
+                (struct llnode *) elem != (struct llnode *) (queue); \
+                elem = (type) (queue_dequeue(queue)))
 
-#define mqueue_walk_dequeue(queue, elem, type)           \
-  for (elem = (type) (mqueue_dequeue(queue));	           \
-       (struct llnode *) elem != (struct llnode *) (queue);  \
-       elem = (type) (mqueue_dequeue(queue)))
+#define mqueue_walk_dequeue(queue, elem, type) \
+	for (elem = (type) (mqueue_dequeue(queue)); \
+                (struct llnode *) elem != (struct llnode *) (queue); \
+                elem = (type) (mqueue_dequeue(queue)))
 
-#define mqueue_walk_safe(queue, elem, tmp, type)                                               \
-  for (elem = (type) ((struct llnode *) queue)->next, tmp = (type) ((struct llnode *) elem)->next; \
-       (struct llnode *) elem != (struct llnode *) (queue);                                        \
-       elem = tmp, tmp = (type) ((struct llnode *) tmp)->next)
+#define mqueue_walk_safe(queue, elem, tmp, type) \
+	for (elem = (type) ((struct llnode *) queue)->next, tmp = (type) ((struct llnode *) elem)->next; \
+                (struct llnode *) elem != (struct llnode *) (queue); \
+                elem = tmp, tmp = (type) ((struct llnode *) tmp)->next)
 
 struct llnode {
-  struct llnode *next;
-  struct llnode *prev;
+	struct llnode *next;
+	struct llnode *prev;
 };
 
 struct queue {
-  struct llnode node;
-  size_t length;
+	struct llnode node;
+	size_t length;
 };
 
 void queue_init(struct queue *queue);
@@ -38,8 +38,8 @@ void queue_destroy(struct queue *queue);
 /* Thread-safe linked-list */
 
 struct queue_thread {
-  struct queue queue;
-  int closed;
+	struct queue queue;
+	int closed;
 	pthread_mutex_t mutex;
 	sem_t empty;
 	sem_t full;
