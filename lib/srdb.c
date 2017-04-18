@@ -470,8 +470,7 @@ static void fill_srdb_entry(struct srdb_descriptor *desc,
 
 		column_value = json_object_get(line_json, desc[i].name);
 		if (!column_value) {
-			if (strcmp(desc[i].name, "action"))
-				fprintf(stderr, "The column %s cannot be found !\n", desc[i].name);
+			/* XXX This is valid if an updated entry is filled (only changed fields will appear) */
 			continue;
 		}
 		if (!strcmp(desc[i].name, "_version")) {
@@ -937,7 +936,7 @@ static int srdb_read(const char *uuid, json_t *json, int initial, void *arg)
 	}
 
 
-	if (new) {
+	if (new && !old) {
 		sprintf(action, "%s", initial ? "initial" : "insert");
 		fill_srdb_entry(tbl->desc, entry, uuid, new);
 
@@ -947,9 +946,9 @@ static int srdb_read(const char *uuid, json_t *json, int initial, void *arg)
 			free_srdb_entry(tbl->desc, entry);
 	} else if (new && old) { /* TODO fix for delayed free / MT */
 		strcpy(action, "update");
-		fill_srdb_entry(tbl->desc, entry, uuid, new);
-		memcpy(entry, tbl->update_entry, tbl->entry_size);
 		fill_srdb_entry(tbl->desc, tbl->update_entry, uuid, old);
+		memcpy(entry, tbl->update_entry, tbl->entry_size);
+		fill_srdb_entry(tbl->desc, entry, uuid, new);
 
 		if (tbl->read_update)
 			ret = tbl->read_update(tbl->update_entry, entry);
