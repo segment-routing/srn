@@ -19,7 +19,7 @@ int ares_parse_srh_reply(const unsigned char *abuf, int alen,
 {
   unsigned int qdcount, ancount, arcount, nscount, i;
   const unsigned char *aptr;
-  int status = 0, srh_found = 0;
+  int status = 0;
   unsigned int rr_type, rr_class, rr_ttl;
   unsigned short rr_len;
   long len;
@@ -86,7 +86,6 @@ int ares_parse_srh_reply(const unsigned char *abuf, int alen,
     /* Check if we are really looking at a SRH record */
     if (rr_class == C_IN && rr_type == T_SRH)
     {
-      srh_found = 1;
       if (rr_len != SRH_LEN) {
         status = ARES_EBADRESP;
         break;
@@ -125,7 +124,7 @@ int ares_parse_srh_reply(const unsigned char *abuf, int alen,
     aptr += rr_len;
   }
 
-  if (status == ARES_SUCCESS && !srh_found)
+  if (status == ARES_SUCCESS && !first_srh)
   {
     status = ARES_ENODATA;
   }
@@ -138,13 +137,13 @@ int ares_parse_srh_reply(const unsigned char *abuf, int alen,
   /* clean up on error */
   if (status != ARES_SUCCESS)
   {
-    if (srh)
-      ares_free_data (srh);
+    if (first_srh)
+      ares_free_data (first_srh);
     return status;
   }
 
   /* everything looks fine, return the data */
-  *srh_out = srh;
+  *srh_out = first_srh;
 
   return ARES_SUCCESS;
 }
