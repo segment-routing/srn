@@ -163,6 +163,7 @@ static int ovsdb_monitor(const struct ovsdb_config *conf, const char *table,
 
 		length += ret;
 		position = 0;
+
 		while(!stop && position < length - 1 && (json = json_loadb(buf + position, length - position, JSON_DISABLE_EOF_CHECK, &json_error))) {
 
 			position += json_error.position;
@@ -172,13 +173,12 @@ static int ovsdb_monitor(const struct ovsdb_config *conf, const char *table,
 					perror("Cannot send an echo reply");
 				}
 			} else {
-				if (json_is_integer(json_object_get(json, "id"))) {
+				if (json_is_integer(json_object_get(json, "id")))
 					stop = parse_ovsdb_monitor_reply(json, table, callback, arg);
-				} else {
+				else
 					stop = parse_ovsdb_update(json, table, callback, arg);
-				}
-				json_decref(json);
 			}
+			json_decref(json);
 		}
 		if (!json) /* The full json is not yet in the buffer => wait for it */
 			memcpy(buf, buf + position, length - position);

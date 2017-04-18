@@ -205,13 +205,7 @@ static int commit_flow(struct srdb_flowreq_entry *req, struct router *rt,
 
 static void generate_bsid(struct router *rt, struct in6_addr *res)
 {
-	int len;
-	char addr[41];
-
-	len = (128 - rt->pbsid.len) >> 3;
-
-	inet_ntop(AF_INET6, &rt->pbsid.addr, addr, 40);
-
+	int len = (128 - rt->pbsid.len) >> 3;
 	memcpy(res, &rt->pbsid.addr, sizeof(struct in6_addr));
 	get_random_bytes((unsigned char *)res + (16 - len), len);
 }
@@ -356,8 +350,7 @@ static void process_request(struct srdb_entry *entry,
 	struct rule *rule;
 	struct flow *fl;
 	unsigned int i = 0;
-
-	printf("Processing request !\n"); // TODO
+	int err = 0;
 
 	rule = match_rules(_cfg.rules, req->source, req->destination);
 	if (!rule)
@@ -392,6 +385,7 @@ static void process_request(struct srdb_entry *entry,
 	rt = hmap_get(_cfg.routers, req->router);
 	if (!rt) {
 		set_status(req, REQ_STATUS_NOROUTER, input, output);
+		err = 1;
 		goto free_flow;
 	}
 
@@ -405,11 +399,13 @@ static void process_request(struct srdb_entry *entry,
 		if (set_status(req, REQ_STATUS_ERROR, input, output) < 0)
 			pr_err("failed to update row uuid %s to status %d\n",
 			       req->_row, REQ_STATUS_ERROR);
+		err = 1;
 		goto free_flow;
 	} else if (!fl->src_prefixes || !fl->nb_prefixes) {
 		if (set_status(req, REQ_STATUS_ERROR, input, output) < 0)
 			pr_err("failed to update row uuid %s to status %d\n",
 			       req->_row, REQ_STATUS_ERROR);
+		err = 1;
 		goto free_flow;
 	}
 
@@ -420,6 +416,7 @@ static void process_request(struct srdb_entry *entry,
 		graph_unlock(_cfg.graph);
 		if (!fl->src_prefixes[0].segs) {
 			set_status(req, REQ_STATUS_UNAVAILABLE, input, output);
+			err = 1;
 			goto free_src_prefixes;
 		}
 
@@ -428,7 +425,7 @@ static void process_request(struct srdb_entry *entry,
 		hmap_set(rt->flows, &fl->src_prefixes[0].bsid, fl);
 		hmap_unlock(rt->flows);
 		for (i = 1; i < fl->nb_prefixes; i++) {/* XXX Too simplistic strategy */
-			memcpy(&fl->src_prefixes[i].bsid, &fl->src_prefixes[0].bsid, 16);
+			memcpy(&fl->src_prefixes[i].bsid, &fl->src_prefixes[0].bsid, sizeof(struct in6_addr));
 			fl->src_prefixes[i].segs = fl->src_prefixes[0].segs;
 		}
 	} else { /* XXX Assumes that every provider can reach every destination */
@@ -440,6 +437,7 @@ static void process_request(struct srdb_entry *entry,
 				if (set_status(req, REQ_STATUS_UNAVAILABLE, input, output) < 0)
 					pr_err("failed to update row uuid %s to status %d\n",
 					       req->_row, REQ_STATUS_UNAVAILABLE);
+				err = 1;
 				goto free_segs;
 			}
 
@@ -450,11 +448,8 @@ static void process_request(struct srdb_entry *entry,
 		}
 	}
 
-	printf("Processing request (before committing flow) !\n"); // TODO
 	commit_flow(req, rt, fl, input, output);
-	printf("Processing request (flow committed) !\n"); // TODO
 	set_status(req, REQ_STATUS_ALLOWED, input, output);
-	printf("Processing request (almost over) !\n"); // TODO
 
 free_segs:
 	if (dstrt) { // TODO Ugly
@@ -464,11 +459,12 @@ free_segs:
 			alist_destroy(fl->src_prefixes[i-1].segs);
 	}
 free_src_prefixes:
-	if (fl->src_prefixes)
+	/* XXX Timeout of the flow should free the flow and its src_prefixes but not implemented yet */
+	if (err && fl->src_prefixes)
 		free(fl->src_prefixes);
 free_flow:
-	free(fl);
-	printf("Processing request (end) !\n"); // TODO
+	if (err)
+		free(fl);
 }
 
 static int read_flowreq(struct srdb_entry *entry)

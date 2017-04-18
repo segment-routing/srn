@@ -99,7 +99,6 @@ static int read_flowstate(struct srdb_entry *entry)
 #if DEBUG_PERF
 	reply->controller_reply_time = controller_reply_time;
 #endif
-	printf("DNS packet of length %zd initially\n", reply->data_length); // TODO
 
 	json_t *providers = json_loads(flowstate->sourceIPs, 0, NULL);
 	json_t *bsids = json_loads(flowstate->bsid, 0, NULL);
@@ -159,7 +158,6 @@ static int read_flowstate(struct srdb_entry *entry)
 
 		reply->data_length += RRFIXEDSZ + DNS_RR_LEN(dns_fixed_hdr);
 	}
-	printf("DNS packet of length %zd at the end\n", reply->data_length); // TODO
 
 #if DEBUG_PERF
 	if (clock_gettime(CLOCK_MONOTONIC, &reply->reply_forward_time)) {
