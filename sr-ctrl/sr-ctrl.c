@@ -122,7 +122,8 @@ static int commit_flow(struct srdb_flowreq_entry *req, struct router *rt,
 	unsigned int k = 0;
 	unsigned int p = 0;
 	unsigned int m = 0;
-	int ret;
+	int length = 0;
+	int ret = 0;
 
 	memset(&flow_entry, 0, sizeof(flow_entry));
 
@@ -131,55 +132,75 @@ static int commit_flow(struct srdb_flowreq_entry *req, struct router *rt,
 	inet_ntop(AF_INET6, &fl->dstaddr, flow_entry.dstaddr, INET6_ADDRSTRLEN);
 
 
-	flow_entry.segments = calloc(1, SLEN + 1);
+	flow_entry.segments = calloc(1, SLEN_LIST + 1);
 	if (!flow_entry.segments)
 		return -1;
 
 	for (i = 0; i < fl->nb_prefixes; i++) {
-		j += snprintf(flow_entry.sourceIPs + j, SLEN + 1 - j,
-			      "%s[%d,\"%s\",%d]%s", i == 0 ? "[" : "",
-			      fl->src_prefixes[i].priority, fl->src_prefixes[i].addr,
-			      fl->src_prefixes[i].prefix_len,
-			      i == fl->nb_prefixes - 1 ? "]" : ",");
+		length = snprintf(flow_entry.sourceIPs + j, SLEN_LIST + 1 - j,
+				  "%s[%d,\"%s\",%d]%s", i == 0 ? "[" : "",
+				  fl->src_prefixes[i].priority, fl->src_prefixes[i].addr,
+				  fl->src_prefixes[i].prefix_len,
+				  i == fl->nb_prefixes - 1 ? "]" : ",");
+		if (length >= (int) (SLEN_LIST + 1 - j))
+			goto err_many_segs;
+		j += length;
 
-		k += snprintf(flow_entry.bsid + k, SLEN + 1 - k, "%s\"", i == 0 ? "[" : "");
-		inet_ntop(AF_INET6, &fl->src_prefixes[i].bsid, flow_entry.bsid + k, INET6_ADDRSTRLEN);
+		length = snprintf(flow_entry.bsid + k, SLEN_LIST + 1 - k, "%s\"", i == 0 ? "[" : "");
+		if (length >= (int) (SLEN_LIST + 1 - k))
+			goto err_many_segs;
+		k += length;
+
+		inet_ntop(AF_INET6, &fl->src_prefixes[i].bsid, flow_entry.bsid + k, SLEN_LIST + 1 - k);
 		k += strlen(flow_entry.bsid + k);
-		k += snprintf(flow_entry.bsid + k, SLEN + 1 - k, "\"%s",
-			      i == fl->nb_prefixes - 1 ? "]" : ",");
 
-		m += snprintf(flow_entry.segments + m, SLEN + 1 - m, "%s[", i == 0 ? "[" : "");
-	      	for (p = 0; p < fl->src_prefixes[i].segs->elem_count; p++) {
-	      		struct segment *s;
-	      		struct in6_addr *seg_addr;
+		length = snprintf(flow_entry.bsid + k, SLEN_LIST + 1 - k, "\"%s",
+				  i == fl->nb_prefixes - 1 ? "]" : ",");
+		if (length >= (int) (SLEN_LIST + 1 - k))
+			goto err_many_segs;
+			k += length;
+
+		length = snprintf(flow_entry.segments + m, SLEN_LIST + 1 - m, "%s[", i == 0 ? "[" : "");
+		if (length >= (int) (SLEN_LIST + 1 - m))
+			goto err_many_segs;
+		m += length;
+		for (p = 0; p < fl->src_prefixes[i].segs->elem_count; p++) {
+			struct segment *s;
+			struct in6_addr *seg_addr;
 
 			flow_entry.segments[m] = '"';
 			m++;
 
-	      		s = alist_elem(fl->src_prefixes[i].segs, p);
-	      		if (!s->adjacency) {
-	      			struct router *r;
+			s = alist_elem(fl->src_prefixes[i].segs, p);
+			if (!s->adjacency) {
+				struct router *r;
 
-	      			r = s->node->data;
-	      			seg_addr = &r->addr;
-	      		} else {
-	      			struct link *l;
+				r = s->node->data;
+				seg_addr = &r->addr;
+			} else {
+				struct link *l;
 
-	      			l = s->edge->data;
-	      			seg_addr = &l->remote;
-	      		}
+				l = s->edge->data;
+				seg_addr = &l->remote;
+			}
 
-	      		inet_ntop(AF_INET6, seg_addr, flow_entry.segments + m, INET6_ADDRSTRLEN);
+			inet_ntop(AF_INET6, seg_addr, flow_entry.segments + m, SLEN_LIST + 1 - m);
 			m += strlen(flow_entry.segments + m);
+			if (m + 1 >= SLEN_LIST)
+				goto err_many_segs;
+
 			flow_entry.segments[m] = '"';
 			m++;
-	      		if (p < fl->src_prefixes[i].segs->elem_count - 1) {
-	      			flow_entry.segments[m] = ',';
+			if (p < fl->src_prefixes[i].segs->elem_count - 1) {
+				flow_entry.segments[m] = ',';
 				m++;
 			}
-	      	}
-		m += snprintf(flow_entry.segments + m, SLEN + 1 - m, "]%s",
-			      i == fl->nb_prefixes - 1 ? "]" : ",");
+		}
+		length = snprintf(flow_entry.segments + m, SLEN_LIST + 1 - m, "]%s",
+				  i == fl->nb_prefixes - 1 ? "]" : ",");
+		if (length >= (int) (SLEN_LIST + 1 - m))
+		goto err_many_segs;
+		m += length;
 	}
 
 	memcpy(flow_entry.router, rt->name, SLEN);
@@ -198,9 +219,13 @@ static int commit_flow(struct srdb_flowreq_entry *req, struct router *rt,
 			  srdb_table_by_name(_cfg.srdb->tables, "FlowState"),
 			  (struct srdb_entry *)&flow_entry, NULL, input, output);
 
+out:
 	free(flow_entry.segments);
 
 	return ret;
+err_many_segs:
+	ret = -1;
+	goto out;
 }
 
 static void generate_bsid(struct router *rt, struct in6_addr *res)
@@ -350,6 +375,7 @@ static void process_request(struct srdb_entry *entry,
 	struct rule *rule;
 	struct flow *fl;
 	unsigned int i = 0;
+	unsigned int j = 0;
 	int err = 0;
 
 	rule = match_rules(_cfg.rules, req->source, req->destination);
@@ -423,6 +449,7 @@ static void process_request(struct srdb_entry *entry,
 		hmap_write_lock(rt->flows);
 		generate_unique_bsid(rt, &fl->src_prefixes[0].bsid);
 		hmap_set(rt->flows, &fl->src_prefixes[0].bsid, fl);
+		fl->refcount++;
 		hmap_unlock(rt->flows);
 		for (i = 1; i < fl->nb_prefixes; i++) {/* XXX Too simplistic strategy */
 			memcpy(&fl->src_prefixes[i].bsid, &fl->src_prefixes[0].bsid, sizeof(struct in6_addr));
@@ -444,19 +471,24 @@ static void process_request(struct srdb_entry *entry,
 			hmap_write_lock(rt->flows);
 			generate_unique_bsid(rt, &fl->src_prefixes[i].bsid);
 			hmap_set(rt->flows, &fl->src_prefixes[i].bsid, fl);
+			fl->refcount++;
 			hmap_unlock(rt->flows);
 		}
 	}
 
-	commit_flow(req, rt, fl, input, output);
-	set_status(req, REQ_STATUS_ALLOWED, input, output);
+	if (commit_flow(req, rt, fl, input, output)) {
+		set_status(req, REQ_STATUS_ERROR, input, output);
+		err = 1;
+	} else {
+		set_status(req, REQ_STATUS_ALLOWED, input, output);
+	}
 
 free_segs:
-	if (dstrt) { // TODO Ugly
-		alist_destroy(fl->src_prefixes[0].segs);
-	} else {
-		for (; i != 0; i--)
-			alist_destroy(fl->src_prefixes[i-1].segs);
+	for (j = 0; err && j < fl->refcount; j++) {
+		hmap_delete(rt->flows, &fl->src_prefixes[j].bsid);
+	}
+	for (j = 0; j < fl->refcount; j++) {
+		alist_destroy(fl->src_prefixes[j].segs);
 	}
 free_src_prefixes:
 	/* XXX Timeout of the flow should free the flow and its src_prefixes but not implemented yet */
@@ -474,6 +506,49 @@ static int read_flowreq(struct srdb_entry *entry)
 	mq_push(_cfg.req_queue, &req);
 
 	return 0;
+}
+
+static void routers_destroy(struct arraylist *nodes)
+{
+	unsigned int i;
+	for (i = 0; i < nodes->elem_count; i++) {
+		struct node *node;
+		alist_get(nodes, i, &node);
+		struct router *rt = node->data;
+
+		alist_destroy(rt->prefixes);
+
+		while (rt->flows->keys->elem_count) {
+			struct in6_addr *bsid;
+			alist_get(rt->flows->keys, 0, &bsid);
+			struct flow *fl = hmap_get(rt->flows, bsid);
+			hmap_delete(rt->flows, bsid);
+
+			fl->refcount--;
+			if (!fl->refcount) {
+				free(fl->src_prefixes);
+				free(fl);
+			}
+		}
+		hmap_destroy(rt->flows);
+
+		free(rt);
+		node->data = NULL;
+	}
+}
+
+static void links_destroy(struct arraylist *edges)
+{
+	unsigned int i;
+	for (i = 0; i < edges->elem_count; i++) {
+		struct edge *edge;
+		alist_get(edges, i, &edge);
+		struct link *link = edge->data;
+		link->refcount--;
+		if (!link->refcount)/* Because two directed edges reference a single link */
+			free(link);
+		edge->data = NULL;
+	}
 }
 
 static int read_nodestate(struct srdb_entry *entry)
@@ -558,6 +633,7 @@ static int read_linkstate(struct srdb_entry *entry)
 	graph_write_lock(_cfg.graph);
 	edge = graph_add_edge(_cfg.graph, rt1->node, rt2->node, true, link);
 	edge->metric = (uint32_t)link_entry->metric ?: UINT32_MAX;
+	link->refcount = 2;
 	graph_unlock(_cfg.graph);
 
 	return 0;
@@ -663,12 +739,12 @@ static void *thread_worker(void *arg __unused)
 	}
 
 	mqueue_close(transact_input, 1, 2);
-        mqueue_close(transact_output, 1, 2);
+	mqueue_close(transact_output, 1, 2);
 
 	pthread_join(transact_thread, NULL);
 
-        mqueue_destroy(transact_input);
-        mqueue_destroy(transact_output);
+	mqueue_destroy(transact_input);
+	mqueue_destroy(transact_output);
 
 	return NULL;
 }
@@ -768,6 +844,7 @@ int main(int argc, char **argv)
 	pthread_t mon_thr[3];
 	pthread_t *workers;
 	unsigned int i;
+	int ret = 0;
 
 	if (argc > 2) {
 		fprintf(stderr, "Usage: %s [configfile]\n", argv[0]);
@@ -787,44 +864,51 @@ int main(int argc, char **argv)
 	_cfg.rules = load_rules(_cfg.rules_file, &_cfg.defrule);
 	if (!_cfg.rules) {
 		pr_err("failed to load rules file.");
-		return -1;
+		ret = -1;
+		goto free_conf;
 	}
 
 	_cfg.srdb = srdb_new(&_cfg.ovsdb_conf);
 	if (!_cfg.srdb) {
 		pr_err("failed to initialize SRDB.");
-		return -1;
+		ret = -1;
+		goto free_rules;
 	}
 
 	_cfg.graph = graph_new();
 	if (!_cfg.graph) {
 		pr_err("failed to initialize network graph.");
-		return -1;
+		ret = -1;
+		goto free_srdb;
 	}
 
 	_cfg.routers = hmap_new(hash_str, compare_str);
 	if (!_cfg.routers) {
 		pr_err("failed to initialize routers map.");
-		return -1;
+		ret = -1;
+		goto free_graph;
 	}
 
 	_cfg.prefixes = lpm_new();
 	if (!_cfg.prefixes) {
 		pr_err("failed to initialize prefix tree.");
-		return -1;
+		ret = -1;
+		goto free_routers_hmap;
 	}
 
 	_cfg.req_queue = mq_init(_cfg.req_queue_size,
 				 sizeof(struct srdb_entry *));
 	if (!_cfg.req_queue) {
 		pr_err("failed to initialize request queue.\n");
-		return -1;
+		ret = -1;
+		goto free_lpm;
 	}
 
 	workers = malloc(_cfg.worker_threads * sizeof(pthread_t));
 	if (!workers) {
 		pr_err("failed to allocate space for worker threads.\n");
-		return -1;
+		ret = -1;
+		goto free_req_queue;
 	}
 
 	for (i = 0; i < _cfg.worker_threads; i++)
@@ -845,13 +929,22 @@ int main(int argc, char **argv)
 		pthread_join(workers[i], NULL);
 
 	free(workers);
+free_req_queue:
 	mq_destroy(_cfg.req_queue);
+free_lpm:
 	lpm_destroy(_cfg.prefixes);
+free_routers_hmap:
 	hmap_destroy(_cfg.routers);
+free_graph:
+	routers_destroy(_cfg.graph->nodes);
+	links_destroy(_cfg.graph->edges);
 	graph_destroy(_cfg.graph, false);
+free_srdb:
 	srdb_destroy(_cfg.srdb);
+free_rules:
+	destroy_rules(_cfg.rules, _cfg.defrule);
+free_conf:
 	if (_cfg.providers && _cfg.providers != &internal_provider)
 		free(_cfg.providers);
-
-	return 0;
+	return ret;
 }

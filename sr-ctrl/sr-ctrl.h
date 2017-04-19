@@ -42,6 +42,7 @@ struct router {
 struct link {
 	struct in6_addr local;
 	struct in6_addr remote;
+	unsigned int refcount;
 	uint32_t bw;
 	uint32_t ava_bw;
 	uint32_t delay;
@@ -70,6 +71,7 @@ struct flow {
 	uint32_t idle;
 	time_t timestamp;
 	enum flow_status status;
+	unsigned int refcount;
 };
 
 #endif

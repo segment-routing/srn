@@ -30,6 +30,7 @@ struct rule {
 };
 
 struct arraylist *load_rules(const char *fname, struct rule **defrule);
+void destroy_rules(struct arraylist *rules, struct rule *defrule);
 struct rule *match_rules(struct arraylist *rules, const char *from, const char *to);
 
 #endif

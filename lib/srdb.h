@@ -9,6 +9,7 @@
 #include "linked_list.h"
 
 #define SLEN	127
+#define SLEN_LIST	7 * SLEN
 
 enum srdb_type {
 	SRDB_STR,
@@ -71,13 +72,13 @@ struct srdb_flow_entry {
 	struct srdb_entry entry;
 	char destination[SLEN + 1];
 	char dstaddr[SLEN + 1];
-	char bsid[SLEN + 1];
+	char bsid[SLEN_LIST + 1];
 	char *segments;
 	int bandwidth;
 	int delay;
 	int policing;
 	char source[SLEN + 1]; /* Name of the source */
-	char sourceIPs[SLEN + 1]; /* List of source prefixes that can be used with a priority (e.g., "[[5,2001:abcd::,64],[-12,2001:beef::,64]]") */
+	char sourceIPs[SLEN_LIST + 1]; /* List of source prefixes that can be used with a priority (e.g., "[[5,2001:abcd::,64],[-12,2001:beef::,64]]") */
 	char router[SLEN + 1]; /* Name of the access router */
 	char proxy[SLEN + 1]; /* Name of the DNS proxy that inserts the rule in the database */
 	char interface[SLEN + 1];

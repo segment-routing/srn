@@ -137,6 +137,20 @@ out_err:
 	return NULL;
 }
 
+void destroy_rules(struct arraylist *rules, struct rule *defrule)
+{
+	struct rule *rule;
+	if (rules) {
+		while (rules->elem_count) {
+			alist_get(rules, 0, &rule);
+			free(rule);
+		}
+		alist_destroy(rules);
+	}
+	if (defrule)
+		free(defrule);
+}
+
 struct arraylist *load_rules(const char *fname, struct rule **defrule)
 {
 	struct arraylist *rules;
@@ -194,7 +208,7 @@ struct arraylist *load_rules(const char *fname, struct rule **defrule)
 	return rules;
 
 out_err:
-	alist_destroy(rules);
+	destroy_rules(rules, *defrule);
 	fclose(fp);
 	return NULL;
 }
