@@ -435,7 +435,6 @@ static int ovsdb_insert(const struct ovsdb_config *conf, const char *table,
 		return -1;
 
 	ret = reply->error;
-	fprintf(stderr, "%s: return value = %d - address %p\n", __func__, ret, reply);
 	if (!ret && uuid)
 		strncpy(uuid, reply->uuid, SLEN + 1);
 
@@ -491,7 +490,7 @@ static void fill_srdb_entry(struct srdb_descriptor *desc,
 			if (!json_is_integer(column_value))
 				fprintf(stderr, "Integer is expected for %s but the json is not of that type\n", desc[i].name);
 			else
-				*(int *)data = (int) ntohl((long) json_integer_value(column_value));
+				*(int *)data = json_integer_value(column_value);
 			break;
 		case SRDB_VARSTR:
 			if (!json_is_string(column_value))
