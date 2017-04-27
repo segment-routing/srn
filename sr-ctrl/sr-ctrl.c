@@ -262,8 +262,8 @@ static bool prune_delay(struct edge *e, void *arg)
 	return link->delay > delay;
 }
 
-static struct arraylist *build_segpath(struct graph *g, struct flow *fl,
-				       struct arraylist *via)
+struct arraylist *build_segpath(struct graph *g, struct flow *fl,
+				struct arraylist *via)
 {
 	struct arraylist *res, *path;
 	struct node *cur_node;
