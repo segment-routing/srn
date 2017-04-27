@@ -419,7 +419,7 @@ static void destroy_alist2(struct arraylist *al)
 }
 
 static void __graph_dijkstra(struct graph *g, struct node *src,
-			     struct dres *res, bool backward)
+			     struct dres *res)
 {
 	struct hashmap *dist, *prev, *path;
 	struct arraylist *Q;
@@ -496,8 +496,8 @@ static void __graph_dijkstra(struct graph *g, struct node *src,
 			if (!alist_exist(Q, &v))
 				continue;
 
-			pair.local = backward ? v : u;
-			pair.remote = backward ? u : v;
+			pair.local = u;
+			pair.remote = v;
 			min_edge = hmap_get(g->min_edges, &pair);
 
 			assert(min_edge);
@@ -529,7 +529,7 @@ static void __graph_dijkstra(struct graph *g, struct node *src,
 
 void graph_dijkstra(struct graph *g, struct node *src, struct dres *res)
 {
-	__graph_dijkstra(g, src, res, false);
+	__graph_dijkstra(g, src, res);
 }
 
 void graph_dijkstra_free(struct dres *res)
