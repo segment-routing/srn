@@ -73,6 +73,22 @@ int graph_prune(struct graph *g, bool (*prune)(struct edge *e, void *arg),
 int graph_minseg(struct graph *g, struct arraylist *path,
 		 struct arraylist *res);
 
+struct pathspec;
+
+struct bsp_ops {
+	void (*pre)(struct graph *g, struct pathspec *pspec);
+};
+
+struct pathspec {
+	struct node *src;
+	struct node *dst;
+	struct arraylist *via;
+	struct bsp_ops ops;
+	void *state;
+};
+
+struct arraylist *build_segpath(struct graph *g, struct pathspec *pspec);
+
 static inline void graph_finalize(struct graph *g)
 {
 	graph_compute_minimal_edges(g);

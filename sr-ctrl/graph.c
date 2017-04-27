@@ -671,3 +671,81 @@ out_error:
 
 	return -1;
 }
+
+struct arraylist *build_segpath(struct graph *g, struct pathspec *pspec)
+{
+	struct arraylist *res, *path;
+	struct node *cur_node;
+	struct graph *gc;
+	struct dres gres;
+	unsigned int i;
+
+	res = alist_new(sizeof(struct segment));
+	if (!res)
+		return NULL;
+
+	path = alist_new(sizeof(struct node *));
+	if (!path)
+		return NULL;
+
+	gc = graph_clone(g);
+
+	if (pspec->ops.pre)
+		pspec->ops.pre(gc, pspec);
+
+	cur_node = pspec->src;
+
+	if (pspec->via)
+		alist_append(path, pspec->via);
+
+	alist_insert(path, &pspec->dst);
+
+	for (i = 0; i < path->elem_count; i++) {
+		struct arraylist *tmp_paths, *tmp_path, *rev_path;
+		struct node *tmp_node;
+		struct segment s;
+
+		alist_get(path, i, &tmp_node);
+
+		graph_dijkstra(gc, cur_node, &gres);
+		tmp_paths = hmap_get(gres.path, tmp_node);
+		if (!tmp_paths->elem_count)
+			goto out_error;
+
+		/* XXX modify here to support backup paths or modify
+		 * path selection (e.g., random).
+		 */
+		alist_get(tmp_paths, 0, &tmp_path);
+		rev_path = alist_copy_reverse(tmp_path);
+		alist_insert_at(rev_path, &cur_node, 0);
+
+		if (graph_minseg(g, rev_path, res) < 0)
+			goto out_error;
+
+		/* append waypoint segment only if there is no adjacency
+		 * segment for the last hop (i.e. breaking link bundle)
+		 */
+		alist_get(res, res->elem_count - 1, &s);
+		if (!(s.adjacency && s.edge->remote == tmp_node)) {
+			s.adjacency = false;
+			s.node = tmp_node;
+			alist_insert(res, &s);
+		}
+
+		alist_destroy(rev_path);
+		cur_node = tmp_node;
+
+		graph_dijkstra_free(&gres);
+	}
+
+	graph_destroy(gc, true);
+	alist_destroy(path);
+	return res;
+
+out_error:
+	graph_dijkstra_free(&gres);
+	graph_destroy(gc, true);
+	alist_destroy(path);
+	alist_destroy(res);
+	return NULL;
+}

@@ -74,7 +74,4 @@ struct flow {
 	unsigned int refcount;
 };
 
-struct arraylist *build_segpath(struct graph *g, struct flow *fl,
-				struct arraylist *via);
-
 #endif
