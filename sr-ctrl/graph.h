@@ -37,6 +37,13 @@ struct segment {
 /* (local,remote) => minimal edge (or null) */
 /* node => neighbors */
 
+struct graph_ops {
+	bool (*node_equals)(struct node *n1, struct node *n2);
+	bool (*node_data_equals)(void *d1, void *d2);
+	void (*node_destroy)(struct node *node);
+	void (*edge_destroy)(struct edge *edge);
+};
+
 struct graph {
 	struct arraylist *nodes;
 	struct arraylist *edges;
@@ -46,6 +53,7 @@ struct graph {
 	struct hashmap *neighs;
 	pthread_rwlock_t lock;
 	bool dirty;
+	struct graph_ops *ops;
 };
 
 struct dres {
@@ -63,7 +71,7 @@ struct d_ops {
 	void (*update)(struct edge *edge, void *state, void *data);
 };
 
-struct graph *graph_new(void);
+struct graph *graph_new(struct graph_ops *ops);
 void graph_destroy(struct graph *g, bool shallow);
 struct node *graph_add_node(struct graph *g, void *data);
 void graph_remove_node(struct graph *g, struct node *node);

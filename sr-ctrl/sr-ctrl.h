@@ -75,5 +75,6 @@ struct flow {
 };
 
 extern struct d_ops delay_below_ops;
+extern struct graph_ops g_ops_srdns;
 
 #endif

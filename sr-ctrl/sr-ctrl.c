@@ -321,6 +321,28 @@ struct d_ops delay_below_ops = {
 	.update		= delay_update,
 };
 
+static bool rt_node_data_equals(void *d1, void *d2)
+{
+	struct router *rt1, *rt2;
+
+	rt1 = d1;
+	rt2 = d2;
+
+	return !strcasecmp(rt1->name, rt2->name);
+}
+
+static bool rt_node_equals(struct node *n1, struct node *n2)
+{
+	return rt_node_data_equals(n1->data, n2->data);
+}
+
+struct graph_ops g_ops_srdns = {
+	.node_equals		= rt_node_equals,
+	.node_data_equals	= rt_node_data_equals,
+	.node_destroy		= NULL,
+	.edge_destroy		= NULL,
+};
+
 static int select_providers(struct flow *fl)
 {
 	/* XXX A real decision algorithm can be designed with monitoring data */
@@ -863,7 +885,7 @@ int main(int argc, char **argv)
 		goto free_rules;
 	}
 
-	_cfg.graph = graph_new();
+	_cfg.graph = graph_new(&g_ops_srdns);
 	if (!_cfg.graph) {
 		pr_err("failed to initialize network graph.");
 		ret = -1;

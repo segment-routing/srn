@@ -9,6 +9,23 @@
 #include "graph.h"
 #include "misc.h"
 
+static bool node_equals_default(struct node *n1, struct node *n2)
+{
+	return n1->id == n2->id;
+}
+
+static bool node_data_equals_default(void *d1, void *d2)
+{
+	return d1 == d2;
+}
+
+static struct graph_ops g_ops_default = {
+	.node_equals		= node_equals_default,
+	.node_data_equals	= node_data_equals_default,
+	.node_destroy		= NULL,
+	.edge_destroy		= NULL,
+};
+
 static unsigned int hash_nodepair(void *key)
 {
 	struct nodepair *p = key;
@@ -24,13 +41,20 @@ static int compare_nodepair(void *k1, void *k2)
 		  p1->remote->id == p2->remote->id));
 }
 
-struct graph *graph_new(void)
+struct graph *graph_new(struct graph_ops *ops)
 {
 	struct graph *g;
 
 	g = calloc(1, sizeof(*g));
 	if (!g)
 		return NULL;
+
+	g->ops = ops ?: &g_ops_default;
+
+	if (!g->ops->node_equals || !g->ops->node_data_equals) {
+		free(g);
+		return NULL;
+	}
 
 	g->nodes = alist_new(sizeof(struct node *));
 	if (!g->nodes) {
@@ -164,8 +188,8 @@ void graph_remove_node(struct graph *g, struct node *node)
 		struct edge *edge;
 
 		alist_get(g->edges, j, &edge);
-		if (compare_node(edge->local, node) == 0 ||
-		    compare_node(edge->remote, node) == 0) {
+		if (g->ops->node_equals(edge->local, node) ||
+		    g->ops->node_equals(edge->remote, node)) {
 			graph_remove_edge(g, edge);
 			j--;
 		}
@@ -196,7 +220,7 @@ struct node *graph_get_node_data(struct graph *g, void *data)
 
 	for (i = 0; i < g->nodes->elem_count; i++) {
 		alist_get(g->nodes, i, &node);
-		if (node->data == data)
+		if (g->ops->node_data_equals(node->data, data))
 			return node;
 	}
 
@@ -341,7 +365,7 @@ struct graph *graph_clone(struct graph *g)
 {
 	struct graph *g_clone;
 
-	g_clone = graph_new();
+	g_clone = graph_new(g->ops);
 	if (!g_clone)
 		return NULL;
 
