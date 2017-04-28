@@ -15,42 +15,6 @@
 #include "sr-ctrl.h"
 #include "mq.h"
 
-/* lookup usecases:
- * - access control at source (in/out)
- * - access control at destination (in/out)
- * - middlebox on path (src or dst)
- *
- * <default>: default allow|deny
- * <rule>: <action> from|to <matcher> [via PATH] [last <last>] [bw BW] [delay DELAY] [ttl TTL] [idle IDLE]
- * <matcher>: name|addr:data
- * <action>: allow|deny
- * <last>: auto|none|<name|addr>
- * TTL: remove flow after TTL seconds
- * IDLE: remove flow if idle for IDLE seconds
- *
- * lookup algo:
- * - PATH = [] && RES = DEFAULT && LAST_MATCH = NULL && BW = REQ.BW && DELAY = REQ.DELAY
- * - foreach rule:
- *     - if rule matches then LAST_MATCH = rule
- * - if LAST_MATCH not NULL then RES = rule.RES and PATH = rule.PATH
- * - if RES = DENY then return ERROR
- * - if rule.LAST = NULL then rule.LAST = auto
- * - if rule.LAST = auto then PATH += dst_router
- * - if rule.LAST = none then nop
- * - if rule.LAST is addr or name then PATH += rule.LAST
- * - BW = rule.BW
- * - DELAY = rule.DELAY
- * - if BW or DELAY then SEGS = segment(trace(PATH, BW, DELAY))
- *                  else SEGS = PATH
- * - if IS_ERR(SEGS) then return ERROR
- * - return (BINDING,SEGS)
- */
-
-/* on flowreq do:
- *   - lookup destination
- *   -
- */
-
 #define DEFAULT_CONFIG	"sr-ctrl.conf"
 
 struct provider {
@@ -350,18 +314,23 @@ static int select_providers(struct flow *fl)
 	 * (for now every provider is assumed to be able to access anything)
 	 */
 	/* XXX Rules could also be used */
-	unsigned int i = 0;
+	unsigned int i;
+
+	fl->src_prefixes = calloc(_cfg.nb_providers, sizeof(struct src_prefix));
+	if (!fl->src_prefixes)
+		return -1;
+
 	fl->nb_prefixes = _cfg.nb_providers;
-	fl->src_prefixes = calloc(fl->nb_prefixes, sizeof(struct src_prefix));
-	if (fl->src_prefixes) {
-		for (; i < fl->nb_prefixes; i++) {
-			strncpy(fl->src_prefixes[i].addr, _cfg.providers[i].addr, SLEN + 1);
-			strncpy(fl->src_prefixes[i].router, _cfg.providers[i].router, SLEN + 1);
-			fl->src_prefixes[i].prefix_len = _cfg.providers[i].prefix_len;
-			fl->src_prefixes[i].priority = 0; /* XXX Play with it */
-		}
+
+	for (i = 0; i < fl->nb_prefixes; i++) {
+		strncpy(fl->src_prefixes[i].addr, _cfg.providers[i].addr, SLEN);
+		strncpy(fl->src_prefixes[i].router, _cfg.providers[i].router,
+			SLEN);
+		fl->src_prefixes[i].prefix_len = _cfg.providers[i].prefix_len;
+		fl->src_prefixes[i].priority = 0; /* XXX Play with it */
 	}
-	return !fl->src_prefixes;
+
+	return fl->nb_prefixes;;
 }
 
 static void process_request(struct srdb_entry *entry,
@@ -371,13 +340,12 @@ static void process_request(struct srdb_entry *entry,
 	struct srdb_flowreq_entry *req = (struct srdb_flowreq_entry *)entry;
 	struct router *rt, *dstrt;
 	enum flowreq_status rstat;
+	struct arraylist *segs;
 	struct pathspec pspec;
 	struct in6_addr addr;
-	unsigned int i = 0;
-	unsigned int j = 0;
 	struct rule *rule;
 	struct flow *fl;
-	int err = 0;
+	unsigned int i;
 
 	rule = match_rules(_cfg.rules, req->source, req->destination);
 	if (!rule)
@@ -412,7 +380,6 @@ static void process_request(struct srdb_entry *entry,
 	rt = hmap_get(_cfg.routers, req->router);
 	if (!rt) {
 		set_status(req, REQ_STATUS_NOROUTER, input, output);
-		err = 1;
 		goto free_flow;
 	}
 
@@ -422,17 +389,13 @@ static void process_request(struct srdb_entry *entry,
 	fl->srcrt = rt;
 	fl->dstrt = dstrt;
 
-	if (select_providers(fl)) {
+	/* Negative or null return value for select_providers means that
+	 * either an error occurred or no source prefix is available.
+	 */
+	if (select_providers(fl) <= 0) {
 		if (set_status(req, REQ_STATUS_ERROR, input, output) < 0)
 			pr_err("failed to update row uuid %s to status %d\n",
 			       req->_row, REQ_STATUS_ERROR);
-		err = 1;
-		goto free_flow;
-	} else if (!fl->src_prefixes || !fl->nb_prefixes) {
-		if (set_status(req, REQ_STATUS_ERROR, input, output) < 0)
-			pr_err("failed to update row uuid %s to status %d\n",
-			       req->_row, REQ_STATUS_ERROR);
-		err = 1;
 		goto free_flow;
 	}
 
@@ -445,39 +408,32 @@ static void process_request(struct srdb_entry *entry,
 	if (fl->delay)
 		pspec.d_ops = &delay_below_ops;
 
-	/* XXX A segment list could be used to select the path to the egress router */
-	if (dstrt) { /* Internal destination */
-		graph_read_lock(_cfg.graph);
-		fl->src_prefixes[0].segs = build_segpath(_cfg.graph, &pspec);
-		graph_unlock(_cfg.graph);
-		if (!fl->src_prefixes[0].segs) {
-			set_status(req, REQ_STATUS_UNAVAILABLE, input, output);
-			err = 1;
-			goto free_src_prefixes;
-		}
+	/* Currently, all providers yield the same seglist so do not
+	 * discriminate. This may change with per-prefix preferences.
+	 */
+	graph_read_lock(_cfg.graph);
+	segs = build_segpath(_cfg.graph, &pspec);
+	graph_unlock(_cfg.graph);
 
-		hmap_write_lock(rt->flows);
-		generate_unique_bsid(rt, &fl->src_prefixes[0].bsid);
-		hmap_set(rt->flows, &fl->src_prefixes[0].bsid, fl);
-		fl->refcount++;
-		hmap_unlock(rt->flows);
-		for (i = 1; i < fl->nb_prefixes; i++) {/* XXX Too simplistic strategy */
-			memcpy(&fl->src_prefixes[i].bsid, &fl->src_prefixes[0].bsid, sizeof(struct in6_addr));
-			fl->src_prefixes[i].segs = fl->src_prefixes[0].segs;
-		}
-	} else { /* XXX Assumes that every provider can reach every destination */
-		for (i = 0; i < fl->nb_prefixes; i++) {
-			graph_read_lock(_cfg.graph);
-			fl->src_prefixes[i].segs = build_segpath(_cfg.graph, &pspec);
-			graph_unlock(_cfg.graph);
-			if (!fl->src_prefixes[i].segs) {
-				if (set_status(req, REQ_STATUS_UNAVAILABLE, input, output) < 0)
-					pr_err("failed to update row uuid %s to status %d\n",
-					       req->_row, REQ_STATUS_UNAVAILABLE);
-				err = 1;
-				goto free_segs;
-			}
+	if (!segs) {
+		set_status(req, REQ_STATUS_UNAVAILABLE, input, output);
+		goto free_src_prefixes;
+	}
 
+	fl->src_prefixes[0].segs = segs;
+
+	hmap_write_lock(rt->flows);
+	generate_unique_bsid(rt, &fl->src_prefixes[0].bsid);
+	hmap_set(rt->flows, &fl->src_prefixes[0].bsid, fl);
+	fl->refcount++;
+	hmap_unlock(rt->flows);
+
+	for (i = 1; i < fl->nb_prefixes; i++) {
+		fl->src_prefixes[i].segs = alist_copy(segs);
+
+		if (dstrt) {
+			fl->src_prefixes[i].bsid = fl->src_prefixes[0].bsid;
+		} else {
 			hmap_write_lock(rt->flows);
 			generate_unique_bsid(rt, &fl->src_prefixes[i].bsid);
 			hmap_set(rt->flows, &fl->src_prefixes[i].bsid, fl);
@@ -488,25 +444,24 @@ static void process_request(struct srdb_entry *entry,
 
 	if (commit_flow(req, rt, fl, input, output)) {
 		set_status(req, REQ_STATUS_ERROR, input, output);
-		err = 1;
-	} else {
-		set_status(req, REQ_STATUS_ALLOWED, input, output);
+		goto free_segs;
 	}
 
+	set_status(req, REQ_STATUS_ALLOWED, input, output);
+
+	return;
+
 free_segs:
-	for (j = 0; err && j < fl->refcount; j++) {
-		hmap_delete(rt->flows, &fl->src_prefixes[j].bsid);
-	}
-	for (j = 0; j < fl->refcount; j++) {
-		alist_destroy(fl->src_prefixes[j].segs);
-	}
+	for (i = 0; i < fl->nb_prefixes; i++)
+		hmap_delete(rt->flows, &fl->src_prefixes[i].bsid);
+
+	for (i = 0; i < fl->nb_prefixes; i++)
+		alist_destroy(fl->src_prefixes[i].segs);
+
 free_src_prefixes:
-	/* XXX Timeout of the flow should free the flow and its src_prefixes but not implemented yet */
-	if (err && fl->src_prefixes)
-		free(fl->src_prefixes);
+	free(fl->src_prefixes);
 free_flow:
-	if (err)
-		free(fl);
+	free(fl);
 }
 
 static int read_flowreq(struct srdb_entry *entry)
@@ -523,15 +478,19 @@ static void routers_destroy(struct arraylist *nodes)
 	unsigned int i;
 	for (i = 0; i < nodes->elem_count; i++) {
 		struct node *node;
+		struct router *rt;
+
 		alist_get(nodes, i, &node);
-		struct router *rt = node->data;
+		rt = node->data;
 
 		alist_destroy(rt->prefixes);
 
 		while (rt->flows->keys->elem_count) {
 			struct in6_addr *bsid;
+			struct flow *fl;
+
 			alist_get(rt->flows->keys, 0, &bsid);
-			struct flow *fl = hmap_get(rt->flows, bsid);
+			fl = hmap_get(rt->flows, bsid);
 			hmap_delete(rt->flows, bsid);
 
 			fl->refcount--;
@@ -550,13 +509,19 @@ static void routers_destroy(struct arraylist *nodes)
 static void links_destroy(struct arraylist *edges)
 {
 	unsigned int i;
+
 	for (i = 0; i < edges->elem_count; i++) {
 		struct edge *edge;
+		struct link *link;
+
 		alist_get(edges, i, &edge);
-		struct link *link = edge->data;
+		link = edge->data;
 		link->refcount--;
-		if (!link->refcount)/* Because two directed edges reference a single link */
+
+		/* Because two directed edges reference a single link */
+		if (!link->refcount)
 			free(link);
+
 		edge->data = NULL;
 	}
 }
