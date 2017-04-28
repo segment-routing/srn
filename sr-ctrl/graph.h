@@ -54,6 +54,15 @@ struct dres {
 	struct hashmap *prev;
 };
 
+struct d_ops {
+	void (*init)(struct graph *g, struct node *src, void **state,
+		     void *data);
+	void (*destroy)(void *state);
+	uint32_t (*cost)(uint32_t cur_cost, struct edge *edge, void *state,
+			 void *data);
+	void (*update)(struct edge *edge, void *state, void *data);
+};
+
 struct graph *graph_new(void);
 void graph_destroy(struct graph *g, bool shallow);
 struct node *graph_add_node(struct graph *g, void *data);
@@ -61,30 +70,27 @@ void graph_remove_node(struct graph *g, struct node *node);
 struct node *graph_get_node(struct graph *g, unsigned int id);
 struct node *graph_get_node_data(struct graph *g, void *data);
 struct edge *graph_add_edge(struct graph *g, struct node *local,
-			    struct node *remote, bool sym, void *data);
+			    struct node *remote, uint32_t metric, bool sym,
+			    void *data);
 void graph_remove_edge(struct graph *g, struct edge *edge);
 void graph_compute_minimal_edges(struct graph *g);
 void graph_compute_all_neighbors(struct graph *g);
 struct graph *graph_clone(struct graph *g);
-void graph_dijkstra(struct graph *g, struct node *src, struct dres *res);
+void graph_dijkstra(struct graph *g, struct node *src, struct dres *res,
+		    struct d_ops *d_ops, void *data);
 void graph_dijkstra_free(struct dres *res);
 int graph_prune(struct graph *g, bool (*prune)(struct edge *e, void *arg),
 		void *_arg);
 int graph_minseg(struct graph *g, struct arraylist *path,
 		 struct arraylist *res);
 
-struct pathspec;
-
-struct bsp_ops {
-	void (*pre)(struct graph *g, struct pathspec *pspec);
-};
-
 struct pathspec {
 	struct node *src;
 	struct node *dst;
 	struct arraylist *via;
-	struct bsp_ops ops;
-	void *state;
+	void (*prune)(struct graph *g, struct pathspec *pspec);
+	struct d_ops *d_ops;
+	void *data;
 };
 
 struct arraylist *build_segpath(struct graph *g, struct pathspec *pspec);
@@ -109,6 +115,16 @@ static inline void graph_write_lock(struct graph *g)
 static inline void graph_unlock(struct graph *g)
 {
 	pthread_rwlock_unlock(&g->lock);
+}
+
+static inline int compare_node(void *k1, void *k2)
+{
+	return !(((struct node *)k1)->id == ((struct node *)k2)->id);
+}
+
+static inline unsigned int hash_node(void *key)
+{
+	return hashint(((struct node *)key)->id);
 }
 
 #endif

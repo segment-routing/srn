@@ -74,4 +74,6 @@ struct flow {
 	unsigned int refcount;
 };
 
+extern struct d_ops delay_below_ops;
+
 #endif

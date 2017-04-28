@@ -24,16 +24,6 @@ static int compare_nodepair(void *k1, void *k2)
 		  p1->remote->id == p2->remote->id));
 }
 
-static int compare_node(void *k1, void *k2)
-{
-	return !(((struct node *)k1)->id == ((struct node *)k2)->id);
-}
-
-static unsigned int hash_node(void *key)
-{
-	return hashint(((struct node *)key)->id);
-}
-
 struct graph *graph_new(void)
 {
 	struct graph *g;
@@ -214,12 +204,13 @@ struct node *graph_get_node_data(struct graph *g, void *data)
 }
 
 struct edge *graph_add_edge(struct graph *g, struct node *local,
-			    struct node *remote, bool sym, void *data)
+			    struct node *remote, uint32_t metric, bool sym,
+			    void *data)
 {
 	struct edge *edge;
 
 	if (sym)
-		graph_add_edge(g, remote, local, false, data);
+		graph_add_edge(g, remote, local, metric, false, data);
 
 	edge = calloc(1, sizeof(*edge));
 	if (!edge)
@@ -228,7 +219,7 @@ struct edge *graph_add_edge(struct graph *g, struct node *local,
 	edge->id = ++g->last_edge;
 	edge->local = local;
 	edge->remote = remote;
-	edge->metric = 1;
+	edge->metric = metric;
 	edge->data = data;
 
 	alist_insert(g->edges, &edge);
@@ -418,13 +409,14 @@ static void destroy_alist2(struct arraylist *al)
 	alist_destroy(al);
 }
 
-static void __graph_dijkstra(struct graph *g, struct node *src,
-			     struct dres *res)
+void graph_dijkstra(struct graph *g, struct node *src, struct dres *res,
+		    struct d_ops *ops, void *data)
 {
 	struct hashmap *dist, *prev, *path;
 	struct arraylist *Q;
 	struct node *node;
 	unsigned int i;
+	void *state;
 
 	/* dist: node -> uint32_t
 	 * prev: node -> arraylist(node)
@@ -453,6 +445,9 @@ static void __graph_dijkstra(struct graph *g, struct node *src,
 
 		alist_insert(Q, &node);
 	}
+
+	if (ops)
+		ops->init(g, src, &state, data);
 
 	while (Q->elem_count > 0) {
 		struct arraylist *S = NULL;
@@ -507,12 +502,19 @@ static void __graph_dijkstra(struct graph *g, struct node *src,
 			u_dist = (uintptr_t)hmap_get(dist, u);
 			v_dist = (uintptr_t)hmap_get(dist, v);
 
-			alt = u_dist + min_edge->metric;
+			if (ops)
+				alt = ops->cost(u_dist, min_edge, state, data);
+			else
+				alt = u_dist + min_edge->metric;
+
 			if (alt < v_dist) {
 				prev_array = hmap_get(prev, v);
 				alist_flush(prev_array);
 				alist_insert(prev_array, &u);
 				hmap_set(dist, v, (void *)(uintptr_t)alt);
+
+				if (ops)
+					ops->update(min_edge, state, data);
 			} else if (alt == v_dist) {
 				prev_array = hmap_get(prev, v);
 				alist_insert(prev_array, &u);
@@ -520,16 +522,14 @@ static void __graph_dijkstra(struct graph *g, struct node *src,
 		}
 	}
 
+	if (ops)
+		ops->destroy(state);
+
 	alist_destroy(Q);
 
 	res->dist = dist;
 	res->path = path;
 	res->prev = prev;
-}
-
-void graph_dijkstra(struct graph *g, struct node *src, struct dres *res)
-{
-	__graph_dijkstra(g, src, res);
 }
 
 void graph_dijkstra_free(struct dres *res)
@@ -624,8 +624,8 @@ int graph_minseg(struct graph *g, struct arraylist *path,
 		alist_get(path, i + 1, &node_ii);
 		alist_get(path, r, &node_r);
 
-		graph_dijkstra(g, node_i, &res_i);
-		graph_dijkstra(g, node_r, &res_r);
+		graph_dijkstra(g, node_i, &res_i, NULL, NULL);
+		graph_dijkstra(g, node_r, &res_r, NULL, NULL);
 
 		prev = hmap_get(res_r.prev, node_ii);
 		if (!alist_exist(prev, &node_i)) { /* MinSegECMP:4 */
@@ -690,8 +690,8 @@ struct arraylist *build_segpath(struct graph *g, struct pathspec *pspec)
 
 	gc = graph_clone(g);
 
-	if (pspec->ops.pre)
-		pspec->ops.pre(gc, pspec);
+	if (pspec->prune)
+		pspec->prune(gc, pspec);
 
 	cur_node = pspec->src;
 
@@ -707,7 +707,7 @@ struct arraylist *build_segpath(struct graph *g, struct pathspec *pspec)
 
 		alist_get(path, i, &tmp_node);
 
-		graph_dijkstra(gc, cur_node, &gres);
+		graph_dijkstra(gc, cur_node, &gres, pspec->d_ops, pspec->data);
 		tmp_paths = hmap_get(gres.path, tmp_node);
 		if (!tmp_paths->elem_count)
 			goto out_error;

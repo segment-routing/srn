@@ -252,26 +252,74 @@ static bool prune_bw(struct edge *e, void *arg)
 	return link->ava_bw < bw;
 }
 
-static bool prune_delay(struct edge *e, void *arg)
-{
-	uint32_t delay = (uintptr_t)arg;
-	struct link *link;
-
-	link = (struct link *)e->data;
-
-	return link->delay > delay;
-}
-
 static void pre_prune(struct graph *g, struct pathspec *pspec)
 {
-	struct flow *fl = pspec->state;
+	struct flow *fl = pspec->data;
 
 	if (fl->bw)
 		graph_prune(g, prune_bw, (void *)(uintptr_t)fl->bw);
-
-	if (fl->delay)
-		graph_prune(g, prune_delay, (void *)(uintptr_t)fl->delay);
 }
+
+static void delay_init(struct graph *g, struct node *src, void **state,
+		       void *data __unused)
+{
+	struct hashmap *dist;
+	struct node *n;
+	unsigned int i;
+
+	dist = hmap_new(hash_node, compare_node);
+
+	for (i = 0; i < g->nodes->elem_count; i++) {
+		alist_get(g->nodes, i, &n);
+
+		if (n->id == src->id)
+			hmap_set(dist, n, (void *)(uintptr_t)0);
+		else
+			hmap_set(dist, n, (void *)(uintptr_t)UINT32_MAX);
+	}
+
+	*state = dist;
+}
+
+static void delay_destroy(void *state)
+{
+	hmap_destroy(state);
+}
+
+static uint32_t delay_below_cost(uint32_t cur_cost, struct edge *e, void *state,
+				 void *data)
+{
+	struct hashmap *dist = state;
+	struct flow *fl = data;
+	uint32_t cur_delay;
+	struct link *l;
+
+	l = e->data;
+	cur_delay = (uintptr_t)hmap_get(dist, e->local);
+
+	if (cur_delay + l->delay > fl->delay)
+		return UINT32_MAX;
+
+	return cur_cost + e->metric;
+}
+
+static void delay_update(struct edge *e, void *state, void *data __unused)
+{
+	struct hashmap *dist = state;
+	uint32_t cur_delay;
+	struct link *l;
+
+	l = e->data;
+	cur_delay = (uintptr_t)hmap_get(dist, e->local);
+	hmap_set(dist, e->remote, (void *)(uintptr_t)(cur_delay + l->delay));
+}
+
+struct d_ops delay_below_ops = {
+	.init 		= delay_init,
+	.destroy	= delay_destroy,
+	.cost		= delay_below_cost,
+	.update		= delay_update,
+};
 
 static int select_providers(struct flow *fl)
 {
@@ -370,8 +418,10 @@ static void process_request(struct srdb_entry *entry,
 	pspec.src = rt->node;
 	pspec.dst = dstrt->node;
 	pspec.via = rule->path;
-	pspec.state = fl;
-	pspec.ops.pre = pre_prune;
+	pspec.data = fl;
+	pspec.prune = pre_prune;
+	if (fl->delay)
+		pspec.d_ops = &delay_below_ops;
 
 	/* XXX A segment list could be used to select the path to the egress router */
 	if (dstrt) { /* Internal destination */
@@ -546,7 +596,7 @@ static int read_linkstate(struct srdb_entry *entry)
 	struct srdb_linkstate_entry *link_entry;
 	struct router *rt1, *rt2;
 	struct link *link;
-	struct edge *edge;
+	uint32_t metric;
 
 	link_entry = (struct srdb_linkstate_entry *)entry;
 
@@ -568,9 +618,9 @@ static int read_linkstate(struct srdb_entry *entry)
 	link->ava_bw = link_entry->ava_bw;
 	link->delay = link_entry->delay;
 
+	metric = (uint32_t)link_entry->metric ?: UINT32_MAX;
 	graph_write_lock(_cfg.graph);
-	edge = graph_add_edge(_cfg.graph, rt1->node, rt2->node, true, link);
-	edge->metric = (uint32_t)link_entry->metric ?: UINT32_MAX;
+	graph_add_edge(_cfg.graph, rt1->node, rt2->node, metric, true, link);
 	link->refcount = 2;
 	graph_unlock(_cfg.graph);
 
