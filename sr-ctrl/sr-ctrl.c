@@ -13,7 +13,7 @@
 #include "graph.h"
 #include "lpm.h"
 #include "sr-ctrl.h"
-#include "mq.h"
+#include "sbuf.h"
 
 #define DEFAULT_CONFIG	"sr-ctrl.conf"
 
@@ -36,7 +36,7 @@ struct config {
 	char rules_file[SLEN + 1];
 	struct ovsdb_config ovsdb_conf;
 	unsigned int worker_threads;
-	unsigned int req_queue_size;
+	unsigned int req_buffer_size;
 	struct provider *providers;
 	unsigned int nb_providers;
 
@@ -47,7 +47,7 @@ struct config {
 	struct graph *graph;
 	struct hashmap *routers;
 	struct lpm_tree *prefixes;
-	struct mqueue *req_queue;
+	struct sbuf *req_buffer;
 };
 
 static struct config _cfg;
@@ -59,7 +59,7 @@ static void config_set_defaults(struct config *cfg)
 	strcpy(cfg->ovsdb_conf.ovsdb_server, "tcp:[::1]:6640");
 	strcpy(cfg->ovsdb_conf.ovsdb_database, "SR_test");
 	cfg->worker_threads = 1;
-	cfg->req_queue_size = 16;
+	cfg->req_buffer_size = 16;
 	cfg->providers = &internal_provider;
 	cfg->nb_providers = 1;
 }
@@ -468,7 +468,7 @@ static int read_flowreq(struct srdb_entry *entry)
 {
 	struct srdb_flowreq_entry *req = (struct srdb_flowreq_entry *)entry;
 
-	mq_push(_cfg.req_queue, &req);
+	sbuf_push(_cfg.req_buffer, req);
 
 	return 0;
 }
@@ -642,9 +642,9 @@ static int load_config(const char *fname, struct config *cfg)
 				cfg->worker_threads = 1;
 			continue;
 		}
-		if (READ_INT(buf, req_queue_size, cfg)) {
-			if (!cfg->req_queue_size)
-				cfg->req_queue_size = 1;
+		if (READ_INT(buf, req_buffer_size, cfg)) {
+			if (!cfg->req_buffer_size)
+				cfg->req_buffer_size = 1;
 			continue;
 		}
 		if (!strncmp(buf, "providers ", 10)) {
@@ -701,12 +701,12 @@ static void *thread_worker(void *arg __unused)
 	struct queue_thread queues[2];
 	struct queue_thread *transact_input = &queues[0];
 	struct queue_thread *transact_output = &queues[1];
-	mqueue_init(transact_input, _cfg.req_queue_size);
-	mqueue_init(transact_output, _cfg.req_queue_size);
+	mqueue_init(transact_input, _cfg.req_buffer_size);
+	mqueue_init(transact_output, _cfg.req_buffer_size);
 	pthread_create(&transact_thread, NULL, thread_transact, queues);
 
 	for (;;) {
-		mq_pop(_cfg.req_queue, &entry);
+		entry = sbuf_pop(_cfg.req_buffer);
 		if (!entry)
 			break;
 		process_request(entry, transact_input, transact_output);
@@ -871,9 +871,8 @@ int main(int argc, char **argv)
 		goto free_routers_hmap;
 	}
 
-	_cfg.req_queue = mq_init(_cfg.req_queue_size,
-				 sizeof(struct srdb_entry *));
-	if (!_cfg.req_queue) {
+	_cfg.req_buffer = sbuf_new(_cfg.req_buffer_size);
+	if (!_cfg.req_buffer) {
 		pr_err("failed to initialize request queue.\n");
 		ret = -1;
 		goto free_lpm;
@@ -883,7 +882,7 @@ int main(int argc, char **argv)
 	if (!workers) {
 		pr_err("failed to allocate space for worker threads.\n");
 		ret = -1;
-		goto free_req_queue;
+		goto free_req_buffer;
 	}
 
 	for (i = 0; i < _cfg.worker_threads; i++)
@@ -894,18 +893,15 @@ int main(int argc, char **argv)
 	for (i = 0; i < sizeof(mon_thr) / sizeof(pthread_t); i++)
 		pthread_join(mon_thr[i], NULL);
 
-	for (i = 0; i < sizeof(mon_thr) / sizeof(pthread_t); i++) {
-		void *null_entry = NULL;
-
-		mq_push(_cfg.req_queue, &null_entry);
-	}
+	for (i = 0; i < _cfg.worker_threads; i++)
+		sbuf_push(_cfg.req_buffer, NULL);
 
 	for (i = 0; i < _cfg.worker_threads; i++)
 		pthread_join(workers[i], NULL);
 
 	free(workers);
-free_req_queue:
-	mq_destroy(_cfg.req_queue);
+free_req_buffer:
+	sbuf_destroy(_cfg.req_buffer);
 free_lpm:
 	lpm_destroy(_cfg.prefixes);
 free_routers_hmap:
