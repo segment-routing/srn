@@ -1,5 +1,5 @@
 CC=gcc
-CFLAGS=-g -Wall -W -O0 -I../lib -Wall -Werror
+CFLAGS=-g -Wall -W -O2 -I../lib -Wall -Werror
 LDFLAGS=-L../lib -lsr -pthread -ljansson
 SRC=graph.c rules.c sr-ctrl.c
 OBJ=$(SRC:.c=.o)
