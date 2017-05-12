@@ -721,7 +721,7 @@ struct llist_node *build_segpath(struct graph *g, struct pathspec *pspec)
 		 * segment for the last hop (i.e. breaking link bundle)
 		 */
 		s = llist_node_last_entry(res)->data;
-		if (!(s->adjacency && s->edge->remote == tmp_node))
+		if (!s || !(s->adjacency && s->edge->remote == tmp_node))
 			insert_node_segment(tmp_node, res);
 
 		llist_node_destroy(rev_path);
