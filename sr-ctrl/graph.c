@@ -298,10 +298,10 @@ static struct llist_node *graph_compute_neighbors(struct graph *g,
 		if (edge->local->id != node->id)
 			continue;
 
-		if (llist_node_exist(neighs, &edge->remote))
+		if (llist_node_exist(neighs, edge->remote))
 			continue;
 
-		llist_node_insert_tail(neighs, &edge->remote);
+		llist_node_insert_tail(neighs, edge->remote);
 	}
 
 	return neighs;
@@ -704,7 +704,7 @@ struct llist_node *build_segpath(struct graph *g, struct pathspec *pspec)
 
 		graph_dijkstra(gc, cur_node, &gres, pspec->d_ops, pspec->data);
 		tmp_paths = hmap_get(gres.path, tmp_node);
-		if (!llist_node_size(tmp_paths))
+		if (llist_node_empty(tmp_paths))
 			goto out_error;
 
 		/* XXX modify here to support backup paths or modify
