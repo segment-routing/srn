@@ -59,7 +59,7 @@ int hmap_set(struct hashmap *hm, void *key, void *elem)
 
 	/* look for existing entry and overwrite */
 	llist_foreach(&hm->map[idx], he, map_head) {
-		if (hm->compare(he->key, key)) {
+		if (hm->compare(he->key, key) == 0) {
 			he->elem = elem;
 			return 0;
 		}
@@ -86,7 +86,7 @@ void *hmap_get(struct hashmap *hm, void *key)
 	idx = hmap_hash(hm, key);
 
 	llist_foreach(&hm->map[idx], he, map_head) {
-		if (hm->compare(he->key, key))
+		if (hm->compare(he->key, key) == 0)
 			return he->elem;
 	}
 
@@ -101,7 +101,7 @@ void hmap_delete(struct hashmap *hm, void *key)
 	idx = hmap_hash(hm, key);
 
 	llist_foreach(&hm->map[idx], he, map_head) {
-		if (hm->compare(he->key, key)) {
+		if (hm->compare(he->key, key) == 0) {
 			llist_remove(&he->map_head);
 			llist_remove(&he->key_head);
 			free(he);
