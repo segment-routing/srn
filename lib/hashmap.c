@@ -9,17 +9,27 @@ struct hashmap *hmap_new(unsigned int (*hash)(void *key),
 			 int (*compare)(void *k1, void *k2))
 {
 	struct hashmap *hm;
+	int i;
 
-	hm = malloc(sizeof(*hm));
+	hm = calloc(1, sizeof(*hm));
 	if (!hm)
 		return NULL;
 
 	hm->size = HASHMAP_SIZE;
-	hm->map = malloc(HASHMAP_SIZE*sizeof(struct arraylist *));
-	memset(hm->map, 0, HASHMAP_SIZE*sizeof(struct arraylist *));
+
+	hm->map = calloc(hm->size, sizeof(struct llist_head));
+	if (!hm->map) {
+		free(hm);
+		return NULL;
+	}
+
+	for (i = 0; i < hm->size; i++)
+		llist_init(&hm->map[i]);
+
+	llist_init(&hm->keys);
+
 	hm->hash = hash;
 	hm->compare = compare;
-	hm->keys = alist_new(sizeof(void *));
 
 	pthread_rwlock_init(&hm->lock, NULL);
 
@@ -31,7 +41,6 @@ void hmap_destroy(struct hashmap *hm)
 	pthread_rwlock_destroy(&hm->lock);
 
 	hmap_flush(hm);
-	alist_destroy(hm->keys);
 	free(hm->map);
 	free(hm);
 }
@@ -41,107 +50,74 @@ int hmap_hash(struct hashmap *hm, void *key)
 	return hm->hash(key) % hm->size;
 }
 
-bool hmap_key_exist(struct hashmap *hm, void *key)
-{
-	struct key *k;
-	unsigned int i;
-
-	for (i = 0; i < hm->keys->elem_count; i++) {
-		alist_get(hm->keys, i, &k);
-		if (hm->compare(k, key) == 0)
-			return true;
-	}
-
-	return false;
-}
-
 int hmap_set(struct hashmap *hm, void *key, void *elem)
 {
-	int idx;
-	struct hmap_entry he;
+	struct hmap_entry *he;
+	unsigned int idx;
 
 	idx = hmap_hash(hm, key);
 
-	if (hmap_key_exist(hm, key))
-		hmap_delete(hm, key);
-
-	if (hm->map[idx] == NULL) {
-		hm->map[idx] = alist_new(sizeof(struct hmap_entry));
-		if (!hm->map[idx])
-			return -1;
+	/* look for existing entry and overwrite */
+	llist_foreach(&hm->map[idx], he, map_head) {
+		if (hm->compare(he->key, key)) {
+			he->elem = elem;
+			return 0;
+		}
 	}
 
-	he.key = key;
-	he.elem = elem;
+	he = malloc(sizeof(*he));
+	if (!he)
+		return -1;
 
-	alist_insert(hm->map[idx], &he);
-	alist_insert(hm->keys, &key);
+	he->key = key;
+	he->elem = elem;
+
+	llist_insert_tail(&hm->map[idx], &he->map_head);
+	llist_insert_tail(&hm->keys, &he->key_head);
 
 	return 0;
 }
 
 void *hmap_get(struct hashmap *hm, void *key)
 {
-	unsigned int i, idx;
+	struct hmap_entry *he;
+	unsigned int idx;
 
 	idx = hmap_hash(hm, key);
-	if (hm->map[idx] == NULL)
-		return NULL;
 
-	for (i = 0; i < hm->map[idx]->elem_count; i++) {
-		struct hmap_entry *he = alist_elem(hm->map[idx], i);
-
-		if (hm->compare(key, he->key) == 0)
+	llist_foreach(&hm->map[idx], he, map_head) {
+		if (hm->compare(he->key, key))
 			return he->elem;
 	}
 
 	return NULL;
 }
 
-int hmap_delete(struct hashmap *hm, void *key)
+void hmap_delete(struct hashmap *hm, void *key)
 {
-	unsigned int i, idx;
-
-	if (!alist_exist(hm->keys, &key))
-		return -1;
+	struct hmap_entry *he;
+	unsigned int idx;
 
 	idx = hmap_hash(hm, key);
-	if (hm->map[idx] == NULL)
-		return -1;
 
-	for (i = 0; i < hm->map[idx]->elem_count; i++) {
-		struct hmap_entry *he = alist_elem(hm->map[idx], i);
-
-		if (hm->compare(key, he->key) == 0) {
-			alist_remove(hm->map[idx], i);
-			break;
+	llist_foreach(&hm->map[idx], he, map_head) {
+		if (hm->compare(he->key, key)) {
+			llist_remove(&he->map_head);
+			llist_remove(&he->key_head);
+			free(he);
+			return;
 		}
 	}
-
-	if (!hm->map[idx]->elem_count) {
-		alist_destroy(hm->map[idx]);
-		hm->map[idx] = NULL;
-	}
-
-	for (i = 0; i < hm->keys->elem_count; i++) {
-		struct key *k;
-
-		alist_get(hm->keys, i, &k);
-		if (hm->compare(key, k) == 0) {
-			alist_remove(hm->keys, i);
-			break;
-		}
-	}
-
-	return 0;
 }
 
 void hmap_flush(struct hashmap *hm)
 {
-	while (hm->keys->elem_count) {
-		void *key;
+	struct hmap_entry *he;
 
-		alist_get(hm->keys, 0, &key);
-		hmap_delete(hm, key);
+	while (!llist_empty(&hm->keys)) {
+		he = llist_first_entry(&hm->keys, struct hmap_entry, key_head);
+		llist_remove(&he->key_head);
+		llist_remove(&he->map_head);
+		free(he);
 	}
 }
