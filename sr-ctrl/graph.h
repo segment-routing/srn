@@ -51,6 +51,7 @@ struct graph {
 	unsigned int last_edge;
 	struct hashmap *min_edges;
 	struct hashmap *neighs;
+	struct hashmap *dcache;
 	pthread_rwlock_t lock;
 	bool dirty;
 	struct graph_ops *ops;
@@ -94,6 +95,9 @@ int graph_minseg(struct graph *g, struct llist_node *path,
 
 void free_segments(struct llist_node *segs);
 struct llist_node *copy_segments(struct llist_node *segs);
+int graph_build_cache_one(struct graph *g, struct node *node);
+int graph_build_cache(struct graph *g);
+void graph_flush_cache(struct graph *g);
 
 struct pathspec {
 	struct node *src;

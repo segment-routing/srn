@@ -45,52 +45,54 @@ struct graph *graph_new(struct graph_ops *ops)
 {
 	struct graph *g;
 
-	g = calloc(1, sizeof(*g));
+	g = malloc(sizeof(*g));
 	if (!g)
 		return NULL;
 
 	g->ops = ops ?: &g_ops_default;
 
-	if (!g->ops->node_equals || !g->ops->node_data_equals) {
-		free(g);
-		return NULL;
-	}
+	if (!g->ops->node_equals || !g->ops->node_data_equals)
+		goto out_free_graph;
 
 	g->nodes = llist_node_alloc();
-	if (!g->nodes) {
-		free(g);
-		return NULL;
-	}
+	if (!g->nodes)
+		goto out_free_graph;
 
 	g->edges = llist_node_alloc();
-	if (!g->edges) {
-		llist_node_destroy(g->nodes);
-		free(g);
-		return NULL;
-	}
+	if (!g->edges)
+		goto out_free_nodes;
 
 	g->min_edges = hmap_new(hash_nodepair, compare_nodepair);
-	if (!g->min_edges) {
-		llist_node_destroy(g->edges);
-		llist_node_destroy(g->nodes);
-		free(g);
-		return NULL;
-	}
+	if (!g->min_edges)
+		goto out_free_edges;
 
 	g->neighs = hmap_new(hash_node, compare_node);
-	if (!g->neighs) {
-		llist_node_destroy(g->edges);
-		llist_node_destroy(g->nodes);
-		hmap_destroy(g->min_edges);
-		free(g);
-		return NULL;
-	}
+	if (!g->neighs)
+		goto out_free_minedges;
+
+	g->dcache = hmap_new(hash_node, compare_node);
+	if (!g->dcache)
+		goto out_free_neighs;
 
 	pthread_rwlock_init(&g->lock, NULL);
 
+	g->last_node = 0;
+	g->last_edge = 0;
 	g->dirty = true;
 
 	return g;
+
+out_free_neighs:
+	hmap_destroy(g->neighs);
+out_free_minedges:
+	hmap_destroy(g->min_edges);
+out_free_edges:
+	llist_node_destroy(g->edges);
+out_free_nodes:
+	llist_node_destroy(g->nodes);
+out_free_graph:
+	free(g);
+	return NULL;
 }
 
 void graph_destroy(struct graph *g, bool shallow)
@@ -633,9 +635,57 @@ out_free:
 	return NULL;
 }
 
+int graph_build_cache_one(struct graph *g, struct node *node)
+{
+	struct dres *res, *old_res;
+
+	res = malloc(sizeof(*res));
+	if (!res)
+		return -1;
+
+	/* cache only SP-DAGs built without custom sp-ops,
+	 * because it can unpredictably affect the result
+	 * and yield wrong cache entries.
+	 */
+	graph_dijkstra(g, node, res, NULL, NULL);
+
+	old_res = hmap_get(g->dcache, node);
+	if (old_res)
+		graph_dijkstra_free(old_res);
+
+	hmap_set(g->dcache, node, res);
+
+	return 0;
+}
+
+int graph_build_cache(struct graph *g)
+{
+	struct llist_node *iter;
+	struct node *node;
+
+	llist_node_foreach(g->nodes, iter) {
+		node = iter->data;
+		if (graph_build_cache_one(g, node) < 0)
+			return -1;
+	}
+
+	return 0;
+}
+
+void graph_flush_cache(struct graph *g)
+{
+	struct hmap_entry *he;
+
+	hmap_foreach(g->dcache, he)
+		graph_dijkstra_free(he->elem);
+
+	hmap_flush(g->dcache);
+}
+
 int graph_minseg(struct graph *g, struct llist_node *path,
 		 struct llist_node *res)
 {
+	struct dres *cache_res_r, *cache_res_i;
 	struct node *node_r, *node_i, *node_ii;
 	struct dres res_r, res_i;
 	struct llist_node *iter;
@@ -657,8 +707,18 @@ int graph_minseg(struct graph *g, struct llist_node *path,
 		if (!node_r)
 			node_r = node_i;
 
-		graph_dijkstra(g, node_i, &res_i, NULL, NULL);
-		graph_dijkstra(g, node_r, &res_r, NULL, NULL);
+		cache_res_i = hmap_get(g->dcache, node_i);
+		cache_res_r = hmap_get(g->dcache, node_r);
+
+		if (cache_res_i)
+			res_i = *cache_res_i;
+		else
+			graph_dijkstra(g, node_i, &res_i, NULL, NULL);
+
+		if (cache_res_r)
+			res_r = *cache_res_r;
+		else
+			graph_dijkstra(g, node_r, &res_r, NULL, NULL);
 
 		prev = hmap_get(res_r.prev, node_ii);
 		if (!llist_node_exist(prev, node_i)) { /* MinSegECMP:4 */
@@ -692,15 +752,19 @@ int graph_minseg(struct graph *g, struct llist_node *path,
 		}
 
 next_free:
-		graph_dijkstra_free(&res_i);
-		graph_dijkstra_free(&res_r);
+		if (!cache_res_i)
+			graph_dijkstra_free(&res_i);
+		if (!cache_res_r)
+			graph_dijkstra_free(&res_r);
 	}
 
 	return 0;
 
 out_error:
-	graph_dijkstra_free(&res_i);
-	graph_dijkstra_free(&res_r);
+	if (!cache_res_i)
+		graph_dijkstra_free(&res_i);
+	if (!cache_res_r)
+		graph_dijkstra_free(&res_r);
 
 	return -1;
 }
