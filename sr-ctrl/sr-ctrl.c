@@ -431,7 +431,7 @@ static void process_request(struct srdb_entry *entry,
 	hmap_unlock(rt->flows);
 
 	for (i = 1; i < fl->nb_prefixes; i++) {
-		fl->src_prefixes[i].segs = llist_node_copy(segs);
+		fl->src_prefixes[i].segs = copy_segments(segs);
 
 		if (dstrt) {
 			fl->src_prefixes[i].bsid = fl->src_prefixes[0].bsid;
@@ -458,7 +458,7 @@ free_segs:
 		hmap_delete(rt->flows, &fl->src_prefixes[i].bsid);
 
 	for (i = 0; i < fl->nb_prefixes; i++)
-		llist_node_destroy(fl->src_prefixes[i].segs);
+		free_segments(fl->src_prefixes[i].segs);
 
 free_src_prefixes:
 	free(fl->src_prefixes);

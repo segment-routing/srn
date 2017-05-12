@@ -596,6 +596,43 @@ static int insert_adj_segment(struct graph *g, struct node *node_i,
 	return 0;
 }
 
+void free_segments(struct llist_node *segs)
+{
+	struct llist_node *iter;
+
+	llist_node_foreach(segs, iter)
+		free(iter->data);
+
+	llist_node_destroy(segs);
+}
+
+struct llist_node *copy_segments(struct llist_node *segs)
+{
+	struct llist_node *nhead, *iter;
+	struct segment *s, *s2;
+
+	nhead = llist_node_alloc();
+	if (!nhead)
+		return NULL;
+
+	llist_node_foreach(segs, iter) {
+		s = iter->data;
+
+		s2 = malloc(sizeof(*s2));
+		if (!s2)
+			goto out_free;
+
+		memcpy(s2, s, sizeof(*s2));
+		llist_node_insert_tail(nhead, s2);
+	}
+
+	return nhead;
+
+out_free:
+	free_segments(nhead);
+	return NULL;
+}
+
 int graph_minseg(struct graph *g, struct llist_node *path,
 		 struct llist_node *res)
 {
@@ -738,6 +775,6 @@ out_error:
 	graph_dijkstra_free(&gres);
 	graph_destroy(gc, true);
 	llist_node_destroy(path);
-	llist_node_destroy(res);
+	free_segments(res);
 	return NULL;
 }

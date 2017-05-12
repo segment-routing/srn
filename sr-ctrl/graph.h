@@ -92,6 +92,9 @@ unsigned int graph_prune(struct graph *g,
 int graph_minseg(struct graph *g, struct llist_node *path,
 		 struct llist_node *res);
 
+void free_segments(struct llist_node *segs);
+struct llist_node *copy_segments(struct llist_node *segs);
+
 struct pathspec {
 	struct node *src;
 	struct node *dst;
