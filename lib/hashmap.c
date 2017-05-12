@@ -9,15 +9,16 @@ struct hashmap *hmap_new(unsigned int (*hash)(void *key),
 			 int (*compare)(void *k1, void *k2))
 {
 	struct hashmap *hm;
-	int i;
+	unsigned int i;
 
-	hm = calloc(1, sizeof(*hm));
+	hm = malloc(sizeof(*hm));
 	if (!hm)
 		return NULL;
 
-	hm->size = HASHMAP_SIZE;
+	hm->size = HASHMAP_DEFAULT_SIZE;
+	hm->elems = 0;
 
-	hm->map = calloc(hm->size, sizeof(struct llist_head));
+	hm->map = malloc(hm->size * sizeof(struct llist_head));
 	if (!hm->map) {
 		free(hm);
 		return NULL;
@@ -47,7 +48,39 @@ void hmap_destroy(struct hashmap *hm)
 
 int hmap_hash(struct hashmap *hm, void *key)
 {
-	return hm->hash(key) % hm->size;
+	return hm->hash(key) & (hm->size - 1);
+}
+
+static bool hmap_must_grow(struct hashmap *hm)
+{
+	return hm->elems > (hm->size / 4 * 3);
+}
+
+static int hmap_grow(struct hashmap *hm, size_t nsize)
+{
+	struct llist_head *new_map;
+	struct hmap_entry *he;
+	unsigned int idx, i;
+
+	new_map = malloc(nsize * sizeof(struct llist_node));
+	if (!new_map)
+		return -1;
+
+	for (i = 0; i < nsize; i++)
+		llist_init(&new_map[i]);
+
+	hm->size = nsize;
+
+	llist_foreach(&hm->keys, he, key_head) {
+		llist_remove(&he->map_head);
+		idx = hmap_hash(hm, he->key);
+		llist_insert_tail(&new_map[idx], &he->map_head);
+	}
+
+	free(hm->map);
+	hm->map = new_map;
+
+	return 0;
 }
 
 int hmap_set(struct hashmap *hm, void *key, void *elem)
@@ -65,6 +98,11 @@ int hmap_set(struct hashmap *hm, void *key, void *elem)
 		}
 	}
 
+	if (hmap_must_grow(hm)) {
+		if (hmap_grow(hm, hm->size * 2) < 0)
+			return -1;
+	}
+
 	he = malloc(sizeof(*he));
 	if (!he)
 		return -1;
@@ -74,6 +112,8 @@ int hmap_set(struct hashmap *hm, void *key, void *elem)
 
 	llist_insert_tail(&hm->map[idx], &he->map_head);
 	llist_insert_tail(&hm->keys, &he->key_head);
+
+	hm->elems++;
 
 	return 0;
 }
@@ -104,6 +144,7 @@ void hmap_delete(struct hashmap *hm, void *key)
 		if (hm->compare(he->key, key) == 0) {
 			llist_remove(&he->map_head);
 			llist_remove(&he->key_head);
+			hm->elems--;
 			free(he);
 			return;
 		}
@@ -118,6 +159,7 @@ void hmap_flush(struct hashmap *hm)
 		he = llist_first_entry(&hm->keys, struct hmap_entry, key_head);
 		llist_remove(&he->key_head);
 		llist_remove(&he->map_head);
+		hm->elems--;
 		free(he);
 	}
 }

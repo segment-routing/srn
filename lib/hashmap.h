@@ -8,7 +8,7 @@
 #include "llist.h"
 #include "misc.h"
 
-#define HASHMAP_SIZE	5003
+#define HASHMAP_DEFAULT_SIZE	16
 
 struct hmap_entry {
 	void *key;
@@ -18,7 +18,8 @@ struct hmap_entry {
 };
 
 struct hashmap {
-	int size;
+	size_t size;
+	size_t elems;
 	struct llist_head *map;
 	struct llist_head keys;
 	pthread_rwlock_t lock;
