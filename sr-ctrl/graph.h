@@ -64,7 +64,7 @@ struct dres {
 };
 
 struct d_ops {
-	void (*init)(struct graph *g, struct node *src, void **state,
+	void (*init)(const struct graph *g, struct node *src, void **state,
 		     void *data);
 	void (*destroy)(void *state);
 	uint32_t (*cost)(uint32_t cur_cost, struct edge *edge, void *state,
@@ -85,7 +85,7 @@ void graph_remove_edge(struct graph *g, struct edge *edge);
 void graph_compute_minimal_edges(struct graph *g);
 void graph_compute_all_neighbors(struct graph *g);
 struct graph *graph_clone(struct graph *g);
-void graph_dijkstra(struct graph *g, struct node *src, struct dres *res,
+void graph_dijkstra(const struct graph *g, struct node *src, struct dres *res,
 		    struct d_ops *d_ops, void *data);
 void graph_dijkstra_free(struct dres *res);
 unsigned int graph_prune(struct graph *g,

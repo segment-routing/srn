@@ -391,7 +391,7 @@ static void destroy_pathres(struct llist_node *p)
 	llist_node_destroy(p);
 }
 
-void graph_dijkstra(struct graph *g, struct node *src, struct dres *res,
+void graph_dijkstra(const struct graph *g, struct node *src, struct dres *res,
 		    struct d_ops *ops, void *data)
 {
 	struct hashmap *dist, *prev, *path;
@@ -403,9 +403,6 @@ void graph_dijkstra(struct graph *g, struct node *src, struct dres *res,
 	 * prev: node -> list(node)
 	 * path: node -> list(list(node))
 	 */
-
-	if (g->dirty)
-		graph_finalize(g);
 
 	dist = hmap_new(hash_node, compare_node);
 	prev = hmap_new(hash_node, compare_node);

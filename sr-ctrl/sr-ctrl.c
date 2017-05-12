@@ -226,7 +226,7 @@ static void pre_prune(struct graph *g, struct pathspec *pspec)
 		graph_prune(g, prune_bw, (void *)(uintptr_t)fl->bw);
 }
 
-static void delay_init(struct graph *g, struct node *src, void **state,
+static void delay_init(const struct graph *g, struct node *src, void **state,
 		       void *data __unused)
 {
 	struct llist_node *iter;
@@ -414,6 +414,20 @@ static void process_request(struct srdb_entry *entry,
 	 * discriminate. This may change with per-prefix preferences.
 	 */
 	graph_read_lock(_cfg.graph);
+
+	/* FIXME temporary code to handle the fact that graph_dijkstra() no
+	 * longer perform graph_finalize(). This piece of code will be removed
+	 * once async graph updates will be implemented.
+	 */
+	if (_cfg.graph->dirty) {
+		graph_unlock(_cfg.graph);
+		graph_write_lock(_cfg.graph);
+		if (_cfg.graph->dirty)
+			graph_finalize(_cfg.graph);
+		graph_unlock(_cfg.graph);
+		graph_read_lock(_cfg.graph);
+	}
+
 	segs = build_segpath(_cfg.graph, &pspec);
 	graph_unlock(_cfg.graph);
 
