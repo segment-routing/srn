@@ -21,7 +21,7 @@ struct rule {
 	enum ruletype type;
 	char from[SLEN + 1];
 	char to[SLEN + 1];
-	struct arraylist *path;
+	struct llist_node *path;
 	char last[SLEN + 1];
 	int bw;
 	int delay;
@@ -29,8 +29,8 @@ struct rule {
 	int idle;
 };
 
-struct arraylist *load_rules(const char *fname, struct rule **defrule);
-void destroy_rules(struct arraylist *rules, struct rule *defrule);
-struct rule *match_rules(struct arraylist *rules, const char *from, const char *to);
+struct llist_node *load_rules(const char *fname, struct rule **defrule);
+void destroy_rules(struct llist_node *rules, struct rule *defrule);
+struct rule *match_rules(struct llist_node *rules, const char *from, const char *to);
 
 #endif

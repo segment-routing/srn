@@ -5,7 +5,7 @@
 #include <arpa/inet.h>
 #include <time.h>
 
-#include "arraylist.h"
+#include "llist.h"
 #include "misc.h"
 #include "srdb.h"
 #include "rules.h"
@@ -42,7 +42,7 @@ struct config {
 
 	/* internal data */
 	struct srdb *srdb;
-	struct arraylist *rules;
+	struct llist_node *rules;
 	struct rule *defrule;
 	struct graph *graph;
 	struct hashmap *routers;
@@ -81,10 +81,10 @@ static int commit_flow(struct srdb_flowreq_entry *req, struct router *rt,
 		       struct queue_thread *output)
 {
 	struct srdb_flow_entry flow_entry;
+	struct llist_node *iter;
 	unsigned int i;
 	unsigned int j = 0;
 	unsigned int k = 0;
-	unsigned int p = 0;
 	unsigned int m = 0;
 	int length = 0;
 	int ret = 0;
@@ -128,14 +128,15 @@ static int commit_flow(struct srdb_flowreq_entry *req, struct router *rt,
 		if (length >= (int) (SLEN_LIST + 1 - m))
 			goto err_many_segs;
 		m += length;
-		for (p = 0; p < fl->src_prefixes[i].segs->elem_count; p++) {
+
+		llist_node_foreach(fl->src_prefixes[i].segs, iter) {
 			struct segment *s;
 			struct in6_addr *seg_addr;
 
 			flow_entry.segments[m] = '"';
 			m++;
 
-			s = alist_elem(fl->src_prefixes[i].segs, p);
+			s = iter->data;
 			if (!s->adjacency) {
 				struct router *r;
 
@@ -155,7 +156,8 @@ static int commit_flow(struct srdb_flowreq_entry *req, struct router *rt,
 
 			flow_entry.segments[m] = '"';
 			m++;
-			if (p < fl->src_prefixes[i].segs->elem_count - 1) {
+
+			if (iter != llist_node_last_entry(fl->src_prefixes[i].segs)) {
 				flow_entry.segments[m] = ',';
 				m++;
 			}
@@ -203,7 +205,7 @@ static void generate_unique_bsid(struct router *rt, struct in6_addr *res)
 {
 	do {
 		generate_bsid(rt, res);
-	} while (hmap_key_exist(rt->flows, res));
+	} while (hmap_get(rt->flows, res));
 }
 
 static bool prune_bw(struct edge *e, void *arg)
@@ -227,14 +229,14 @@ static void pre_prune(struct graph *g, struct pathspec *pspec)
 static void delay_init(struct graph *g, struct node *src, void **state,
 		       void *data __unused)
 {
+	struct llist_node *iter;
 	struct hashmap *dist;
 	struct node *n;
-	unsigned int i;
 
 	dist = hmap_new(hash_node, compare_node);
 
-	for (i = 0; i < g->nodes->elem_count; i++) {
-		alist_get(g->nodes, i, &n);
+	llist_node_foreach(g->nodes, iter) {
+		n = iter->data;
 
 		if (n->id == src->id)
 			hmap_set(dist, n, (void *)(uintptr_t)0);
@@ -340,7 +342,7 @@ static void process_request(struct srdb_entry *entry,
 	struct srdb_flowreq_entry *req = (struct srdb_flowreq_entry *)entry;
 	struct router *rt, *dstrt;
 	enum flowreq_status rstat;
-	struct arraylist *segs;
+	struct llist_node *segs;
 	struct pathspec pspec;
 	struct in6_addr addr;
 	struct rule *rule;
@@ -429,7 +431,7 @@ static void process_request(struct srdb_entry *entry,
 	hmap_unlock(rt->flows);
 
 	for (i = 1; i < fl->nb_prefixes; i++) {
-		fl->src_prefixes[i].segs = alist_copy(segs);
+		fl->src_prefixes[i].segs = llist_node_copy(segs);
 
 		if (dstrt) {
 			fl->src_prefixes[i].bsid = fl->src_prefixes[0].bsid;
@@ -456,7 +458,7 @@ free_segs:
 		hmap_delete(rt->flows, &fl->src_prefixes[i].bsid);
 
 	for (i = 0; i < fl->nb_prefixes; i++)
-		alist_destroy(fl->src_prefixes[i].segs);
+		llist_node_destroy(fl->src_prefixes[i].segs);
 
 free_src_prefixes:
 	free(fl->src_prefixes);
@@ -473,25 +475,21 @@ static int read_flowreq(struct srdb_entry *entry)
 	return 0;
 }
 
-static void routers_destroy(struct arraylist *nodes)
+static void routers_destroy(struct llist_node *nodes)
 {
-	unsigned int i;
-	for (i = 0; i < nodes->elem_count; i++) {
-		struct node *node;
-		struct router *rt;
+	struct llist_node *iter;
+	struct hmap_entry *he;
+	struct router *rt;
+	struct node *node;
 
-		alist_get(nodes, i, &node);
+	llist_node_foreach(nodes, iter) {
+		node = iter->data;
 		rt = node->data;
 
-		alist_destroy(rt->prefixes);
+		llist_node_destroy(rt->prefixes);
 
-		while (rt->flows->keys->elem_count) {
-			struct in6_addr *bsid;
-			struct flow *fl;
-
-			alist_get(rt->flows->keys, 0, &bsid);
-			fl = hmap_get(rt->flows, bsid);
-			hmap_delete(rt->flows, bsid);
+		hmap_foreach(rt->flows, he) {
+			struct flow *fl = he->elem;
 
 			fl->refcount--;
 			if (!fl->refcount) {
@@ -506,16 +504,14 @@ static void routers_destroy(struct arraylist *nodes)
 	}
 }
 
-static void links_destroy(struct arraylist *edges)
+static void links_destroy(struct llist_node *edges)
 {
-	unsigned int i;
+	struct llist_node *iter;
 
-	for (i = 0; i < edges->elem_count; i++) {
-		struct edge *edge;
-		struct link *link;
+	llist_node_foreach(edges, iter) {
+		struct edge *edge = iter->data;
+		struct link *link = edge->data;
 
-		alist_get(edges, i, &edge);
-		link = edge->data;
 		link->refcount--;
 
 		/* Because two directed edges reference a single link */
@@ -530,7 +526,7 @@ static int read_nodestate(struct srdb_entry *entry)
 {
 	struct srdb_nodestate_entry *node_entry;
 	struct router *rt;
-	struct prefix p;
+	struct prefix *p;
 	char **vargs;
 	char **pref;
 	int vargc;
@@ -553,17 +549,18 @@ static int read_nodestate(struct srdb_entry *entry)
 	if (*node_entry->pbsid)
 		pref_pton(node_entry->pbsid, &rt->pbsid);
 
-	rt->prefixes = alist_new(sizeof(struct prefix));
+	rt->prefixes = llist_node_alloc();
 
 	vargs = strsplit(node_entry->prefix, &vargc, ';');
 	for (pref = vargs; *pref; pref++) {
 		if (!**pref)
 			continue;
 
-		pref_pton(*pref, &p);
-		alist_insert(rt->prefixes, &p);
+		p = malloc(sizeof(*p));
+		pref_pton(*pref, p);
+		llist_node_insert_tail(rt->prefixes, p);
 
-		lpm_insert(_cfg.prefixes, &p.addr, p.len, rt);
+		lpm_insert(_cfg.prefixes, &p->addr, p->len, rt);
 	}
 	free(vargs);
 

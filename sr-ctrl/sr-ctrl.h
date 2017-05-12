@@ -34,7 +34,7 @@ struct router {
 	char name[SLEN + 1];
 	struct in6_addr addr;
 	struct prefix pbsid;
-	struct arraylist *prefixes;
+	struct llist_node *prefixes;
 	struct hashmap *flows;
 	struct node *node;
 };
@@ -54,7 +54,7 @@ struct src_prefix {
 	char prefix_len;
 	int priority;
 	struct in6_addr bsid;
-	struct arraylist *segs;
+	struct llist_node *segs;
 };
 
 struct flow {

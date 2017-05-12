@@ -4,7 +4,7 @@
 #include <stdint.h>
 #include <pthread.h>
 
-#include "arraylist.h"
+#include "llist.h"
 #include "hashmap.h"
 
 struct node {
@@ -45,8 +45,8 @@ struct graph_ops {
 };
 
 struct graph {
-	struct arraylist *nodes;
-	struct arraylist *edges;
+	struct llist_node *nodes;
+	struct llist_node *edges;
 	unsigned int last_node;
 	unsigned int last_edge;
 	struct hashmap *min_edges;
@@ -87,21 +87,21 @@ struct graph *graph_clone(struct graph *g);
 void graph_dijkstra(struct graph *g, struct node *src, struct dres *res,
 		    struct d_ops *d_ops, void *data);
 void graph_dijkstra_free(struct dres *res);
-int graph_prune(struct graph *g, bool (*prune)(struct edge *e, void *arg),
-		void *_arg);
-int graph_minseg(struct graph *g, struct arraylist *path,
-		 struct arraylist *res);
+unsigned int graph_prune(struct graph *g,
+			 bool (*prune)(struct edge *e, void *arg), void *_arg);
+int graph_minseg(struct graph *g, struct llist_node *path,
+		 struct llist_node *res);
 
 struct pathspec {
 	struct node *src;
 	struct node *dst;
-	struct arraylist *via;
+	struct llist_node *via;
 	void (*prune)(struct graph *g, struct pathspec *pspec);
 	struct d_ops *d_ops;
 	void *data;
 };
 
-struct arraylist *build_segpath(struct graph *g, struct pathspec *pspec);
+struct llist_node *build_segpath(struct graph *g, struct pathspec *pspec);
 
 static inline void graph_finalize(struct graph *g)
 {
