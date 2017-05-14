@@ -112,6 +112,7 @@ struct graph {
 	pthread_rwlock_t lock;
 	bool dirty;
 	struct graph_ops *ops;
+	bool cloned;
 };
 
 struct dres {

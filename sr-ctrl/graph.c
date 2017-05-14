@@ -79,6 +79,7 @@ struct graph *graph_new(struct graph_ops *ops)
 	g->last_node = 0;
 	g->last_edge = 0;
 	g->dirty = false;
+	g->cloned = false;
 
 	return g;
 
@@ -382,6 +383,8 @@ struct graph *graph_clone(struct graph *g)
 		edge_hold(e);
 		llist_node_insert_tail(g_clone->edges, e);
 	}
+
+	g_clone->cloned = true;
 
 	return g_clone;
 }
@@ -879,10 +882,13 @@ struct llist_node *build_segpath(struct graph *g, struct pathspec *pspec)
 	if (!path)
 		return NULL;
 
-	gc = graph_clone(g);
+	gc = g;
 
-	if (pspec->prune)
+	if (pspec->prune) {
+		gc = graph_clone(g);
 		pspec->prune(gc, pspec);
+		graph_finalize(gc);
+	}
 
 	cur_node = pspec->src;
 
@@ -926,13 +932,15 @@ struct llist_node *build_segpath(struct graph *g, struct pathspec *pspec)
 		graph_dijkstra_free(&gres);
 	}
 
-	graph_destroy(gc, true);
+	if (gc->cloned)
+		graph_destroy(gc, true);
 	llist_node_destroy(path);
 	return res;
 
 out_error:
 	graph_dijkstra_free(&gres);
-	graph_destroy(gc, true);
+	if (gc->cloned)
+		graph_destroy(gc, true);
 	llist_node_destroy(path);
 	free_segments(res);
 	return NULL;
