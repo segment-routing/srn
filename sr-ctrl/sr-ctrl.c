@@ -32,6 +32,14 @@ struct provider internal_provider = {
 	.priority = 0
 };
 
+struct netstate {
+	struct graph *graph;
+	struct graph *graph_staging;
+	struct hashmap *routers;
+	struct lpm_tree *prefixes;
+	pthread_rwlock_t lock;
+};
+
 struct config {
 	char rules_file[SLEN + 1];
 	struct ovsdb_config ovsdb_conf;
@@ -44,13 +52,27 @@ struct config {
 	struct srdb *srdb;
 	struct llist_node *rules;
 	struct rule *defrule;
-	struct graph *graph;
-	struct hashmap *routers;
-	struct lpm_tree *prefixes;
 	struct sbuf *req_buffer;
+	struct netstate ns;
+	struct hashmap *flows;
 };
 
 static struct config _cfg;
+
+static void net_state_read_lock(struct netstate *ns)
+{
+	pthread_rwlock_rdlock(&ns->lock);
+}
+
+static void net_state_write_lock(struct netstate *ns)
+{
+	pthread_rwlock_wrlock(&ns->lock);
+}
+
+static void net_state_unlock(struct netstate *ns)
+{
+	pthread_rwlock_unlock(&ns->lock);
+}
 
 static void config_set_defaults(struct config *cfg)
 {
@@ -62,6 +84,63 @@ static void config_set_defaults(struct config *cfg)
 	cfg->req_buffer_size = 16;
 	cfg->providers = &internal_provider;
 	cfg->nb_providers = 1;
+}
+
+static int init_netstate(struct netstate *ns)
+{
+	ns->graph = graph_new(&g_ops_srdns);
+	if (!ns->graph)
+		return -1;
+
+	ns->graph_staging = graph_new(&g_ops_srdns);
+	if (!ns->graph_staging)
+		goto out_free_graph;
+
+	ns->routers = hmap_new(hash_str, compare_str);
+	if (!ns->routers)
+		goto out_free_graph2;
+
+	ns->prefixes = lpm_new();
+	if (!ns->prefixes)
+		goto out_free_rt;
+
+	pthread_rwlock_init(&ns->lock, NULL);
+
+	return 0;
+
+out_free_rt:
+	hmap_destroy(ns->routers);
+out_free_graph2:
+	graph_destroy(ns->graph_staging, false);
+out_free_graph:
+	graph_destroy(ns->graph, false);
+	return -1;
+}
+
+static int __unused netstate_graph_sync(struct netstate *ns)
+{
+	struct graph *g, *old_g;
+
+	graph_read_lock(ns->graph_staging);
+	g = graph_deepcopy(ns->graph_staging);
+	graph_unlock(ns->graph_staging);
+
+	if (!g)
+		return -1;
+
+	graph_finalize(g);
+	graph_build_cache(g);
+
+	net_state_write_lock(ns);
+
+	old_g = ns->graph;
+	ns->graph = g;
+
+	net_state_unlock(ns);
+
+	graph_destroy(old_g, false);
+
+	return 0;
 }
 
 static int set_status(struct srdb_flowreq_entry *req, enum flowreq_status st,
@@ -205,7 +284,7 @@ static void generate_unique_bsid(struct router *rt, struct in6_addr *res)
 {
 	do {
 		generate_bsid(rt, res);
-	} while (hmap_get(rt->flows, res));
+	} while (hmap_get(_cfg.flows, res));
 }
 
 static bool prune_bw(struct edge *e, void *arg)
@@ -379,14 +458,27 @@ static void process_request(struct srdb_entry *entry,
 	fl->ttl = rule->ttl;
 	fl->idle = rule->idle;
 
-	rt = hmap_get(_cfg.routers, req->router);
+	net_state_read_lock(&_cfg.ns);
+
+	rt = hmap_get(_cfg.ns.routers, req->router);
 	if (!rt) {
 		set_status(req, REQ_STATUS_NOROUTER, input, output);
 		goto free_flow;
 	}
 
 	inet_pton(AF_INET6, req->dstaddr, &addr);
-	dstrt = lpm_lookup(_cfg.prefixes, &addr);
+	dstrt = lpm_lookup(_cfg.ns.prefixes, &addr);
+
+	/* this may happen in the rare case where a new router appeared in the
+	 * network and was correspondingly inserted in the netstate, but its
+	 * associated graph node is still in the staging graph.
+	 */
+	if (graph_get_node_noref(_cfg.ns.graph, rt->node->id) != rt->node ||
+	    graph_get_node_noref(_cfg.ns.graph, dstrt->node->id) !=
+	    dstrt->node) {
+		set_status(req, REQ_STATUS_UNAVAILABLE, input, output);
+		goto free_flow;
+	}
 
 	fl->srcrt = rt;
 	fl->dstrt = dstrt;
@@ -410,26 +502,7 @@ static void process_request(struct srdb_entry *entry,
 	if (fl->delay)
 		pspec.d_ops = &delay_below_ops;
 
-	/* Currently, all providers yield the same seglist so do not
-	 * discriminate. This may change with per-prefix preferences.
-	 */
-	graph_read_lock(_cfg.graph);
-
-	/* FIXME temporary code to handle the fact that graph_dijkstra() no
-	 * longer perform graph_finalize(). This piece of code will be removed
-	 * once async graph updates will be implemented.
-	 */
-	if (_cfg.graph->dirty) {
-		graph_unlock(_cfg.graph);
-		graph_write_lock(_cfg.graph);
-		if (_cfg.graph->dirty)
-			graph_finalize(_cfg.graph);
-		graph_unlock(_cfg.graph);
-		graph_read_lock(_cfg.graph);
-	}
-
-	segs = build_segpath(_cfg.graph, &pspec);
-	graph_unlock(_cfg.graph);
+	segs = build_segpath(_cfg.ns.graph, &pspec);
 
 	if (!segs) {
 		set_status(req, REQ_STATUS_UNAVAILABLE, input, output);
@@ -438,11 +511,10 @@ static void process_request(struct srdb_entry *entry,
 
 	fl->src_prefixes[0].segs = segs;
 
-	hmap_write_lock(rt->flows);
+	hmap_write_lock(_cfg.flows);
 	generate_unique_bsid(rt, &fl->src_prefixes[0].bsid);
-	hmap_set(rt->flows, &fl->src_prefixes[0].bsid, fl);
-	fl->refcount++;
-	hmap_unlock(rt->flows);
+	hmap_set(_cfg.flows, &fl->src_prefixes[0].bsid, fl);
+	hmap_unlock(_cfg.flows);
 
 	for (i = 1; i < fl->nb_prefixes; i++) {
 		fl->src_prefixes[i].segs = copy_segments(segs);
@@ -450,11 +522,10 @@ static void process_request(struct srdb_entry *entry,
 		if (dstrt) {
 			fl->src_prefixes[i].bsid = fl->src_prefixes[0].bsid;
 		} else {
-			hmap_write_lock(rt->flows);
+			hmap_write_lock(_cfg.flows);
 			generate_unique_bsid(rt, &fl->src_prefixes[i].bsid);
-			hmap_set(rt->flows, &fl->src_prefixes[i].bsid, fl);
-			fl->refcount++;
-			hmap_unlock(rt->flows);
+			hmap_set(_cfg.flows, &fl->src_prefixes[i].bsid, fl);
+			hmap_unlock(_cfg.flows);
 		}
 	}
 
@@ -465,11 +536,15 @@ static void process_request(struct srdb_entry *entry,
 
 	set_status(req, REQ_STATUS_ALLOWED, input, output);
 
+	net_state_unlock(&_cfg.ns);
+
 	return;
 
 free_segs:
+	hmap_write_lock(_cfg.flows);
 	for (i = 0; i < fl->nb_prefixes; i++)
-		hmap_delete(rt->flows, &fl->src_prefixes[i].bsid);
+		hmap_delete(_cfg.flows, &fl->src_prefixes[i].bsid);
+	hmap_unlock(_cfg.flows);
 
 	for (i = 0; i < fl->nb_prefixes; i++)
 		free_segments(fl->src_prefixes[i].segs);
@@ -478,6 +553,7 @@ free_src_prefixes:
 	free(fl->src_prefixes);
 free_flow:
 	free(fl);
+	net_state_unlock(&_cfg.ns);
 }
 
 static int read_flowreq(struct srdb_entry *entry)
@@ -489,53 +565,6 @@ static int read_flowreq(struct srdb_entry *entry)
 	return 0;
 }
 
-static void routers_destroy(struct llist_node *nodes)
-{
-	struct llist_node *iter;
-	struct hmap_entry *he;
-	struct router *rt;
-	struct node *node;
-
-	llist_node_foreach(nodes, iter) {
-		node = iter->data;
-		rt = node->data;
-
-		llist_node_destroy(rt->prefixes);
-
-		hmap_foreach(rt->flows, he) {
-			struct flow *fl = he->elem;
-
-			fl->refcount--;
-			if (!fl->refcount) {
-				free(fl->src_prefixes);
-				free(fl);
-			}
-		}
-		hmap_destroy(rt->flows);
-
-		free(rt);
-		node->data = NULL;
-	}
-}
-
-static void links_destroy(struct llist_node *edges)
-{
-	struct llist_node *iter;
-
-	llist_node_foreach(edges, iter) {
-		struct edge *edge = iter->data;
-		struct link *link = edge->data;
-
-		link->refcount--;
-
-		/* Because two directed edges reference a single link */
-		if (!link->refcount)
-			free(link);
-
-		edge->data = NULL;
-	}
-}
-
 static int read_nodestate(struct srdb_entry *entry)
 {
 	struct srdb_nodestate_entry *node_entry;
@@ -543,19 +572,22 @@ static int read_nodestate(struct srdb_entry *entry)
 	struct prefix *p;
 	char **vargs;
 	char **pref;
+	int ret = 0;
 	int vargc;
 
 	node_entry = (struct srdb_nodestate_entry *)entry;
 
-	rt = hmap_get(_cfg.routers, node_entry->name);
+	net_state_write_lock(&_cfg.ns);
+
+	rt = hmap_get(_cfg.ns.routers, node_entry->name);
 	if (rt) {
 		pr_err("duplicate router entry `%s'.", node_entry->name);
-		return 0;
+		goto out_err;
 	}
 
-	rt = calloc(1, sizeof(*rt));
+	rt = malloc(sizeof(*rt));
 	if (!rt)
-		return -1;
+		goto out_err;
 
 	memcpy(rt->name, node_entry->name, SLEN);
 	inet_pton(AF_INET6, node_entry->addr, &rt->addr);
@@ -574,19 +606,24 @@ static int read_nodestate(struct srdb_entry *entry)
 		pref_pton(*pref, p);
 		llist_node_insert_tail(rt->prefixes, p);
 
-		lpm_insert(_cfg.prefixes, &p->addr, p->len, rt);
+		lpm_insert(_cfg.ns.prefixes, &p->addr, p->len, rt);
 	}
 	free(vargs);
 
-	rt->flows = hmap_new(hash_in6, compare_in6);
+	graph_write_lock(_cfg.ns.graph_staging);
+	rt->node = graph_add_node(_cfg.ns.graph_staging, rt);
+	graph_unlock(_cfg.ns.graph_staging);
 
-	graph_write_lock(_cfg.graph);
-	rt->node = graph_add_node(_cfg.graph, rt);
-	graph_unlock(_cfg.graph);
+	rt->refcount = 1;
 
-	hmap_set(_cfg.routers, rt->name, rt);
+	hmap_set(_cfg.ns.routers, rt->name, rt);
 
-	return 0;
+out_unlock:
+	net_state_unlock(&_cfg.ns);
+	return ret;
+out_err:
+	ret = -1;
+	goto out_unlock;
 }
 
 static int read_linkstate(struct srdb_entry *entry)
@@ -598,16 +635,19 @@ static int read_linkstate(struct srdb_entry *entry)
 
 	link_entry = (struct srdb_linkstate_entry *)entry;
 
-	link = calloc(1, sizeof(*link));
+	link = malloc(sizeof(*link));
 	if (!link)
 		return -1;
 
-	rt1 = hmap_get(_cfg.routers, link_entry->name1);
-	rt2 = hmap_get(_cfg.routers, link_entry->name2);
+	net_state_read_lock(&_cfg.ns);
+
+	rt1 = hmap_get(_cfg.ns.routers, link_entry->name1);
+	rt2 = hmap_get(_cfg.ns.routers, link_entry->name2);
 	if (!rt1 || !rt2) {
 		pr_err("unknown router entry for link (`%s', `%s').",
 		       link_entry->name1, link_entry->name2);
-		return 0; // TODO Discussion here if we stop monitoring
+		net_state_unlock(&_cfg.ns);
+		return -1;
 	}
 
 	inet_pton(AF_INET6, link_entry->addr1, &link->local);
@@ -616,11 +656,17 @@ static int read_linkstate(struct srdb_entry *entry)
 	link->ava_bw = link_entry->ava_bw;
 	link->delay = link_entry->delay;
 
-	metric = (uint32_t)link_entry->metric ?: UINT32_MAX;
-	graph_write_lock(_cfg.graph);
-	graph_add_edge(_cfg.graph, rt1->node, rt2->node, metric, true, link);
+	/* we need two references, one for each direction of the link */
 	link->refcount = 2;
-	graph_unlock(_cfg.graph);
+
+	metric = (uint32_t)link_entry->metric ?: UINT32_MAX;
+
+	graph_write_lock(_cfg.ns.graph_staging);
+	graph_add_edge(_cfg.ns.graph_staging, rt1->node, rt2->node, metric,
+		       true, link);
+	graph_unlock(_cfg.ns.graph_staging);
+
+	net_state_unlock(&_cfg.ns);
 
 	return 0;
 }
@@ -861,32 +907,24 @@ int main(int argc, char **argv)
 		goto free_rules;
 	}
 
-	_cfg.graph = graph_new(&g_ops_srdns);
-	if (!_cfg.graph) {
-		pr_err("failed to initialize network graph.");
+	if (init_netstate(&_cfg.ns) < 0) {
+		pr_err("failed to initialize network state.");
 		ret = -1;
 		goto free_srdb;
 	}
 
-	_cfg.routers = hmap_new(hash_str, compare_str);
-	if (!_cfg.routers) {
-		pr_err("failed to initialize routers map.");
+	_cfg.flows = hmap_new(hash_in6, compare_in6);
+	if (!_cfg.flows) {
+		pr_err("failed to initialize flow map.\n");
 		ret = -1;
-		goto free_graph;
-	}
-
-	_cfg.prefixes = lpm_new();
-	if (!_cfg.prefixes) {
-		pr_err("failed to initialize prefix tree.");
-		ret = -1;
-		goto free_routers_hmap;
+		goto free_srdb;
 	}
 
 	_cfg.req_buffer = sbuf_new(_cfg.req_buffer_size);
 	if (!_cfg.req_buffer) {
 		pr_err("failed to initialize request queue.\n");
 		ret = -1;
-		goto free_lpm;
+		goto free_flows;
 	}
 
 	workers = malloc(_cfg.worker_threads * sizeof(pthread_t));
@@ -913,14 +951,8 @@ int main(int argc, char **argv)
 	free(workers);
 free_req_buffer:
 	sbuf_destroy(_cfg.req_buffer);
-free_lpm:
-	lpm_destroy(_cfg.prefixes);
-free_routers_hmap:
-	hmap_destroy(_cfg.routers);
-free_graph:
-	routers_destroy(_cfg.graph->nodes);
-	links_destroy(_cfg.graph->edges);
-	graph_destroy(_cfg.graph, false);
+free_flows:
+	hmap_destroy(_cfg.flows);
 free_srdb:
 	srdb_destroy(_cfg.srdb);
 free_rules:
