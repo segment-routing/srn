@@ -78,7 +78,7 @@ struct graph *graph_new(struct graph_ops *ops)
 
 	g->last_node = 0;
 	g->last_edge = 0;
-	g->dirty = true;
+	g->dirty = false;
 
 	return g;
 
@@ -114,16 +114,18 @@ void graph_destroy(struct graph *g, bool shallow)
 
 	llist_node_foreach_safe(g->edges, iter, tmp) {
 		e = iter->data;
-		graph_remove_edge(g, e);
-		if (!shallow)
-			free(e);
+		if (shallow)
+			edge_release(e);
+		else
+			graph_remove_edge(g, e);
 	}
 
 	llist_node_foreach_safe(g->nodes, iter, tmp) {
 		n = iter->data;
-		graph_remove_node(g, n);
-		if (!shallow)
-			free(n);
+		if (shallow)
+			node_release(n);
+		else
+			graph_remove_node(g, n);
 	}
 
 	llist_node_destroy(g->edges);
@@ -142,6 +144,9 @@ struct node *graph_add_node(struct graph *g, void *data)
 
 	node->id = ++g->last_node;
 	node->data = data;
+	node->destroy = g->ops->node_destroy;
+	node->orphan = false;
+	node->refcount = 1;
 
 	llist_node_insert_tail(g->nodes, node);
 
@@ -167,10 +172,14 @@ void graph_remove_node(struct graph *g, struct node *node)
 	}
 
 	llist_node_remove(g->nodes, node_iter);
+
+	node->orphan = true;
+	node_release(node);
+
 	g->dirty = true;
 }
 
-struct node *graph_get_node(struct graph *g, unsigned int id)
+struct node *graph_get_node_noref(struct graph *g, unsigned int id)
 {
 	struct llist_node *iter;
 	struct node *node;
@@ -182,6 +191,17 @@ struct node *graph_get_node(struct graph *g, unsigned int id)
 	}
 
 	return NULL;
+}
+
+struct node *graph_get_node(struct graph *g, unsigned int id)
+{
+	struct node *node;
+
+	node = graph_get_node_noref(g, id);
+	if (node)
+		node_hold(node);
+
+	return node;
 }
 
 struct node *graph_get_node_data(struct graph *g, void *data)
@@ -216,6 +236,12 @@ struct edge *graph_add_edge(struct graph *g, struct node *local,
 	edge->remote = remote;
 	edge->metric = metric;
 	edge->data = data;
+	edge->destroy = g->ops->edge_destroy;
+	edge->orphan = false;
+	edge->refcount = 1;
+
+	node_hold(local);
+	node_hold(remote);
 
 	llist_node_insert_tail(g->edges, edge);
 
@@ -233,6 +259,10 @@ void graph_remove_edge(struct graph *g, struct edge *edge)
 		return;
 
 	llist_node_remove(g->edges, edge_iter);
+
+	edge->orphan = true;
+	edge_release(edge);
+
 	g->dirty = true;
 }
 
@@ -329,18 +359,71 @@ void graph_compute_all_neighbors(struct graph *g)
 	}
 }
 
+/* shallow copy */
 struct graph *graph_clone(struct graph *g)
 {
+	struct llist_node *iter;
 	struct graph *g_clone;
+	struct node *n;
+	struct edge *e;
 
 	g_clone = graph_new(g->ops);
 	if (!g_clone)
 		return NULL;
 
-	llist_node_append(g_clone->nodes, g->nodes);
-	llist_node_append(g_clone->edges, g->edges);
+	llist_node_foreach(g->nodes, iter) {
+		n = iter->data;
+		node_hold(n);
+		llist_node_insert_tail(g_clone->nodes, n);
+	}
+
+	llist_node_foreach(g->edges, iter) {
+		e = iter->data;
+		edge_hold(e);
+		llist_node_insert_tail(g_clone->edges, e);
+	}
 
 	return g_clone;
+}
+
+struct graph *graph_deepcopy(struct graph *g)
+{
+	struct llist_node *iter;
+	struct node *node, *n2;
+	struct edge *edge, *e2;
+	struct graph *g_copy;
+
+	g_copy = graph_new(g->ops);
+	if (!g_copy)
+		return NULL;
+
+	g_copy->last_node = g->last_node;
+	g_copy->last_edge = g->last_edge;
+
+	llist_node_foreach(g->nodes, iter) {
+		node = iter->data;
+		n2 = malloc(sizeof(*n2));
+		n2->id = node->id;
+		n2->data = g->ops->node_data_copy(node->data);
+		n2->orphan = false;
+		n2->refcount = 1;
+		llist_node_insert_tail(g_copy->nodes, n2);
+	}
+
+	llist_node_foreach(g->edges, iter) {
+		edge = iter->data;
+		e2 = malloc(sizeof(*e2));
+		e2->id = edge->id;
+		e2->metric = edge->metric;
+		e2->local = graph_get_node(g_copy, edge->local->id);
+		e2->remote = graph_get_node(g_copy, edge->remote->id);
+		e2->data = g->ops->edge_data_copy(edge->data);
+		e2->orphan = false;
+		e2->refcount = 1;
+		llist_node_insert_tail(g_copy->edges, e2);
+	}
+
+	return g_copy;
 }
 
 /* @res: list(list(node))
@@ -546,7 +629,7 @@ unsigned int graph_prune(struct graph *g,
 		edge = iter->data;
 
 		if (prune(edge, _arg)) {
-			graph_remove_edge(g, edge);
+			llist_node_remove(g->edges, iter);
 			rm++;
 		}
 	}
@@ -564,6 +647,8 @@ static int insert_node_segment(struct node *node_i, struct llist_node *res)
 
 	s->adjacency = false;
 	s->node = node_i;
+
+	node_hold(node_i);
 
 	llist_node_insert_tail(res, s);
 
@@ -590,6 +675,8 @@ static int insert_adj_segment(struct graph *g, struct node *node_i,
 	s->adjacency = true;
 	s->edge = edge;
 
+	edge_hold(edge);
+
 	llist_node_insert_tail(res, s);
 
 	return 0;
@@ -598,9 +685,16 @@ static int insert_adj_segment(struct graph *g, struct node *node_i,
 void free_segments(struct llist_node *segs)
 {
 	struct llist_node *iter;
+	struct segment *s;
 
-	llist_node_foreach(segs, iter)
-		free(iter->data);
+	llist_node_foreach(segs, iter) {
+		s = iter->data;
+		if (s->adjacency)
+			edge_release(s->edge);
+		else
+			node_release(s->node);
+		free(s);
+	}
 
 	llist_node_destroy(segs);
 }
@@ -622,6 +716,10 @@ struct llist_node *copy_segments(struct llist_node *segs)
 			goto out_free;
 
 		memcpy(s2, s, sizeof(*s2));
+		if (s->adjacency)
+			edge_hold(s->edge);
+		else
+			node_hold(s->node);
 		llist_node_insert_tail(nhead, s2);
 	}
 
