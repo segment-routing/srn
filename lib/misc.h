@@ -4,10 +4,10 @@
 #include <sys/syscall.h>
 #include <linux/random.h>
 #include <sys/time.h>
+#include <stddef.h>
 
 #define __unused __attribute__((unused))
 #define pr_err(arg, ...) { fprintf(stderr, "%s: " arg "\n", __func__, ##__VA_ARGS__); }
-#define offsetof(type, member)  __builtin_offsetof (type, member)
 
 void strip_crlf(char *line);
 void remove_trail(char *line);

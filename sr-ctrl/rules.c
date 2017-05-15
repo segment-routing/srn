@@ -3,7 +3,7 @@
 #include <unistd.h>
 #include <string.h>
 
-#include "arraylist.h"
+#include "llist.h"
 #include "rules.h"
 #include "misc.h"
 
@@ -19,16 +19,16 @@ do {										\
 static int parse_path(struct rule *rule, char *buf)
 {
 	char **vargs, **orig_vargs;
-	struct arraylist *path;
+	struct llist_node *path;
 	int vargc, i;
 
-	path = alist_new(sizeof(char *));
+	path = llist_node_alloc();
 	if (!path)
 		return -1;
 
 	vargs = strsplit(buf, &vargc, ',');
 	if (!vargs) {
-		alist_destroy(path);
+		llist_node_destroy(path);
 		return -1;
 	}
 	orig_vargs = vargs;
@@ -37,7 +37,7 @@ static int parse_path(struct rule *rule, char *buf)
 		char *s;
 
 		s = strdup(vargs[i]);
-		alist_insert(path, &s);
+		llist_node_insert_tail(path, s);
 	}
 
 	free(orig_vargs);
@@ -137,23 +137,25 @@ out_err:
 	return NULL;
 }
 
-void destroy_rules(struct arraylist *rules, struct rule *defrule)
+void destroy_rules(struct llist_node *rules, struct rule *defrule)
 {
+	struct llist_node *iter;
 	struct rule *rule;
+
 	if (rules) {
-		while (rules->elem_count) {
-			alist_get(rules, 0, &rule);
+		llist_node_foreach(rules, iter) {
+			rule = iter->data;
 			free(rule);
 		}
-		alist_destroy(rules);
+		llist_node_destroy(rules);
 	}
 	if (defrule)
 		free(defrule);
 }
 
-struct arraylist *load_rules(const char *fname, struct rule **defrule)
+struct llist_node *load_rules(const char *fname, struct rule **defrule)
 {
-	struct arraylist *rules;
+	struct llist_node *rules;
 	struct rule *rule;
 	char line[1024];
 	int ln = 0;
@@ -165,7 +167,7 @@ struct arraylist *load_rules(const char *fname, struct rule **defrule)
 	if (!fp)
 		return NULL;
 
-	rules = alist_new(sizeof(struct rule *));
+	rules = llist_node_alloc();
 
 	while (fgets(line, 1024, fp)) {
 		ln++;
@@ -190,7 +192,7 @@ struct arraylist *load_rules(const char *fname, struct rule **defrule)
 			continue;
 		}
 
-		if (alist_insert(rules, &rule) < 0) {
+		if (!llist_node_insert_tail(rules, rule)) {
 			pr_err("failed to insert rule at %s line %d.", fname, ln);
 			goto out_err;
 		}
@@ -221,14 +223,14 @@ static bool match_rule(struct rule *rule, const char *from, const char *to)
 	return false;
 }
 
-struct rule *match_rules(struct arraylist *rules, const char *from, const char *to)
+struct rule *match_rules(struct llist_node *rules, const char *from, const char *to)
 {
 	struct rule *match = NULL;
+	struct llist_node *iter;
 	struct rule *r;
-	unsigned int i;
 
-	for (i = 0; i < rules->elem_count; i++) {
-		alist_get(rules, i, &r);
+	llist_node_foreach(rules, iter) {
+		r = iter->data;
 		if (match_rule(r, from, to))
 			match = r;
 	}

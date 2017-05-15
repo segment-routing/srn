@@ -5,25 +5,37 @@
 #include <linux/in6.h>
 #include <stdint.h>
 
-#include "arraylist.h"
+#include "llist.h"
 #include "misc.h"
 
-#define HASHMAP_SIZE	5003
+#define HASHMAP_DEFAULT_SIZE	16
 
 struct hmap_entry {
 	void *key;
 	void *elem;
+	struct llist_head map_head;
+	struct llist_head key_head;
 };
 
 struct hashmap {
-	int size;
-	struct arraylist **map;
-	struct arraylist *keys;
+	size_t size;
+	size_t elems;
+	struct llist_head *map;
+	struct llist_head keys;
 	pthread_rwlock_t lock;
 
 	unsigned int (*hash)(void *key);
 	int (*compare)(void *k1, void *k2);
 };
+
+#define hmap_foreach(hmap, elem)	\
+	llist_foreach(&(hmap)->keys, elem, key_head)
+
+#define hmap_foreach_safe(hmap, elem, tmp)	\
+	llist_foreach_safe(&(hmap)->keys, elem, tmp, key_head)
+
+#define hmap_empty(hmap)	\
+	llist_empty(&(hmap)->keys)
 
 struct hashmap *hmap_new(unsigned int (*hash)(void *key),
 			 int (*compare)(void *k1, void *k2));
@@ -31,8 +43,7 @@ void hmap_destroy(struct hashmap *hm);
 int hmap_hash(struct hashmap *hm, void *key);
 int hmap_set(struct hashmap *hm, void *key, void *elem);
 void *hmap_get(struct hashmap *hm, void *key);
-int hmap_delete(struct hashmap *hm, void *key);
-bool hmap_key_exist(struct hashmap *hm, void *key);
+void hmap_delete(struct hashmap *hm, void *key);
 void hmap_flush(struct hashmap *hm);
 
 static inline void hmap_read_lock(struct hashmap *hm)

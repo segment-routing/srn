@@ -45,86 +45,92 @@ struct graph *graph_new(struct graph_ops *ops)
 {
 	struct graph *g;
 
-	g = calloc(1, sizeof(*g));
+	g = malloc(sizeof(*g));
 	if (!g)
 		return NULL;
 
 	g->ops = ops ?: &g_ops_default;
 
-	if (!g->ops->node_equals || !g->ops->node_data_equals) {
-		free(g);
-		return NULL;
-	}
+	if (!g->ops->node_equals || !g->ops->node_data_equals)
+		goto out_free_graph;
 
-	g->nodes = alist_new(sizeof(struct node *));
-	if (!g->nodes) {
-		free(g);
-		return NULL;
-	}
+	g->nodes = llist_node_alloc();
+	if (!g->nodes)
+		goto out_free_graph;
 
-	g->edges = alist_new(sizeof(struct edge *));
-	if (!g->edges) {
-		alist_destroy(g->nodes);
-		free(g);
-		return NULL;
-	}
+	g->edges = llist_node_alloc();
+	if (!g->edges)
+		goto out_free_nodes;
 
 	g->min_edges = hmap_new(hash_nodepair, compare_nodepair);
-	if (!g->min_edges) {
-		alist_destroy(g->edges);
-		alist_destroy(g->nodes);
-		free(g);
-		return NULL;
-	}
+	if (!g->min_edges)
+		goto out_free_edges;
 
 	g->neighs = hmap_new(hash_node, compare_node);
-	if (!g->neighs) {
-		alist_destroy(g->edges);
-		alist_destroy(g->nodes);
-		hmap_destroy(g->min_edges);
-		free(g);
-		return NULL;
-	}
+	if (!g->neighs)
+		goto out_free_minedges;
+
+	g->dcache = hmap_new(hash_node, compare_node);
+	if (!g->dcache)
+		goto out_free_neighs;
 
 	pthread_rwlock_init(&g->lock, NULL);
 
-	g->dirty = true;
+	g->last_node = 0;
+	g->last_edge = 0;
+	g->dirty = false;
+	g->cloned = false;
 
 	return g;
+
+out_free_neighs:
+	hmap_destroy(g->neighs);
+out_free_minedges:
+	hmap_destroy(g->min_edges);
+out_free_edges:
+	llist_node_destroy(g->edges);
+out_free_nodes:
+	llist_node_destroy(g->nodes);
+out_free_graph:
+	free(g);
+	return NULL;
 }
 
 void graph_destroy(struct graph *g, bool shallow)
 {
-	unsigned int i;
+	struct llist_node *nhead, *tmp, *iter;
+	struct hmap_entry *he;
 	struct edge *e;
 	struct node *n;
 
 	pthread_rwlock_destroy(&g->lock);
 
-	for (i = 0; i < g->neighs->keys->elem_count; i++) {
-		alist_get(g->neighs->keys, i, &n);
-		alist_destroy(hmap_get(g->neighs, n));
+	hmap_foreach(g->neighs, he) {
+		nhead = he->elem;
+		llist_node_destroy(nhead);
 	}
 
 	hmap_destroy(g->min_edges);
 	hmap_destroy(g->neighs);
 
-	while (g->edges->elem_count) {
-		alist_get(g->edges, 0, &e);
-		graph_remove_edge(g, e);
-		if (!shallow)
-			free(e);
+	llist_node_foreach_safe(g->edges, iter, tmp) {
+		e = iter->data;
+		if (shallow)
+			edge_release(e);
+		else
+			graph_remove_edge(g, e);
 	}
 
-	while (g->nodes->elem_count) {
-		alist_get(g->nodes, 0, &n);
-		graph_remove_node(g, n);
-		if (!shallow)
-			free(n);
+	llist_node_foreach_safe(g->nodes, iter, tmp) {
+		n = iter->data;
+		if (shallow)
+			node_release(n);
+		else
+			graph_remove_node(g, n);
 	}
 
-	alist_destroy(g->edges);
-	alist_destroy(g->nodes);
+	llist_node_destroy(g->edges);
+	llist_node_destroy(g->nodes);
 
 	free(g);
 }
@@ -139,73 +145,48 @@ struct node *graph_add_node(struct graph *g, void *data)
 
 	node->id = ++g->last_node;
 	node->data = data;
+	node->destroy = g->ops->node_destroy;
+	node->orphan = false;
+	node->refcount = 1;
 
-	alist_insert(g->nodes, &node);
+	llist_node_insert_tail(g->nodes, node);
 
 	g->dirty = true;
 
 	return node;
 }
 
-static int get_node_index(struct arraylist *nodes, unsigned int id)
-{
-	struct node *node;
-	unsigned int i;
-
-	for (i = 0; i < nodes->elem_count; i++) {
-		alist_get(nodes, i, &node);
-		if (node->id == id)
-			return i;
-	}
-
-	return -1;
-}
-
-static int get_edge_index(struct arraylist *edges, unsigned int id)
-{
-	struct edge *edge;
-	unsigned int i;
-
-	for (i = 0; i < edges->elem_count; i++) {
-		alist_get(edges, i, &edge);
-		if (edge->id == id)
-			return i;
-	}
-
-	return -1;
-}
-
 void graph_remove_node(struct graph *g, struct node *node)
 {
-	unsigned int j;
-	int i;
+	struct llist_node *node_iter, *iter, *tmp;
 
-	i = get_node_index(g->nodes, node->id);
-	if (i < 0)
+	node_iter = llist_node_get_iter(g->nodes, node);
+	if (!node_iter)
 		return;
 
-	for (j = 0; j < g->edges->elem_count; j++) {
-		struct edge *edge;
+	llist_node_foreach_safe(g->edges, iter, tmp) {
+		struct edge *e = iter->data;
 
-		alist_get(g->edges, j, &edge);
-		if (g->ops->node_equals(edge->local, node) ||
-		    g->ops->node_equals(edge->remote, node)) {
-			graph_remove_edge(g, edge);
-			j--;
-		}
+		if (g->ops->node_equals(e->local, node) ||
+		    g->ops->node_equals(e->remote, node))
+			graph_remove_edge(g, e);
 	}
 
-	alist_remove(g->nodes, i);
+	llist_node_remove(g->nodes, node_iter);
+
+	node->orphan = true;
+	node_release(node);
+
 	g->dirty = true;
 }
 
-struct node *graph_get_node(struct graph *g, unsigned int id)
+struct node *graph_get_node_noref(struct graph *g, unsigned int id)
 {
+	struct llist_node *iter;
 	struct node *node;
-	unsigned int i;
 
-	for (i = 0; i < g->nodes->elem_count; i++) {
-		alist_get(g->nodes, i, &node);
+	llist_node_foreach(g->nodes, iter) {
+		node = iter->data;
 		if (node->id == id)
 			return node;
 	}
@@ -213,13 +194,24 @@ struct node *graph_get_node(struct graph *g, unsigned int id)
 	return NULL;
 }
 
-struct node *graph_get_node_data(struct graph *g, void *data)
+struct node *graph_get_node(struct graph *g, unsigned int id)
 {
 	struct node *node;
-	unsigned int i;
 
-	for (i = 0; i < g->nodes->elem_count; i++) {
-		alist_get(g->nodes, i, &node);
+	node = graph_get_node_noref(g, id);
+	if (node)
+		node_hold(node);
+
+	return node;
+}
+
+struct node *graph_get_node_data(struct graph *g, void *data)
+{
+	struct llist_node *iter;
+	struct node *node;
+
+	llist_node_foreach(g->nodes, iter) {
+		node = iter->data;
 		if (g->ops->node_data_equals(node->data, data))
 			return node;
 	}
@@ -245,8 +237,14 @@ struct edge *graph_add_edge(struct graph *g, struct node *local,
 	edge->remote = remote;
 	edge->metric = metric;
 	edge->data = data;
+	edge->destroy = g->ops->edge_destroy;
+	edge->orphan = false;
+	edge->refcount = 1;
 
-	alist_insert(g->edges, &edge);
+	node_hold(local);
+	node_hold(remote);
+
+	llist_node_insert_tail(g->edges, edge);
 
 	g->dirty = true;
 
@@ -255,13 +253,17 @@ struct edge *graph_add_edge(struct graph *g, struct node *local,
 
 void graph_remove_edge(struct graph *g, struct edge *edge)
 {
-	int i;
+	struct llist_node *edge_iter;
 
-	i = get_edge_index(g->edges, edge->id);
-	if (i < 0)
+	edge_iter = llist_node_get_iter(g->edges, edge);
+	if (!edge_iter)
 		return;
 
-	alist_remove(g->edges, i);
+	llist_node_remove(g->edges, edge_iter);
+
+	edge->orphan = true;
+	edge_release(edge);
+
 	g->dirty = true;
 }
 
@@ -270,10 +272,10 @@ static struct edge *graph_get_minimal_edge(struct graph *g, struct node *local,
 {
 	struct edge *edge, *res = NULL;
 	uint32_t metric = UINT32_MAX;
-	unsigned int i;
+	struct llist_node *iter;
 
-	for (i = 0; i < g->edges->elem_count; i++) {
-		alist_get(g->edges, i, &edge);
+	llist_node_foreach(g->edges, iter) {
+		edge = iter->data;
 
 		if (edge->local->id != local->id ||
 		    edge->remote->id != remote->id)
@@ -290,47 +292,49 @@ static struct edge *graph_get_minimal_edge(struct graph *g, struct node *local,
 
 void graph_compute_minimal_edges(struct graph *g)
 {
+	struct llist_node *iter1, *iter2;
 	struct node *node1, *node2;
 	struct edge *edge;
-	unsigned int i, j;
 
 	hmap_flush(g->min_edges);
 
-	for (i = 0; i < g->nodes->elem_count; i++) {
-		alist_get(g->nodes, i, &node1);
-		for (j = 0; j < g->nodes->elem_count; j++) {
-			if (i == j)
+	llist_node_foreach(g->nodes, iter1) {
+		node1 = iter1->data;
+
+		llist_node_foreach(g->nodes, iter2) {
+			node2 = iter2->data;
+			if (node1 == node2)
 				continue;
-			alist_get(g->nodes, j, &node2);
+
 			edge = graph_get_minimal_edge(g, node1, node2);
 			if (!edge)
 				continue;
+
 			hmap_set(g->min_edges, (struct nodepair *)edge, edge);
 		}
 	}
 }
 
-static struct arraylist *graph_compute_neighbors(struct graph *g,
-						 struct node *node)
+static struct llist_node *graph_compute_neighbors(struct graph *g,
+						  struct node *node)
 {
-	struct arraylist *neighs;
+	struct llist_node *neighs, *iter;
 	struct edge *edge;
-	unsigned int i;
 
-	neighs = alist_new(sizeof(struct node *));
+	neighs = llist_node_alloc();
 	if (!neighs)
 		return NULL;
 
-	for (i = 0; i < g->edges->elem_count; i++) {
-		alist_get(g->edges, i, &edge);
+	llist_node_foreach(g->edges, iter) {
+		edge = iter->data;
 
 		if (edge->local->id != node->id)
 			continue;
 
-		if (alist_exist(neighs, &edge->remote))
+		if (llist_node_exist(neighs, edge->remote))
 			continue;
 
-		alist_insert(neighs, &edge->remote);
+		llist_node_insert_tail(neighs, edge->remote);
 	}
 
 	return neighs;
@@ -338,181 +342,219 @@ static struct arraylist *graph_compute_neighbors(struct graph *g,
 
 void graph_compute_all_neighbors(struct graph *g)
 {
-	struct arraylist *neighs;
+	struct llist_node *neighs, *iter;
+	struct hmap_entry *he;
 	struct node *node;
-	unsigned int i;
 
-	for (i = 0; i < g->neighs->keys->elem_count; i++) {
-		alist_get(g->neighs->keys, i, &node);
-		alist_destroy(hmap_get(g->neighs, node));
+	hmap_foreach(g->neighs, he) {
+		neighs = he->elem;
+		llist_node_destroy(neighs);
 	}
 
 	hmap_flush(g->neighs);
 
-	for (i = 0; i < g->nodes->elem_count; i++) {
-		alist_get(g->nodes, i, &node);
-
+	llist_node_foreach(g->nodes, iter) {
+		node = iter->data;
 		neighs = graph_compute_neighbors(g, node);
-		assert(neighs);
-		if (!neighs)
-			return;
-
 		hmap_set(g->neighs, node, neighs);
 	}
 }
 
+/* shallow copy */
 struct graph *graph_clone(struct graph *g)
 {
+	struct llist_node *iter;
 	struct graph *g_clone;
+	struct node *n;
+	struct edge *e;
 
 	g_clone = graph_new(g->ops);
 	if (!g_clone)
 		return NULL;
 
-	alist_append(g_clone->nodes, g->nodes);
-	alist_append(g_clone->edges, g->edges);
+	llist_node_foreach(g->nodes, iter) {
+		n = iter->data;
+		node_hold(n);
+		llist_node_insert_tail(g_clone->nodes, n);
+	}
+
+	llist_node_foreach(g->edges, iter) {
+		e = iter->data;
+		edge_hold(e);
+		llist_node_insert_tail(g_clone->edges, e);
+	}
+
+	g_clone->cloned = true;
 
 	return g_clone;
 }
 
-/* @res: arraylist(arraylist(node))
- * @tmp: arraylist(node)
- */
-static void __compute_paths(struct arraylist *res, struct arraylist *tmp,
-			    struct hashmap *prev, struct node *u)
+struct graph *graph_deepcopy(struct graph *g)
 {
-	struct arraylist *w;
-	struct node *p;
-	unsigned int i;
+	struct llist_node *iter;
+	struct node *node, *n2;
+	struct edge *edge, *e2;
+	struct graph *g_copy;
 
-	w = hmap_get(prev, u);
-	if (!w->elem_count) {
-		alist_insert(res, &tmp);
-		return;
+	g_copy = graph_new(g->ops);
+	if (!g_copy)
+		return NULL;
+
+	g_copy->last_node = g->last_node;
+	g_copy->last_edge = g->last_edge;
+
+	llist_node_foreach(g->nodes, iter) {
+		node = iter->data;
+		n2 = malloc(sizeof(*n2));
+		n2->id = node->id;
+		n2->data = g->ops->node_data_copy(node->data);
+		n2->orphan = false;
+		n2->refcount = 1;
+		llist_node_insert_tail(g_copy->nodes, n2);
 	}
 
-	alist_insert(tmp, &u);
-
-	if (w->elem_count == 1) {
-		alist_get(w, 0, &p);
-		__compute_paths(res, tmp, prev, p);
-		return;
+	llist_node_foreach(g->edges, iter) {
+		edge = iter->data;
+		e2 = malloc(sizeof(*e2));
+		e2->id = edge->id;
+		e2->metric = edge->metric;
+		e2->local = graph_get_node(g_copy, edge->local->id);
+		e2->remote = graph_get_node(g_copy, edge->remote->id);
+		e2->data = g->ops->edge_data_copy(edge->data);
+		e2->orphan = false;
+		e2->refcount = 1;
+		llist_node_insert_tail(g_copy->edges, e2);
 	}
 
-	for (i = 0; i < w->elem_count; i++) {
-		alist_get(w, i, &p);
-
-		__compute_paths(res, alist_copy(tmp), prev, p);
-	}
-
-	alist_destroy(tmp);
+	return g_copy;
 }
 
-static void compute_paths(struct arraylist *res, struct hashmap *prev,
+/* @res: list(list(node))
+ * @tmp: list(node)
+ */
+static void __compute_paths(struct llist_node *res, struct llist_node *tmp,
+			    struct hashmap *prev, struct node *u)
+{
+	struct llist_node *w, *iter;
+	struct node *p;
+
+	w = hmap_get(prev, u);
+	if (llist_node_empty(w)) {
+		llist_node_insert_tail(res, tmp);
+		return;
+	}
+
+	llist_node_insert_tail(tmp, u);
+
+	llist_node_foreach(w, iter) {
+		p = iter->data;
+		__compute_paths(res, llist_node_copy(tmp), prev, p);
+	}
+
+	llist_node_destroy(tmp);
+}
+static void compute_paths(struct llist_node *res, struct hashmap *prev,
 			  struct node *u)
 {
-	struct arraylist *tmp;
+	struct llist_node *tmp;
 
-	tmp = alist_new(sizeof(struct node *));
+	tmp = llist_node_alloc();
 	__compute_paths(res, tmp, prev, u);
 }
 
-static void destroy_alist2(struct arraylist *al)
+static void destroy_pathres(struct llist_node *p)
 {
-	struct arraylist *entry;
-	unsigned int i;
+	struct llist_node *pp, *iter;
 
-	if (!al)
+	if (!p)
 		return;
 
-	for (i = 0; i < al->elem_count; i++) {
-		alist_get(al, i, &entry);
-		alist_destroy(entry);
+	llist_node_foreach(p, iter) {
+		pp = iter->data;
+		llist_node_destroy(pp);
 	}
 
-	alist_destroy(al);
+	llist_node_destroy(p);
 }
 
-void graph_dijkstra(struct graph *g, struct node *src, struct dres *res,
+void graph_dijkstra(const struct graph *g, struct node *src, struct dres *res,
 		    struct d_ops *ops, void *data)
 {
 	struct hashmap *dist, *prev, *path;
-	struct arraylist *Q;
+	struct llist_node *Q, *iter;
 	struct node *node;
-	unsigned int i;
 	void *state;
 
 	/* dist: node -> uint32_t
-	 * prev: node -> arraylist(node)
-	 * path: node -> arraylist(arraylist(node))
+	 * prev: node -> list(node)
+	 * path: node -> list(list(node))
 	 */
-
-	if (g->dirty)
-		graph_finalize(g);
 
 	dist = hmap_new(hash_node, compare_node);
 	prev = hmap_new(hash_node, compare_node);
 	path = hmap_new(hash_node, compare_node);
 
-	Q = alist_new(sizeof(struct node *));
+	Q = llist_node_alloc();
 
-	for (i = 0; i < g->nodes->elem_count; i++) {
-		alist_get(g->nodes, i, &node);
+	llist_node_foreach(g->nodes, iter) {
+		node = iter->data;
 
 		if (node->id == src->id)
 			hmap_set(dist, node, (void *)(uintptr_t)0);
 		else
 			hmap_set(dist, node, (void *)(uintptr_t)UINT32_MAX);
 
-		hmap_set(prev, node, alist_new(sizeof(struct node *)));
-		hmap_set(path, node, alist_new(sizeof(struct arraylist *)));
+		hmap_set(prev, node, llist_node_alloc());
+		hmap_set(path, node, llist_node_alloc());
 
-		alist_insert(Q, &node);
+		llist_node_insert_tail(Q, node);
 	}
 
 	if (ops)
 		ops->init(g, src, &state, data);
 
-	while (Q->elem_count > 0) {
-		struct arraylist *S = NULL;
-		struct arraylist *neighs;
+	while (!llist_node_empty(Q)) {
+		struct llist_node *S, *u_iter;
+		struct llist_node *neighs;
 		uint32_t cost, tmpcost;
 		struct node *u, *v;
-		int u_idx = -1;
 
 		tmpcost = UINT32_MAX;
+		u_iter = NULL;
+		S = NULL;
 		u = NULL;
 
-		for (i = 0; i < Q->elem_count; i++) {
-			alist_get(Q, i, &v);
+		llist_node_foreach(Q, iter) {
+			v = iter->data;
 			cost = (uintptr_t)hmap_get(dist, v);
 			if (cost < tmpcost) {
 				tmpcost = cost;
 				u = v;
-				u_idx = i;
+				u_iter = iter;
 			}
 		}
 
-		if (u_idx == -1)
+		if (!u)
 			break;
 
-		S = alist_new(sizeof(struct arraylist *));
+		S = llist_node_alloc();
 
-		destroy_alist2(hmap_get(path, u));
+		destroy_pathres(hmap_get(path, u));
 		compute_paths(S, prev, u);
 		hmap_set(path, u, S);
 
-		alist_remove(Q, u_idx);
+		llist_node_remove(Q, u_iter);
 
 		neighs = hmap_get(g->neighs, u);
-		for (i = 0; i < neighs->elem_count; i++) {
-			struct arraylist *prev_array;
+
+		llist_node_foreach(neighs, iter) {
+			struct llist_node *prev_list;
 			uint32_t alt, u_dist, v_dist;
 			struct edge *min_edge;
 			struct nodepair pair;
 
-			alist_get(neighs, i, &v);
-			if (!alist_exist(Q, &v))
+			v = iter->data;
+			if (!llist_node_exist(Q, v))
 				continue;
 
 			pair.local = u;
@@ -532,16 +574,16 @@ void graph_dijkstra(struct graph *g, struct node *src, struct dres *res,
 				alt = u_dist + min_edge->metric;
 
 			if (alt < v_dist) {
-				prev_array = hmap_get(prev, v);
-				alist_flush(prev_array);
-				alist_insert(prev_array, &u);
+				prev_list = hmap_get(prev, v);
+				llist_node_flush(prev_list);
+				llist_node_insert_tail(prev_list, u);
 				hmap_set(dist, v, (void *)(uintptr_t)alt);
 
 				if (ops)
 					ops->update(min_edge, state, data);
 			} else if (alt == v_dist) {
-				prev_array = hmap_get(prev, v);
-				alist_insert(prev_array, &u);
+				prev_list = hmap_get(prev, v);
+				llist_node_insert_tail(prev_list, u);
 			}
 		}
 	}
@@ -549,7 +591,7 @@ void graph_dijkstra(struct graph *g, struct node *src, struct dres *res,
 	if (ops)
 		ops->destroy(state);
 
-	alist_destroy(Q);
+	llist_node_destroy(Q);
 
 	res->dist = dist;
 	res->path = path;
@@ -558,20 +600,17 @@ void graph_dijkstra(struct graph *g, struct node *src, struct dres *res,
 
 void graph_dijkstra_free(struct dres *res)
 {
-	unsigned int i;
+	struct llist_node *nhead;
+	struct hmap_entry *he;
 
-	for (i = 0; i < res->path->keys->elem_count; i++) {
-		struct node *n;
-
-		alist_get(res->path->keys, i, &n);
-		destroy_alist2(hmap_get(res->path, n));
+	hmap_foreach(res->path, he) {
+		nhead = he->elem;
+		destroy_pathres(nhead);
 	}
 
-	for (i = 0; i < res->prev->keys->elem_count; i++) {
-		void *key;
-
-		alist_get(res->prev->keys, i, &key);
-		alist_destroy(hmap_get(res->prev, key));
+	hmap_foreach(res->prev, he) {
+		nhead = he->elem;
+		llist_node_destroy(nhead);
 	}
 
 	hmap_destroy(res->prev);
@@ -579,41 +618,56 @@ void graph_dijkstra_free(struct dres *res)
 	hmap_destroy(res->dist);
 }
 
-int graph_prune(struct graph *g, bool (*prune)(struct edge *e, void *arg),
-		void *_arg)
+unsigned int graph_prune(struct graph *g,
+			 bool (*prune)(struct edge *e, void *arg), void *_arg)
 {
+	struct llist_node *iter, *tmp;
+	unsigned int rm = 0;
 	struct edge *edge;
-	unsigned int i;
-	int rm = 0;
 
-	for (i = 0; i < g->edges->elem_count; i++) {
-		alist_get(g->edges, i, &edge);
+	if (llist_node_empty(g->edges))
+		return 0;
+
+	llist_node_foreach_safe(g->edges, iter, tmp) {
+		edge = iter->data;
 
 		if (prune(edge, _arg)) {
-			graph_remove_edge(g, edge);
+			llist_node_remove(g->edges, iter);
 			rm++;
-			i--;
 		}
 	}
 
 	return rm;
 }
 
-static void insert_node_segment(struct node *node_i, struct arraylist *res)
+static int insert_node_segment(struct node *node_i, struct llist_node *res)
 {
-	struct segment s;
+	struct segment *s;
 
-	s.adjacency = false;
-	s.node = node_i;
-	alist_insert(res, &s);
+	s = malloc(sizeof(*s));
+	if (!s)
+		return -1;
+
+	s->adjacency = false;
+	s->node = node_i;
+
+	node_hold(node_i);
+
+	llist_node_insert_tail(res, s);
+
+	return 0;
 }
 
 static int insert_adj_segment(struct graph *g, struct node *node_i,
-			      struct node *node_ii, struct arraylist *res)
+			      struct node *node_ii, struct llist_node *res)
 {
 	struct nodepair pair;
 	struct edge *edge;
-	struct segment s;
+	struct segment *s;
+
+	s = malloc(sizeof(*s));
+	if (!s)
+		return -1;
 
 	pair.local = node_i;
 	pair.remote = node_ii;
@@ -621,127 +675,246 @@ static int insert_adj_segment(struct graph *g, struct node *node_i,
 	if (!edge)
 		return -1;
 
-	s.adjacency = true;
-	s.edge = edge;
-	alist_insert(res, &s);
+	s->adjacency = true;
+	s->edge = edge;
+
+	edge_hold(edge);
+
+	llist_node_insert_tail(res, s);
 
 	return 0;
 }
 
-int graph_minseg(struct graph *g, struct arraylist *path,
-		 struct arraylist *res)
+void free_segments(struct llist_node *segs)
 {
+	struct llist_node *iter;
+	struct segment *s;
+
+	llist_node_foreach(segs, iter) {
+		s = iter->data;
+		if (s->adjacency)
+			edge_release(s->edge);
+		else
+			node_release(s->node);
+		free(s);
+	}
+
+	llist_node_destroy(segs);
+}
+
+struct llist_node *copy_segments(struct llist_node *segs)
+{
+	struct llist_node *nhead, *iter;
+	struct segment *s, *s2;
+
+	nhead = llist_node_alloc();
+	if (!nhead)
+		return NULL;
+
+	llist_node_foreach(segs, iter) {
+		s = iter->data;
+
+		s2 = malloc(sizeof(*s2));
+		if (!s2)
+			goto out_free;
+
+		memcpy(s2, s, sizeof(*s2));
+		if (s->adjacency)
+			edge_hold(s->edge);
+		else
+			node_hold(s->node);
+		llist_node_insert_tail(nhead, s2);
+	}
+
+	return nhead;
+
+out_free:
+	free_segments(nhead);
+	return NULL;
+}
+
+int graph_build_cache_one(struct graph *g, struct node *node)
+{
+	struct dres *res, *old_res;
+
+	res = malloc(sizeof(*res));
+	if (!res)
+		return -1;
+
+	/* cache only SP-DAGs built without custom sp-ops,
+	 * because it can unpredictably affect the result
+	 * and yield wrong cache entries.
+	 */
+	graph_dijkstra(g, node, res, NULL, NULL);
+
+	old_res = hmap_get(g->dcache, node);
+	if (old_res)
+		graph_dijkstra_free(old_res);
+
+	hmap_set(g->dcache, node, res);
+
+	return 0;
+}
+
+int graph_build_cache(struct graph *g)
+{
+	struct llist_node *iter;
+	struct node *node;
+
+	llist_node_foreach(g->nodes, iter) {
+		node = iter->data;
+		if (graph_build_cache_one(g, node) < 0)
+			return -1;
+	}
+
+	return 0;
+}
+
+void graph_flush_cache(struct graph *g)
+{
+	struct hmap_entry *he;
+
+	hmap_foreach(g->dcache, he)
+		graph_dijkstra_free(he->elem);
+
+	hmap_flush(g->dcache);
+}
+
+int graph_minseg(struct graph *g, struct llist_node *path,
+		 struct llist_node *res)
+{
+	struct dres *cache_res_r, *cache_res_i;
 	struct node *node_r, *node_i, *node_ii;
 	struct dres res_r, res_i;
-	unsigned int i, r;
+	struct llist_node *iter;
 
-	if (!path->elem_count)
+	if (llist_node_empty(path))
 		return 0;
 
-	r = 0;
+	node_r = NULL;
 
-	/* path forward */
-	for (i = 0; i < path->elem_count - 1; i++) {
-		struct arraylist *prev;
+	llist_node_foreach(path, iter) {
+		struct llist_node *prev;
 
-		alist_get(path, i, &node_i);
-		alist_get(path, i + 1, &node_ii);
-		alist_get(path, r, &node_r);
+		/* iterate until N-1 */
+		if (iter == llist_node_last_entry(path))
+			break;
 
-		graph_dijkstra(g, node_i, &res_i, NULL, NULL);
-		graph_dijkstra(g, node_r, &res_r, NULL, NULL);
+		node_i = iter->data;
+		node_ii = llist_node_next_entry(iter)->data;
+		if (!node_r)
+			node_r = node_i;
+
+		cache_res_i = hmap_get(g->dcache, node_i);
+		cache_res_r = hmap_get(g->dcache, node_r);
+
+		if (cache_res_i)
+			res_i = *cache_res_i;
+		else
+			graph_dijkstra(g, node_i, &res_i, NULL, NULL);
+
+		if (cache_res_r)
+			res_r = *cache_res_r;
+		else
+			graph_dijkstra(g, node_r, &res_r, NULL, NULL);
 
 		prev = hmap_get(res_r.prev, node_ii);
-		if (!alist_exist(prev, &node_i)) { /* MinSegECMP:4 */
+		if (!llist_node_exist(prev, node_i)) { /* MinSegECMP:4 */
 			prev = hmap_get(res_i.prev, node_ii);
-			if (prev->elem_count == 1) { /* MinSegECMP:5 */
+			if (llist_node_size(prev) == 1) { /* MinSegECMP:5 */
 				insert_node_segment(node_i, res);
-				r = i;
+				node_r = node_i;
 			} else {
 				insert_node_segment(node_i, res);
 				if (insert_adj_segment(g, node_i, node_ii,
 						       res) < 0)
 					goto out_error;
-				r = i + 1;
+				node_r = node_ii;
 			}
 		} else {
 			prev = hmap_get(res_r.prev, node_ii);
-			if (prev->elem_count <= 1) /* !MinSegECMP:11 */
+			if (llist_node_size(prev) <= 1) /* !MinSegECMP:11 */
 				goto next_free;
 
 			prev = hmap_get(res_i.prev, node_ii);
-			if (prev->elem_count > 1) { /* MinSegECMP:12 */
+			if (llist_node_size(prev) > 1) { /* MinSegECMP:12 */
 				insert_node_segment(node_i, res);
 				if (insert_adj_segment(g, node_i, node_ii,
 						       res) < 0)
 					goto out_error;
-				r = i + 1;
+				node_r = node_ii;
 			} else {
 				insert_node_segment(node_i, res);
-				r = i;
+				node_r = node_i;
 			}
 		}
 
 next_free:
-		graph_dijkstra_free(&res_i);
-		graph_dijkstra_free(&res_r);
+		if (!cache_res_i)
+			graph_dijkstra_free(&res_i);
+		if (!cache_res_r)
+			graph_dijkstra_free(&res_r);
 	}
 
 	return 0;
 
 out_error:
-	graph_dijkstra_free(&res_i);
-	graph_dijkstra_free(&res_r);
+	if (!cache_res_i)
+		graph_dijkstra_free(&res_i);
+	if (!cache_res_r)
+		graph_dijkstra_free(&res_r);
 
 	return -1;
 }
 
-struct arraylist *build_segpath(struct graph *g, struct pathspec *pspec)
+struct llist_node *build_segpath(struct graph *g, struct pathspec *pspec)
 {
-	struct arraylist *res, *path;
+	struct llist_node *res, *path, *iter;
 	struct node *cur_node;
 	struct graph *gc;
 	struct dres gres;
-	unsigned int i;
 
-	res = alist_new(sizeof(struct segment));
+	res = llist_node_alloc();
 	if (!res)
 		return NULL;
 
-	path = alist_new(sizeof(struct node *));
+	path = llist_node_alloc();
 	if (!path)
 		return NULL;
 
-	gc = graph_clone(g);
+	gc = g;
 
-	if (pspec->prune)
+	if (pspec->prune) {
+		gc = graph_clone(g);
 		pspec->prune(gc, pspec);
+		graph_finalize(gc);
+	}
 
 	cur_node = pspec->src;
 
 	if (pspec->via)
-		alist_append(path, pspec->via);
+		llist_node_append(path, pspec->via);
 
-	alist_insert(path, &pspec->dst);
+	llist_node_insert_tail(path, pspec->dst);
 
-	for (i = 0; i < path->elem_count; i++) {
-		struct arraylist *tmp_paths, *tmp_path, *rev_path;
+	llist_node_foreach(path, iter) {
+		struct llist_node *tmp_paths, *tmp_path, *rev_path;
 		struct node *tmp_node;
-		struct segment s;
+		struct segment *s;
 
-		alist_get(path, i, &tmp_node);
+		tmp_node = iter->data;
 
 		graph_dijkstra(gc, cur_node, &gres, pspec->d_ops, pspec->data);
 		tmp_paths = hmap_get(gres.path, tmp_node);
-		if (!tmp_paths->elem_count)
+		if (llist_node_empty(tmp_paths))
 			goto out_error;
 
 		/* XXX modify here to support backup paths or modify
 		 * path selection (e.g., random).
 		 */
-		alist_get(tmp_paths, 0, &tmp_path);
-		rev_path = alist_copy_reverse(tmp_path);
-		alist_insert_at(rev_path, &cur_node, 0);
+		tmp_path = llist_node_first_entry(tmp_paths)->data;
+		rev_path = llist_node_copy_reverse(tmp_path);
+		llist_node_insert_head(rev_path, cur_node);
 
 		if (graph_minseg(g, rev_path, res) < 0)
 			goto out_error;
@@ -749,27 +922,26 @@ struct arraylist *build_segpath(struct graph *g, struct pathspec *pspec)
 		/* append waypoint segment only if there is no adjacency
 		 * segment for the last hop (i.e. breaking link bundle)
 		 */
-		alist_get(res, res->elem_count - 1, &s);
-		if (!(s.adjacency && s.edge->remote == tmp_node)) {
-			s.adjacency = false;
-			s.node = tmp_node;
-			alist_insert(res, &s);
-		}
+		s = llist_node_last_entry(res)->data;
+		if (!s || !(s->adjacency && s->edge->remote == tmp_node))
+			insert_node_segment(tmp_node, res);
 
-		alist_destroy(rev_path);
+		llist_node_destroy(rev_path);
 		cur_node = tmp_node;
 
 		graph_dijkstra_free(&gres);
 	}
 
-	graph_destroy(gc, true);
-	alist_destroy(path);
+	if (gc->cloned)
+		graph_destroy(gc, true);
+	llist_node_destroy(path);
 	return res;
 
 out_error:
 	graph_dijkstra_free(&gres);
-	graph_destroy(gc, true);
-	alist_destroy(path);
-	alist_destroy(res);
+	if (gc->cloned)
+		graph_destroy(gc, true);
+	llist_node_destroy(path);
+	free_segments(res);
 	return NULL;
 }

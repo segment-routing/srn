@@ -34,19 +34,47 @@ struct router {
 	char name[SLEN + 1];
 	struct in6_addr addr;
 	struct prefix pbsid;
-	struct arraylist *prefixes;
-	struct hashmap *flows;
+	struct llist_node *prefixes;
 	struct node *node;
+	atomic_t refcount __refcount_aligned;
 };
+
+static inline void rt_hold(struct router *rt)
+{
+	atomic_inc(&rt->refcount);
+}
+
+static inline void rt_release(struct router *rt)
+{
+	struct llist_node *iter;
+
+	if (atomic_dec(&rt->refcount) == 0) {
+		llist_node_foreach(rt->prefixes, iter)
+			free(iter->data);
+		llist_node_destroy(rt->prefixes);
+		free(rt);
+	}
+}
 
 struct link {
 	struct in6_addr local;
 	struct in6_addr remote;
-	unsigned int refcount;
 	uint32_t bw;
 	uint32_t ava_bw;
 	uint32_t delay;
+	atomic_t refcount __refcount_aligned;
 };
+
+static inline void link_hold(struct link *link)
+{
+	atomic_inc(&link->refcount);
+}
+
+static inline void link_release(struct link *link)
+{
+	if (atomic_dec(&link->refcount) == 0)
+		free(link);
+}
 
 struct src_prefix {
 	char router[SLEN + 1];
@@ -54,7 +82,7 @@ struct src_prefix {
 	char prefix_len;
 	int priority;
 	struct in6_addr bsid;
-	struct arraylist *segs;
+	struct llist_node *segs;
 };
 
 struct flow {
@@ -71,7 +99,6 @@ struct flow {
 	uint32_t idle;
 	time_t timestamp;
 	enum flow_status status;
-	unsigned int refcount;
 };
 
 extern struct d_ops delay_below_ops;
