@@ -25,5 +25,7 @@ struct sbuf *sbuf_new(unsigned long bufsize);
 void sbuf_destroy(struct sbuf *sbuf);
 void sbuf_push(struct sbuf *sbuf, void *elem);
 void *sbuf_pop(struct sbuf *sbuf);
+int sbuf_trypop(struct sbuf *buf, void **elem);
+int sbuf_trypush(struct sbuf *sbuf, void *elem);
 
 #endif

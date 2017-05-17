@@ -5,6 +5,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
+#include <poll.h>
 
 #include <jansson.h>
 
@@ -17,6 +18,8 @@
 #define BOOL_TO_STR(boolean) boolean ? "true" : "false"
 
 #define MAX_PENDING_MSG 500
+
+void *transaction_worker(void *args);
 
 static int parse_ovsdb_update_tables(json_t *table_updates, int initial,
 				     int (*callback)(const char *,
@@ -196,250 +199,90 @@ out:
 	return ret;
 }
 
-struct trans_read_args {
-	int sfd;
-	struct queue_thread *jsons_received;
-};
-
-struct json_node {
-	struct llnode node;
-	struct json_t *json;
-};
-
-struct srdb_transact_reply {
-	struct llnode node;
-	int error;
-	int count;
-	char uuid[SLEN + 1];
-};
-
-static void *ovsdb_transaction_read(void *arg)
+static struct transaction *ovsdb_update(struct srdb *srdb, const char *table,
+					const char *uuid, json_t *fields)
 {
-	struct trans_read_args *args = arg;
-	int sfd = args->sfd;
-	struct queue_thread *jsons_received = args->jsons_received;
-	char buf[JSON_BUFLEN + 1];
-	int stop = 0, ret = 0;
-	int length = 0;
-	int position = 0;
-	json_t *json = NULL;
-	json_error_t json_error;
+	char *json_buf, *str_fields;
+	struct transaction *tr;
+	json_t *json_update;
 
-	while (!stop && (ret = recv(sfd, buf + length, JSON_BUFLEN - length, 0)) > 0) { // TODO Assumes jsons of less than JSON_BUFLEN bytes
+	json_buf = malloc(JSON_BUFLEN);
+	if (!json_buf)
+		return NULL;
 
-		length += ret;
-		position = 0;
-		while(position < length - 1 && (json = json_loadb(buf + position, length - position, JSON_DISABLE_EOF_CHECK, &json_error))) {
-
-			position += json_error.position;
-			if (json) {
-				struct json_node *node = calloc(1, sizeof(*node));
-				node->json = json;
-				stop = mqueue_append(jsons_received, (struct llnode *) node);
-			}
-		}
-		if (!json) /* The full json is not yet in the buffer => wait for it */
-			memcpy(buf, buf + position, length - position);
-		else
-			length = 0;
-	}
-
-	/* If the user closed the queue with a lower number of thread_consumers */
-	mqueue_close(jsons_received, 1, 2);
-
-	return NULL;
-}
-
-int srdb_transaction(const struct ovsdb_config *conf, struct queue_thread *input,
-		     struct queue_thread *output)
-{
-	/* TODO A possible optimisation is to ignore the answer => not enqueue it to output */
-	/* TODO Perhaps using an arraylist here would be better */
-	int ret = 0;
-	struct json_node *json_node;
-	int transact_id = 0;
-	char *echo_reply = "{\"id\":\"echo\",\"result\":[],\"error\":null}";
-	char json_buf[JSON_BUFLEN+1];
-	size_t echo_reply_len = strlen(echo_reply);
-
-	int sfd = ovsdb_socket(conf);
-	if (sfd < 0) {
-		ret = sfd;
-		goto out;
-	}
-
-	/* Start a thread that will read the socket and enqueue replies */
-	pthread_t read_thread;
-	struct trans_read_args args = {
-		.sfd = sfd,
-		.jsons_received = input
-	};
-	pthread_create(&read_thread, NULL, ovsdb_transaction_read, &args);
-
-	mqueue_walk_dequeue(input, json_node, struct json_node *) {
-		json_t *json = json_node->json;
-		json_t *method = json_object_get(json, "method");
-		json_t *error = json_object_get(json, "error");
-
-		if (!json) {
-			fprintf(stderr, "Null json given\n");
-			free(json_node);
-			continue;
-		} else if (!method && error) {
-
-			/* Transaction result */
-			struct srdb_transact_reply *transact_result = calloc(1, sizeof(*transact_result));
-			transact_result->count = -1;
-			if (!json_is_null(error)) {
-				char *error_str = json_dumps(error, 0);
-				fprintf(stderr, "Non-null transaction result: %s", error_str);
-				free(error_str);
-				transact_result->error = 1;
-			} else {
-				json_t *result = json_array_get(json_object_get(json, "result"), 0);
-				json_t *count = json_object_get(result, "count");
-				if (!count) {
-					json_t *uuid = json_array_get(json_object_get(result, "uuid"), 1);
-					strncpy(transact_result->uuid, json_string_value(uuid), SLEN + 1);
-				} else {
-					transact_result->count = json_integer_value(count);
-				}
-			}
-			mqueue_append(output, (struct llnode *) transact_result);
-
-		} else if (method && !strcmp(json_string_value(method), "transact")) {
-
-			/* Transaction request */
-			json_object_set_new(json, "id", json_integer(transact_id));
-			transact_id++;
-
-			ret = (int) json_dumpb(json, json_buf, JSON_BUFLEN, JSON_COMPACT);
-			if (!ret) {
-				ret = -1;
-				fprintf(stderr, "%s: Cannot dump the json\n", __func__);
-				goto end_loop;
-			}
-
-			if ((ret = send(sfd, json_buf, ret, 0)) <= 0) {
-				perror("Cannot send transaction command");
-				goto end_loop;
-			}
-		} else if (method && !strcmp(json_string_value(method), "echo")) {
-
-			/* Echo request */
-			if ((ret = send(sfd, echo_reply, echo_reply_len, 0)) < 0) {
-				perror("Cannot send an echo reply");
-			}
-		} else {
-			char *unknown_json_str = json_dumps(json, 0);
-			fprintf(stderr, "%s: Could not parse json = %s\n",__func__, unknown_json_str);
-			free(unknown_json_str);
-		}
-end_loop:
-		json_decref(json);
-		free(json_node);
-	}
-
-	if (ret < 0) {
-		perror("srdb_transaction() failed");
-	}
-
-	/* These actions trigger the end of the reader thread */
-	close(sfd);
-	mqueue_close(input, 1, 2);
-
-	pthread_join(read_thread, NULL);
-out:
-	return ret;
-}
-
-static int ovsdb_update(const struct ovsdb_config *conf, const char *table,
-			const char *uuid, json_t *fields, struct queue_thread *input,
-			struct queue_thread *output)
-{
-	/* TODO Allow several updates at the same time */
-	int ret = 0;
-	char cmd[JSON_BUFLEN+1];
-
-	char *str_fields = json_dumps(fields, 0);
+	str_fields = json_dumps(fields, 0);
 	if (!str_fields) {
-		fprintf(stderr, "Invalid json\n");
-		return -1;
+		pr_err("failed to dump json fields.");
+		free(json_buf);
+		return NULL;
 	}
 
-	snprintf(cmd, JSON_BUFLEN, "{\"method\":\"transact\",\"params\":[\"%s\",{\"row\":%s,\"table\":\"%s\",\"op\":\"update\",\"where\":[[\"_uuid\",\"==\",[\"uuid\",\"%s\"]]]}]}",
-		 conf->ovsdb_database, str_fields, table, uuid);
+	snprintf(json_buf, JSON_BUFLEN, OVSDB_UPDATE_FORMAT,
+		 srdb->conf->ovsdb_database, str_fields, table, uuid);
 	free(str_fields);
 
-	json_t *update = json_loads(cmd, 0, NULL);
-	if (!update) {
-		fprintf(stderr, "Invalid transaction\n");
-		return -1;
+	json_update = json_loads(json_buf, 0, NULL);
+	if (!json_update) {
+		pr_err("failed to build json object.");
+		free(json_buf);
+		return NULL;
 	}
 
-	struct json_node *node = calloc(1, sizeof(*node));
-	node->json = update;
-	ret = mqueue_append(input, (struct llnode *) node);
-	if (ret) {
-		free(node);
-		json_decref(update);
-		return -1;
+	free(json_buf);
+
+	tr = create_transaction(json_update);
+	if (!tr) {
+		pr_err("failed to build transaction object.");
+		json_decref(json_update);
+		return NULL;
 	}
 
-	/* Wait for transaction to finish (assuming one transaction thread) */
-	struct srdb_transact_reply *reply = (struct srdb_transact_reply *) mqueue_dequeue(output);
-	if (!reply)
-		return -1;
-	ret = reply->error ? reply->error : reply->count;
-	free(reply);
+	sbuf_push(srdb->transactions, tr);
 
-	return ret;
+	return tr;
 }
 
-static int ovsdb_insert(const struct ovsdb_config *conf, const char *table,
-			json_t *fields, char *uuid, struct queue_thread *input,
-			struct queue_thread *output)
+static struct transaction *ovsdb_insert(struct srdb *srdb, const char *table,
+					json_t *fields)
 {
-	/* TODO Allow several insertions at the same time */
-	int ret = 0;
-	char cmd[JSON_BUFLEN+1];
+	char *json_buf, *str_fields;
+	struct transaction *tr;
+	json_t *json_insert;
 
-	char *str_fields = json_dumps(fields, 0);
+	json_buf = malloc(JSON_BUFLEN);
+	if (!json_buf)
+		return NULL;
+
+	str_fields = json_dumps(fields, 0);
 	if (!str_fields) {
-		fprintf(stderr, "Invalid json\n");
-		return -1;
+		pr_err("failed to dump json fields.");
+		free(json_buf);
+		return NULL;
 	}
 
-	snprintf(cmd, JSON_BUFLEN, "{\"method\":\"transact\",\"params\":[\"%s\",{\"row\":%s,\"table\":\"%s\",\"op\":\"insert\"}]}",
-		 conf->ovsdb_database, str_fields, table);
+	snprintf(json_buf, JSON_BUFLEN, OVSDB_INSERT_FORMAT,
+		 srdb->conf->ovsdb_database, str_fields, table);
 	free(str_fields);
 
-	json_t *insert = json_loads(cmd, 0, NULL);
-	if (!insert) {
-		fprintf(stderr, "Invalid transaction\n");
-		return -1;
+	json_insert = json_loads(json_buf, 0, NULL);
+	if (!json_insert) {
+		pr_err("failed to build json object.");
+		free(json_buf);
+		return NULL;
 	}
 
-	struct json_node *node = calloc(1, sizeof(*node));
-	node->json = insert;
-	ret = mqueue_append(input, (struct llnode *) node);
-	if (ret) {
-		free(node);
-		json_decref(insert);
-		return -1;
+	free(json_buf);
+
+	tr = create_transaction(json_insert);
+	if (!tr) {
+		pr_err("failed to build transaction object.");
+		json_decref(json_insert);
+		return NULL;
 	}
 
-	/* Wait for transaction to finish (assuming one transaction thread) */
-	struct srdb_transact_reply *reply = (struct srdb_transact_reply *) mqueue_dequeue(output);
-	if (!reply)
-		return -1;
+	sbuf_push(srdb->transactions, tr);
 
-	ret = reply->error;
-	if (!ret && uuid)
-		strncpy(uuid, reply->uuid, SLEN + 1);
-
-	free(reply);
-	return ret;
+	return tr;
 }
 
 static int find_desc_fromname(struct srdb_descriptor *desc, const char *name)
@@ -980,7 +823,7 @@ int srdb_monitor(struct srdb *srdb, struct srdb_table *tbl, int modify, int init
 {
 	int ret;
 
-	ret = ovsdb_monitor(&srdb->conf, tbl->name, modify, initial, insert, delete, srdb_read, tbl);
+	ret = ovsdb_monitor(srdb->conf, tbl->name, modify, initial, insert, delete, srdb_read, tbl);
 
 	return ret;
 }
@@ -1008,35 +851,74 @@ static int write_desc_data(json_t *row, const struct srdb_descriptor *desc,
 	return wr;
 }
 
-int srdb_update(struct srdb *srdb, struct srdb_table *tbl,
-		struct srdb_entry *entry, const char *fieldname,
-		struct queue_thread *input, struct queue_thread *output)
+struct transaction *srdb_update(struct srdb *srdb, struct srdb_table *tbl,
+				struct srdb_entry *entry, const char *fieldname)
 {
 	const struct srdb_descriptor *desc;
+	struct transaction *tr = NULL;
 	int ret, idx;
 
 	idx = find_desc_fromname(tbl->desc, fieldname);
 	if (idx < 0)
-		return -1;
+		NULL;
 
 	desc = &tbl->desc[idx];
 
 	json_t *row = json_object();
 	ret = write_desc_data(row, desc, entry);
 	if (ret < 0)
-		goto free_json;
+		goto out_free;
 
-	ret = ovsdb_update(&srdb->conf, tbl->name, entry->row, row, input, output);
-free_json:
+	tr = ovsdb_update(srdb, tbl->name, entry->row, row);
+
+out_free:
 	json_decref(row);
-	return ret;
+	return tr;
 }
 
-int srdb_insert(struct srdb *srdb, struct srdb_table *tbl,
-		struct srdb_entry *entry, char *uuid, struct queue_thread *input,
-		struct queue_thread *output)
+int srdb_update_sync(struct srdb *srdb, struct srdb_table *tbl,
+		     struct srdb_entry *entry, const char *fieldname,
+		     int *count)
+{
+	json_t *res, *error, *jres, *jcount;
+	struct transaction *tr;
+	int ret = 0;
+
+	tr = srdb_update(srdb, tbl, entry, fieldname);
+	if (!tr)
+		return -1;
+
+	res = sbuf_pop(tr->result);
+
+	if (!res)
+		goto out_error;
+
+	error = json_object_get(res, "error");
+
+	if (!error || !json_is_null(error))
+		goto out_error;
+
+	jres = json_array_get(json_object_get(res, "result"), 0);
+	jcount = json_object_get(jres, "count");
+
+	if (count)
+		*count = json_integer_value(jcount);
+
+out_free:
+	if (res)
+		json_decref(res);
+	free_transaction(tr);
+	return ret;
+out_error:
+	ret = -1;
+	goto out_free;
+}
+
+struct transaction *srdb_insert(struct srdb *srdb, struct srdb_table *tbl,
+				struct srdb_entry *entry)
 {
 	const struct srdb_descriptor *tmp;
+	struct transaction *tr = NULL;
 	int ret;
 
 	json_t *row = json_object();
@@ -1049,33 +931,99 @@ int srdb_insert(struct srdb *srdb, struct srdb_table *tbl,
 		}
 	}
 
-	ret = ovsdb_insert(&srdb->conf, tbl->name, row, uuid, input, output);
+	tr = ovsdb_insert(srdb, tbl->name, row);
+
 free_json:
 	json_decref(row);
-	return ret;
+	return tr;
 }
 
-struct srdb *srdb_new(const struct ovsdb_config *conf)
+int srdb_insert_sync(struct srdb *srdb, struct srdb_table *tbl,
+		     struct srdb_entry *entry, char *uuid)
+{
+	json_t *res, *error, *jres, *juuid;
+	struct transaction *tr;
+	int ret = 0;
+
+	tr = srdb_insert(srdb, tbl, entry);
+	if (!tr)
+		return -1;
+
+	res = sbuf_pop(tr->result);
+
+	if (!res)
+		goto out_error;
+
+	error = json_object_get(res, "error");
+
+	if (!error || !json_is_null(error))
+		goto out_error;
+
+	jres = json_array_get(json_object_get(res, "result"), 0);
+	juuid = json_array_get(json_object_get(jres, "uuid"), 1);
+
+	if (uuid)
+		strncpy(uuid, json_string_value(juuid), SLEN + 1);
+
+out_free:
+	if (res)
+		json_decref(res);
+	free_transaction(tr);
+	return ret;
+out_error:
+	ret = -1;
+	goto out_free;
+}
+
+struct srdb *srdb_new(struct ovsdb_config *conf)
 {
 	struct srdb *srdb;
+	int i;
 
 	srdb = malloc(sizeof(*srdb));
 	if (!srdb)
 		return NULL;
 
 	srdb->tables = srdb_get_tables();
-	if (!srdb->tables) {
-		free(srdb);
-		return NULL;
-	}
+	if (!srdb->tables)
+		goto out_free_srdb;
 
-	memcpy(&srdb->conf, conf, sizeof(*conf));
+	srdb->conf = conf;
+	srdb->tr_workers = malloc(conf->ntransacts * sizeof(pthread_t));
+	if (!srdb->tr_workers)
+		goto out_free_tables;
+
+	srdb->transactions = sbuf_new(2 * conf->ntransacts);
+	if (!srdb->transactions)
+		goto out_free_workers;
+
+	for (i = 0; i < conf->ntransacts; i++)
+		pthread_create(&srdb->tr_workers[i], NULL, transaction_worker,
+			       srdb);
 
 	return srdb;
+
+out_free_workers:
+	free(srdb->tr_workers);
+out_free_tables:
+	srdb_free_tables(srdb->tables);
+out_free_srdb:
+	free(srdb);
+	return NULL;
 }
 
 void srdb_destroy(struct srdb *srdb)
 {
+	int i;
+
+	for (i = 0; i < srdb->conf->ntransacts; i++)
+		sbuf_push(srdb->transactions, NULL);
+
+	for (i = 0; i < srdb->conf->ntransacts; i++)
+		pthread_join(srdb->tr_workers[i], NULL);
+
+	free(srdb->tr_workers);
+	sbuf_destroy(srdb->transactions);
 	srdb_free_tables(srdb->tables);
 	free(srdb);
 }
@@ -1090,4 +1038,194 @@ void srdb_set_read_cb(struct srdb *srdb, const char *table,
 		return;
 
 	tbl->read = cb;
+}
+
+struct transaction *create_transaction(json_t *json)
+{
+	struct transaction *tr;
+
+	tr = malloc(sizeof(*tr));
+	if (!tr)
+		return NULL;
+
+	tr->result = sbuf_new(1);
+	if (!tr->result) {
+		free(tr);
+		return NULL;
+	}
+
+	tr->json = json;
+
+	return tr;
+}
+
+void free_transaction(struct transaction *tr)
+{
+	json_decref(tr->json);
+	sbuf_destroy(tr->result);
+	free(tr);
+}
+
+static int send_transaction(int fd, json_t *json, unsigned int id)
+{
+	ssize_t len, ret;
+	json_t *method;
+	char *json_buf;
+
+	method = json_object_get(json, "method");
+	if (!method || strcmp(json_string_value(method), "transact"))
+		return -1;
+
+	json_buf = malloc(JSON_BUFLEN);
+	if (!json_buf)
+		return -1;
+
+	json_object_set_new(json, "id", json_integer(id));
+
+	len = json_dumpb(json, json_buf, JSON_BUFLEN, JSON_COMPACT);
+	if (!len)
+		goto out_err;
+
+	ret = send(fd, json_buf, len, 0);
+	if (ret <= 0)
+		goto out_err;
+
+	if (ret != len) {
+		pr_err("partial send (%ld < %ld) for transaction id %u.", ret,
+		       len, id);
+		goto out_err;
+	}
+
+	ret = 0;
+
+out:
+	free(json_buf);
+	return ret;
+out_err:
+	ret = -1;
+	goto out;
+}
+
+static json_t *recv_transaction_result(int fd)
+{
+	json_t *json = NULL;
+	char *json_buf;
+	int ret;
+
+	json_buf = malloc(JSON_BUFLEN);
+	if (!json_buf)
+		return NULL;
+
+	/* transaction results are small, assume we'll get everything
+	 * in one shot.
+	 */
+
+	ret = recv(fd, json_buf, JSON_BUFLEN, 0);
+	if (ret <= 0)
+		goto out;
+
+	json = json_loadb(json_buf, ret, JSON_DISABLE_EOF_CHECK, NULL);
+
+out:
+	free(json_buf);
+	return json;
+}
+
+static int echo_reply(int fd)
+{
+	const char reply[] = "{\"id\":\"echo\",\"result\":[],\"error\":null}";
+
+	return send(fd, reply, sizeof(reply) - 1, 0);
+}
+
+static json_t *fetch_transaction_result(int fd)
+{
+	json_t *json, *method, *error;
+
+	/* data available on ovsdb socket
+	 * echo, and if pending, transaction result
+	 */
+
+	json = recv_transaction_result(fd);
+	if (!json)
+		return NULL;
+
+	method = json_object_get(json, "method");
+	error = json_object_get(json, "error");
+
+	/* ping */
+	if (method && !strcmp(json_string_value(method),
+			      "echo")) {
+		if (echo_reply(fd) < 0)
+			pr_err("failed to send echo reply.");
+
+		json_decref(json);
+		return NULL;
+	}
+
+	/* transaction result */
+	if (!method && error)
+		return json;
+
+	/* unknown */
+	json_decref(json);
+	return NULL;
+}
+
+void *transaction_worker(void *args)
+{
+	struct transaction *tr = NULL;
+	unsigned int transact_id = 0;
+	struct srdb *srdb = args;
+	bool pending = false;
+	struct pollfd pfd;
+	int fd, ready;
+	json_t *json;
+
+	fd = ovsdb_socket(srdb->conf);
+	if (fd < 0)
+		return NULL;
+
+	pfd.fd = fd;
+	pfd.events = POLLIN | POLLPRI;
+
+	for (;;) {
+		ready = poll(&pfd, 1, 0);
+		if (ready < 0) {
+			perror("poll");
+			break;
+		}
+
+		if (ready) {
+			json = fetch_transaction_result(fd);
+			if (json && !pending) {
+				pr_err("received unknown transaction result.");
+				json_decref(json);
+			} else if (json) {
+				sbuf_push(tr->result, json);
+				pending = false;
+			}
+		}
+
+		/* process new transaction only if no result is pending */
+		if (!pending) {
+			if (sbuf_trypop(srdb->transactions, (void **)&tr))
+				continue;
+
+			if (!tr)
+				break;
+
+			if (send_transaction(fd, tr->json, ++transact_id) < 0) {
+				pr_err("failed to send transaction id %u\n",
+				       transact_id);
+				break;
+			}
+
+			pending = true;
+		}
+	}
+
+	close(fd);
+
+	return NULL;
 }

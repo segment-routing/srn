@@ -38,6 +38,19 @@ void sbuf_push(struct sbuf *sbuf, void *elem)
 	sem_post(&sbuf->full);
 }
 
+int sbuf_trypush(struct sbuf *sbuf, void *elem)
+{
+	if (sem_trywait(&sbuf->empty))
+		return -1;
+
+	pthread_mutex_lock(&sbuf->lock);
+	__sbuf_push(sbuf, elem);
+	pthread_mutex_unlock(&sbuf->lock);
+	sem_post(&sbuf->full);
+
+	return 0;
+}
+
 void *sbuf_pop(struct sbuf *sbuf)
 {
 	void *elem;
@@ -49,4 +62,17 @@ void *sbuf_pop(struct sbuf *sbuf)
 	sem_post(&sbuf->empty);
 
 	return elem;
+}
+
+int sbuf_trypop(struct sbuf *sbuf, void **elem)
+{
+	if (sem_trywait(&sbuf->full))
+		return -1;
+
+	pthread_mutex_lock(&sbuf->lock);
+	*elem = __sbuf_pop(sbuf);
+	pthread_mutex_unlock(&sbuf->lock);
+	sem_post(&sbuf->empty);
+
+	return 0;
 }

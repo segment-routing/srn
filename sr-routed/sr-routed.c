@@ -29,8 +29,6 @@ struct config {
 };
 
 static struct config _cfg;
-static struct queue_thread transact_input;
-static struct queue_thread transact_output;
 
 #define BUFLEN 1024
 #define MAX_REQUEST 500
@@ -141,8 +139,8 @@ static int set_status(struct srdb_flow_entry *flow_entry, enum flow_status st)
 	tbl = srdb_table_by_name(_cfg.srdb->tables, "FlowState");
 	flow_entry->status = st;
 
-	return srdb_update(_cfg.srdb, tbl, (struct srdb_entry *)flow_entry,
-			   "status", &transact_input, &transact_output);
+	return srdb_update_sync(_cfg.srdb, tbl, (struct srdb_entry *)flow_entry,
+			   "status", NULL);
 }
 
 static int read_flowstate(struct srdb_entry *entry)
@@ -245,12 +243,6 @@ static void *thread_monitor(void *_arg)
 	return (void *)(intptr_t)ret;
 }
 
-static void *thread_transact(__attribute__((unused)) void *_arg)
-{
-	srdb_transaction(&_cfg.srdb->conf, &transact_input, &transact_output);
-	return NULL;
-}
-
 static void launch_srdb(pthread_t *thr, struct monitor_arg *args)
 {
 	struct srdb_table *tbl;
@@ -265,10 +257,6 @@ static void launch_srdb(pthread_t *thr, struct monitor_arg *args)
 	args[0].delete = 1;
 
 	pthread_create(&thr[0], NULL, thread_monitor, (void *)&args[0]);
-
-	mqueue_init(&transact_input, MAX_REQUEST);
-	mqueue_init(&transact_output, MAX_REQUEST);
-	pthread_create(&thr[1], NULL, thread_transact, NULL);
 }
 
 int main(int argc, char **argv)
@@ -295,6 +283,7 @@ int main(int argc, char **argv)
 		return -1;
 	}
 
+	_cfg.ovsdb_conf.ntransacts = 1;
 	_cfg.srdb = srdb_new(&_cfg.ovsdb_conf);
 	if (!_cfg.srdb) {
 		pr_err("failed to initialize SRDB.");
@@ -305,13 +294,7 @@ int main(int argc, char **argv)
 
 	pthread_join(mon_thr[0], NULL);
 
-        mqueue_close(&transact_input, 1, 2);
-        mqueue_close(&transact_output, 1, 2);
-
 	pthread_join(mon_thr[1], NULL);
-
-        mqueue_destroy(&transact_input);
-        mqueue_destroy(&transact_output);
 
 	srdb_destroy(_cfg.srdb);
 

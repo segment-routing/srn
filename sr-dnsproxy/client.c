@@ -189,8 +189,7 @@ static void *client_consumer_main(__attribute__((unused)) void *args)
 
 	/* Get the OpenFlow ID of this thread */
 	strncpy(router_entry.router, cfg.router_name, SLEN + 1);
-	if (srdb_insert(srdb, router_tbl, (struct srdb_entry *) &router_entry, thread_id,
-                        &transact_input, &transact_output)) {
+	if (srdb_insert_sync(srdb, router_tbl, (struct srdb_entry *) &router_entry, thread_id)) {
 		fprintf(stderr, "Problem during extraction of thread ID -> stop thread\n");
 		return NULL;
 	}
@@ -222,8 +221,7 @@ static void *client_consumer_main(__attribute__((unused)) void *args)
 		}
 #endif
 
-		srdb_insert(srdb, tbl, (struct srdb_entry *) &entry, NULL, &transact_input,
-								&transact_output);
+		srdb_insert_sync(srdb, tbl, (struct srdb_entry *) &entry, NULL);
 		print_debug("Client consumer makes the insertion in the OVSDB table\n");
 
 #if DEBUG_PERF

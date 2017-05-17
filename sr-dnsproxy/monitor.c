@@ -219,15 +219,8 @@ static void *thread_monitor(void *_arg)
 	return (void *)(intptr_t)ret;
 }
 
-static void *thread_transact(__attribute__((unused)) void *_arg)
-{
-	srdb_transaction(&cfg.ovsdb_conf, &transact_input, &transact_output);
-	return NULL;
-}
-
 int init_monitor(struct monitor_arg *args, pthread_t *monitor_flowreqs_thread,
-		 pthread_t *monitor_flows_thread,
-		 pthread_t *transact_thread)
+		 pthread_t *monitor_flows_thread)
 {
 	struct addrinfo hints;
 	struct addrinfo *result, *rp;
@@ -271,6 +264,7 @@ int init_monitor(struct monitor_arg *args, pthread_t *monitor_flowreqs_thread,
 
 	/* Init ovsdb monitoring */
 	struct srdb_table *tbl;
+	cfg.ovsdb_conf.ntransacts = 1;
 	srdb = srdb_new(&cfg.ovsdb_conf);
 	if (!srdb) {
 		fprintf(stderr, "Cannot connect to the database\n");
@@ -299,11 +293,6 @@ int init_monitor(struct monitor_arg *args, pthread_t *monitor_flowreqs_thread,
 	pthread_create(monitor_flows_thread, NULL, thread_monitor, (void *) &args[1]);
 
 	mqueue_init(&replies_waiting_controller, max_queries);
-
-	/* Init transaction threads */
-	mqueue_init(&transact_input, max_queries);
-	mqueue_init(&transact_output, max_queries);
-	pthread_create(transact_thread, NULL, thread_transact, NULL);
 
 out_err:
 	return status;

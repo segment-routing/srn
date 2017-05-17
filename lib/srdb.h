@@ -5,8 +5,9 @@
 #include <stdbool.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <jansson.h>
 
-#include "linked_list.h"
+#include "sbuf.h"
 
 #define SLEN	127
 #define SLEN_LIST	7 * SLEN
@@ -50,11 +51,28 @@ struct ovsdb_config {
 	char ovsdb_client[SLEN + 1];
 	char ovsdb_server[SLEN + 1];
 	char ovsdb_database[SLEN + 1];
+	int ntransacts;
 };
 
+struct transaction {
+	json_t *json;
+	struct sbuf *result;
+};
+
+#define OVSDB_UPDATE_FORMAT						\
+	"{\"method\":\"transact\",\"params\":[\"%s\",{\"row\":%s,"	\
+	"\"table\":\"%s\",\"op\":\"update\","				\
+	"\"where\":[[\"_uuid\",\"==\",[\"uuid\",\"%s\"]]]}]}"
+
+#define OVSDB_INSERT_FORMAT 						\
+	"{\"method\":\"transact\",\"params\":[\"%s\",{\"row\":%s,"	\
+	"\"table\":\"%s\",\"op\":\"insert\"}]}"
+
 struct srdb {
-	struct ovsdb_config conf;
+	struct ovsdb_config *conf;
 	struct srdb_table *tables;
+	struct sbuf *transactions;
+	pthread_t *tr_workers;
 };
 
 #define _row		entry.row
@@ -141,21 +159,26 @@ struct srdb_nodestate_entry {
 
 int srdb_monitor(struct srdb *srdb, struct srdb_table *tbl,
 		int modify, int initial, int insert, int delete);
-int srdb_transaction(const struct ovsdb_config *conf,
-		     struct queue_thread *input,
-		     struct queue_thread *output);
-int srdb_update(struct srdb *srdb, struct srdb_table *tbl,
-		struct srdb_entry *entry, const char *fieldname,
-		struct queue_thread *input, struct queue_thread *output);
-int srdb_insert(struct srdb *srdb, struct srdb_table *tbl,
-		struct srdb_entry *entry, char *uuid,
-		struct queue_thread *input, struct queue_thread *output);
+struct transaction *srdb_update(struct srdb *srdb, struct srdb_table *tbl,
+				struct srdb_entry *entry,
+				const char *fieldname);
+struct transaction *srdb_insert(struct srdb *srdb, struct srdb_table *tbl,
+				struct srdb_entry *entry);
+
+int srdb_update_sync(struct srdb *srdb, struct srdb_table *tbl,
+		     struct srdb_entry *entry, const char *fieldname,
+		     int *count);
+int srdb_insert_sync(struct srdb *srdb, struct srdb_table *tbl,
+		     struct srdb_entry *entry, char *uuid);
+
+struct transaction *create_transaction(json_t *json);
+void free_transaction(struct transaction *tr);
 
 struct srdb_table *srdb_get_tables(void);
 void srdb_free_tables(struct srdb_table *tbl);
 struct srdb_table *srdb_table_by_name(struct srdb_table *tables,
 				      const char *name);
-struct srdb *srdb_new(const struct ovsdb_config *conf);
+struct srdb *srdb_new(struct ovsdb_config *conf);
 void srdb_destroy(struct srdb *srdb);
 void srdb_set_read_cb(struct srdb *srdb, const char *table,
 		      int (*cb)(struct srdb_entry *));

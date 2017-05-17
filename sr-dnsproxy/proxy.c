@@ -99,7 +99,7 @@ int main(int argc, char *argv[])
 	}
 
 	/* Setup of the controller monitoring */
-	err = init_monitor(args, &monitor_flowreqs_thread, &monitor_flows_thread, &transact_thread);
+	err = init_monitor(args, &monitor_flowreqs_thread, &monitor_flows_thread);
 	if (err) {
 		goto out_err_free_args;
 	}

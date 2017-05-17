@@ -143,21 +143,19 @@ static int __unused netstate_graph_sync(struct netstate *ns)
 	return 0;
 }
 
-static int set_status(struct srdb_flowreq_entry *req, enum flowreq_status st,
-		      struct queue_thread *input, struct queue_thread *output)
+static int set_status(struct srdb_flowreq_entry *req, enum flowreq_status st)
 {
 	struct srdb_table *tbl;
 
 	tbl = srdb_table_by_name(_cfg.srdb->tables, "FlowReq");
 	req->status = st;
 
-	return srdb_update(_cfg.srdb, tbl, (struct srdb_entry *)req, "status",
-			   input, output);
+	return srdb_update_sync(_cfg.srdb, tbl, (struct srdb_entry *)req,
+				"status", NULL);
 }
 
 static int commit_flow(struct srdb_flowreq_entry *req, struct router *rt,
-		       struct flow *fl, struct queue_thread *input,
-		       struct queue_thread *output)
+		       struct flow *fl)
 {
 	struct srdb_flow_entry flow_entry;
 	struct llist_node *iter;
@@ -260,9 +258,10 @@ static int commit_flow(struct srdb_flowreq_entry *req, struct router *rt,
 
 	memcpy(flow_entry.request_id, req->request_id, SLEN);
 
-	ret = srdb_insert(_cfg.srdb,
-			  srdb_table_by_name(_cfg.srdb->tables, "FlowState"),
-			  (struct srdb_entry *)&flow_entry, NULL, input, output);
+	ret = srdb_insert_sync(_cfg.srdb,
+			       srdb_table_by_name(_cfg.srdb->tables,
+						  "FlowState"),
+			       (struct srdb_entry *)&flow_entry, NULL);
 
 out:
 	free(flow_entry.segments);
@@ -414,9 +413,7 @@ static int select_providers(struct flow *fl)
 	return fl->nb_prefixes;;
 }
 
-static void process_request(struct srdb_entry *entry,
-			    struct queue_thread *input,
-			    struct queue_thread *output)
+static void process_request(struct srdb_entry *entry)
 {
 	struct srdb_flowreq_entry *req = (struct srdb_flowreq_entry *)entry;
 	struct router *rt, *dstrt;
@@ -438,7 +435,7 @@ static void process_request(struct srdb_entry *entry,
 		rstat = REQ_STATUS_DENIED;
 
 	if (rstat == REQ_STATUS_DENIED) {
-		if (set_status(req, rstat, input, output) < 0)
+		if (set_status(req, rstat) < 0)
 			pr_err("failed to update row uuid %s to status %d\n",
 			       req->_row, rstat);
 		return;
@@ -446,7 +443,7 @@ static void process_request(struct srdb_entry *entry,
 
 	fl = calloc(1, sizeof(*fl));
 	if (!fl) {
-		set_status(req, REQ_STATUS_ERROR, input, output);
+		set_status(req, REQ_STATUS_ERROR);
 		return;
 	}
 
@@ -462,7 +459,7 @@ static void process_request(struct srdb_entry *entry,
 
 	rt = hmap_get(_cfg.ns.routers, req->router);
 	if (!rt) {
-		set_status(req, REQ_STATUS_NOROUTER, input, output);
+		set_status(req, REQ_STATUS_NOROUTER);
 		goto free_flow;
 	}
 
@@ -476,7 +473,7 @@ static void process_request(struct srdb_entry *entry,
 	if (graph_get_node_noref(_cfg.ns.graph, rt->node->id) != rt->node ||
 	    graph_get_node_noref(_cfg.ns.graph, dstrt->node->id) !=
 	    dstrt->node) {
-		set_status(req, REQ_STATUS_UNAVAILABLE, input, output);
+		set_status(req, REQ_STATUS_UNAVAILABLE);
 		goto free_flow;
 	}
 
@@ -487,7 +484,7 @@ static void process_request(struct srdb_entry *entry,
 	 * either an error occurred or no source prefix is available.
 	 */
 	if (select_providers(fl) <= 0) {
-		if (set_status(req, REQ_STATUS_ERROR, input, output) < 0)
+		if (set_status(req, REQ_STATUS_ERROR) < 0)
 			pr_err("failed to update row uuid %s to status %d\n",
 			       req->_row, REQ_STATUS_ERROR);
 		goto free_flow;
@@ -505,7 +502,7 @@ static void process_request(struct srdb_entry *entry,
 	segs = build_segpath(_cfg.ns.graph, &pspec);
 
 	if (!segs) {
-		set_status(req, REQ_STATUS_UNAVAILABLE, input, output);
+		set_status(req, REQ_STATUS_UNAVAILABLE);
 		goto free_src_prefixes;
 	}
 
@@ -529,12 +526,12 @@ static void process_request(struct srdb_entry *entry,
 		}
 	}
 
-	if (commit_flow(req, rt, fl, input, output)) {
-		set_status(req, REQ_STATUS_ERROR, input, output);
+	if (commit_flow(req, rt, fl)) {
+		set_status(req, REQ_STATUS_ERROR);
 		goto free_segs;
 	}
 
-	set_status(req, REQ_STATUS_ALLOWED, input, output);
+	set_status(req, REQ_STATUS_ALLOWED);
 
 	net_state_unlock(&_cfg.ns);
 
@@ -692,6 +689,11 @@ static int load_config(const char *fname, struct config *cfg)
 			continue;
 		if (READ_STRING(buf, ovsdb_database, &cfg->ovsdb_conf))
 			continue;
+		if (READ_INT(buf, ntransacts, &cfg->ovsdb_conf)) {
+			if (!cfg->ovsdb_conf.ntransacts)
+				cfg->ovsdb_conf.ntransacts = 1;
+			continue;
+		}
 		if (READ_STRING(buf, rules_file, cfg))
 			continue;
 		if (READ_INT(buf, worker_threads, cfg)) {
@@ -738,45 +740,20 @@ static int load_config(const char *fname, struct config *cfg)
 	return ret;
 }
 
-static void *thread_transact(__attribute__((unused)) void *_arg)
-{
-	struct queue_thread *input = _arg;
-	struct queue_thread *output = input + 1;
-	srdb_transaction(&_cfg.srdb->conf, input, output);
-	return NULL;
-}
-
 static void *thread_worker(void *arg __unused)
 {
 	struct srdb_entry *entry;
 	struct srdb_table *tbl;
 
-	pthread_t transact_thread;
-
 	tbl = srdb_table_by_name(_cfg.srdb->tables, "FlowReq");
-
-	struct queue_thread queues[2];
-	struct queue_thread *transact_input = &queues[0];
-	struct queue_thread *transact_output = &queues[1];
-	mqueue_init(transact_input, _cfg.req_buffer_size);
-	mqueue_init(transact_output, _cfg.req_buffer_size);
-	pthread_create(&transact_thread, NULL, thread_transact, queues);
 
 	for (;;) {
 		entry = sbuf_pop(_cfg.req_buffer);
 		if (!entry)
 			break;
-		process_request(entry, transact_input, transact_output);
+		process_request(entry);
 		free_srdb_entry(tbl->desc, entry);
 	}
-
-	mqueue_close(transact_input, 1, 2);
-	mqueue_close(transact_output, 1, 2);
-
-	pthread_join(transact_thread, NULL);
-
-	mqueue_destroy(transact_input);
-	mqueue_destroy(transact_output);
 
 	return NULL;
 }

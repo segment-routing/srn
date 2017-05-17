@@ -172,7 +172,7 @@ void client_callback(void *arg, int status, __attribute__((unused)) int timeouts
 int init_client(int optmask, struct ares_addr_node *servers, pthread_t *client_consumer_thread, pthread_t *client_producer_thread);
 void close_client();
 
-int init_monitor(struct monitor_arg *args, pthread_t *monitor_flowreqs_thread, pthread_t *monitor_flows_thread, pthread_t *transact_thread);
+int init_monitor(struct monitor_arg *args, pthread_t *monitor_flowreqs_thread, pthread_t *monitor_flows_thread);
 void close_monitor();
 
 #endif /* PROXY__H */
