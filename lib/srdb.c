@@ -297,6 +297,18 @@ static int find_desc_fromname(struct srdb_descriptor *desc, const char *name)
 	return -1;
 }
 
+static int find_desc_fromindex(struct srdb_descriptor *desc, unsigned int index)
+{
+	int i;
+
+	for (i = 0; desc[i].name; i++) {
+		if (desc[i].index == index)
+			return i;
+	}
+
+	return -1;
+}
+
 static void fill_srdb_entry(struct srdb_descriptor *desc,
 			    struct srdb_entry *entry, const char *uuid, json_t *line_json)
 {
@@ -392,6 +404,7 @@ static struct srdb_descriptor routerids_desc_tmpl[] = {
 		.type	= SRDB_STR,
 		.maxlen	= SLEN,
 		.offset	= OFFSET_ROUTERIDS(router),
+		.index	= RTE_ROUTER,
 	},
 	{
 		.name	= NULL,
@@ -407,54 +420,63 @@ static struct srdb_descriptor flowreq_desc_tmpl[] = {
 		.type	= SRDB_STR,
 		.maxlen	= SLEN,
 		.offset	= OFFSET_FLOWREQ(request_id),
+		.index	= FREQ_REQID,
 	},
 	{
 		.name	= "destination",
 		.type	= SRDB_STR,
 		.maxlen	= SLEN,
 		.offset	= OFFSET_FLOWREQ(destination),
+		.index	= FREQ_DESTINATION,
 	},
 	{
 		.name	= "dstaddr",
 		.type	= SRDB_STR,
 		.maxlen	= SLEN,
 		.offset	= OFFSET_FLOWREQ(dstaddr),
+		.index	= FREQ_DSTADDR,
 	},
 	{
 		.name	= "source",
 		.type	= SRDB_STR,
 		.maxlen	= SLEN,
 		.offset	= OFFSET_FLOWREQ(source),
+		.index	= FREQ_SOURCE,
 	},
 	{
 		.name	= "bandwidth",
 		.type	= SRDB_INT,
 		.maxlen	= sizeof(int),
 		.offset	= OFFSET_FLOWREQ(bandwidth),
+		.index	= FREQ_BANDWIDTH,
 	},
 	{
 		.name	= "delay",
 		.type	= SRDB_INT,
 		.maxlen	= sizeof(int),
 		.offset	= OFFSET_FLOWREQ(delay),
+		.index	= FREQ_DELAY,
 	},
 	{
 		.name	= "router",
 		.type	= SRDB_STR,
 		.maxlen	= SLEN,
 		.offset = OFFSET_FLOWREQ(router),
+		.index	= FREQ_ROUTER,
 	},
 	{
 		.name	= "proxy",
 		.type	= SRDB_STR,
 		.maxlen	= SLEN,
 		.offset	= OFFSET_FLOWREQ(proxy),
+		.index	= FREQ_PROXY,
 	},
 	{
 		.name	= "status",
 		.type	= SRDB_INT,
 		.maxlen	= sizeof(int),
 		.offset	= OFFSET_FLOWREQ(status),
+		.index	= FREQ_STATUS,
 	},
 	{
 		.name	= NULL,
@@ -470,101 +492,119 @@ static struct srdb_descriptor flowstate_desc_tmpl[] = {
 		.type	= SRDB_STR,
 		.maxlen	= SLEN,
 		.offset	= OFFSET_FLOWSTATE(destination),
+		.index	= FE_DESTINATION,
 	},
 	{
 		.name	= "dstaddr",
 		.type	= SRDB_STR,
 		.maxlen	= SLEN,
 		.offset	= OFFSET_FLOWSTATE(dstaddr),
+		.index	= FE_DSTADDR,
 	},
 	{
 		.name	= "bsid",
-		.type	= SRDB_STR,
-		.maxlen	= SLEN,
+		.type	= SRDB_VARSTR,
+		.maxlen	= BUFLEN,
 		.offset	= OFFSET_FLOWSTATE(bsid),
+		.index	= FE_BSID,
 	},
 	{
 		.name	= "segments",
 		.type	= SRDB_VARSTR,
 		.maxlen	= BUFLEN,
 		.offset	= OFFSET_FLOWSTATE(segments),
+		.index	= FE_SEGMENTS,
 	},
 	{
 		.name	= "bandwidth",
 		.type	= SRDB_INT,
 		.offset	= OFFSET_FLOWSTATE(bandwidth),
+		.index	= FE_BANDWIDTH,
 	},
 	{
 		.name	= "delay",
 		.type	= SRDB_INT,
 		.offset	= OFFSET_FLOWSTATE(delay),
+		.index	= FE_DELAY,
 	},
 	{
 		.name	= "policing",
 		.type	= SRDB_INT,
 		.offset	= OFFSET_FLOWSTATE(policing),
+		.index	= FE_POLICING,
 	},
 	{
 		.name	= "source",
 		.type	= SRDB_STR,
 		.maxlen	= SLEN,
 		.offset	= OFFSET_FLOWSTATE(source),
+		.index	= FE_SOURCE,
 	},
 	{
 		.name	= "sourceIPs",
-		.type	= SRDB_STR,
-		.maxlen	= SLEN,
+		.type	= SRDB_VARSTR,
+		.maxlen	= BUFLEN,
 		.offset	= OFFSET_FLOWSTATE(sourceIPs),
+		.index	= FE_SOURCEIPS,
 	},
 	{
 		.name	= "router",
 		.type	= SRDB_STR,
 		.maxlen	= SLEN,
 		.offset	= OFFSET_FLOWSTATE(router),
+		.index	= FE_ROUTER,
 	},
 	{
 		.name	= "proxy",
 		.type	= SRDB_STR,
 		.maxlen	= SLEN,
 		.offset	= OFFSET_FLOWSTATE(proxy),
+		.index	= FE_PROXY,
 	},
 	{
 		.name	= "interface",
 		.type	= SRDB_STR,
 		.maxlen	= SLEN,
 		.offset	= OFFSET_FLOWSTATE(interface),
+		.index	= FE_INTERFACE,
 	},
 	{
 		.name	= "reverseFlow",
 		.type	= SRDB_STR,
 		.maxlen	= SLEN,
 		.offset	= OFFSET_FLOWSTATE(reverse_flow_uuid),
+		.index	= FE_RF_UUID,
 	},
 	{
 		.name	= "request",
 		.type	= SRDB_STR,
 		.maxlen	= SLEN,
 		.offset	= OFFSET_FLOWSTATE(request_id),
+		.index	= FE_REQID,
 	},
 	{
 		.name	= "ttl",
 		.type	= SRDB_INT,
 		.offset	= OFFSET_FLOWSTATE(ttl),
+		.index	= FE_TTL,
 	},
 	{
 		.name	= "idle",
 		.type	= SRDB_INT,
 		.offset	= OFFSET_FLOWSTATE(idle),
+		.index	= FE_IDLE,
 	},
 	{
 		.name	= "timestamp",
 		.type	= SRDB_INT,
 		.offset	= OFFSET_FLOWSTATE(timestamp),
+		.index	= FE_TS,
 	},
 	{
 		.name	= "status",
 		.type	= SRDB_INT,
 		.offset	= OFFSET_FLOWSTATE(status),
+		.index	= FE_STATUS,
 	},
 	{
 		.name	= NULL,
@@ -580,44 +620,52 @@ static struct srdb_descriptor linkstate_desc_tmpl[] = {
 		.type	= SRDB_STR,
 		.maxlen	= SLEN,
 		.offset	= OFFSET_LINKSTATE(name1),
+		.index	= LS_NAME1,
 	},
 	{
 		.name	= "addr1",
 		.type	= SRDB_STR,
 		.maxlen	= SLEN,
 		.offset	= OFFSET_LINKSTATE(addr1),
+		.index	= LS_ADDR1,
 	},
 	{
 		.name	= "name2",
 		.type	= SRDB_STR,
 		.maxlen	= SLEN,
 		.offset	= OFFSET_LINKSTATE(name2),
+		.index	= LS_NAME2,
 	},
 	{
 		.name	= "addr2",
 		.type	= SRDB_STR,
 		.maxlen	= SLEN,
 		.offset	= OFFSET_LINKSTATE(addr2),
+		.index	= LS_ADDR2,
 	},
 	{
 		.name	= "metric",
 		.type	= SRDB_INT,
 		.offset	= OFFSET_LINKSTATE(metric),
+		.index	= LS_METRIC,
 	},
 	{
 		.name	= "bw",
 		.type	= SRDB_INT,
 		.offset	= OFFSET_LINKSTATE(bw),
+		.index	= LS_BW,
 	},
 	{
 		.name	= "ava_bw",
 		.type	= SRDB_INT,
 		.offset	= OFFSET_LINKSTATE(ava_bw),
+		.index	= LS_AVA_BW,
 	},
 	{
 		.name	= "delay",
 		.type	= SRDB_INT,
 		.offset	= OFFSET_LINKSTATE(delay),
+		.index	= LS_DELAY,
 	},
 	{
 		.name	= NULL,
@@ -633,24 +681,28 @@ static struct srdb_descriptor nodestate_desc_tmpl[] = {
 		.type	= SRDB_STR,
 		.maxlen	= SLEN,
 		.offset	= OFFSET_NODESTATE(name),
+		.index	= NODE_NAME,
 	},
 	{
 		.name	= "addr",
 		.type	= SRDB_STR,
 		.maxlen	= SLEN,
 		.offset	= OFFSET_NODESTATE(addr),
+		.index	= NODE_ADDR,
 	},
 	{
 		.name	= "prefix",
 		.type	= SRDB_VARSTR,
 		.maxlen	= BUFLEN,
 		.offset	= OFFSET_NODESTATE(prefix),
+		.index	= NODE_PREFIX,
 	},
 	{
 		.name	= "pbsid",
 		.type	= SRDB_STR,
 		.maxlen	= SLEN,
 		.offset	= OFFSET_NODESTATE(pbsid),
+		.index	= NODE_PBSID,
 	},
 	{
 		.name	= NULL,
@@ -819,74 +871,121 @@ free_new:
 	goto out;
 }
 
-int srdb_monitor(struct srdb *srdb, struct srdb_table *tbl, int modify, int initial, int insert, int delete)
+int srdb_monitor(struct srdb *srdb, struct srdb_table *tbl, int modify,
+		 int initial, int insert, int delete)
 {
 	int ret;
 
-	ret = ovsdb_monitor(srdb->conf, tbl->name, modify, initial, insert, delete, srdb_read, tbl);
+	ret = ovsdb_monitor(srdb->conf, tbl->name, modify, initial, insert,
+			    delete, srdb_read, tbl);
 
 	return ret;
 }
 
-static int write_desc_data(json_t *row, const struct srdb_descriptor *desc,
+static void write_desc_data(json_t *row, const struct srdb_descriptor *desc,
 			   struct srdb_entry *entry)
 {
-	int wr = -1;
 	void *data;
 
 	data = (unsigned char *)entry + desc->offset;
 
 	switch (desc->type) {
 	case SRDB_STR:
-		wr = json_object_set_new(row, desc->name, json_string((char *)data));
+		json_object_set_new(row, desc->name, json_string((char *)data));
 		break;
 	case SRDB_INT:
-		wr = json_object_set_new(row, desc->name, json_integer(*(int *)data));
+		json_object_set_new(row, desc->name,
+				    json_integer(*(int *)data));
 		break;
 	case SRDB_VARSTR:
-		wr = json_object_set_new(row, desc->name, json_string(*(char **)data));
+		json_object_set_new(row, desc->name,
+				    json_string(*(char **)data));
 		break;
 	}
-
-	return wr;
 }
 
-struct transaction *srdb_update(struct srdb *srdb, struct srdb_table *tbl,
-				struct srdb_entry *entry, const char *fieldname)
+struct srdb_update_transact *srdb_update_prepare(struct srdb *srdb,
+						 struct srdb_table *tbl,
+						 struct srdb_entry *entry)
+{
+	struct srdb_update_transact *utr;
+
+	utr = malloc(sizeof(*utr));
+	if (!utr)
+		return NULL;
+
+	utr->srdb = srdb;
+	utr->tbl = tbl;
+	utr->entry = entry;
+	utr->index_mask = 0;
+	utr->fields = json_object();
+
+	return utr;
+}
+
+int srdb_update_append(struct srdb_update_transact *utr, unsigned int index)
 {
 	const struct srdb_descriptor *desc;
-	struct transaction *tr = NULL;
-	int ret, idx;
+	int idx;
 
-	idx = find_desc_fromname(tbl->desc, fieldname);
+	idx = find_desc_fromindex(utr->tbl->desc, index);
 	if (idx < 0)
-		NULL;
+		return -1;
 
-	desc = &tbl->desc[idx];
+	desc = &utr->tbl->desc[idx];
 
-	json_t *row = json_object();
-	ret = write_desc_data(row, desc, entry);
-	if (ret < 0)
-		goto out_free;
+	write_desc_data(utr->fields, desc, utr->entry);
+	utr->index_mask |= 1 << index;
 
-	tr = ovsdb_update(srdb, tbl->name, entry->row, row);
+	return 0;
+}
 
-out_free:
-	json_decref(row);
+void srdb_update_append_mask(struct srdb_update_transact *utr,
+			     unsigned int index_mask)
+{
+	const struct srdb_descriptor *desc;
+	unsigned int i;
+
+	for (i = 0; utr->tbl->desc[i].name; i++) {
+		desc = &utr->tbl->desc[i];
+		if (index_mask & (1 << desc->index))
+			write_desc_data(utr->fields, desc, utr->entry);
+	}
+
+	utr->index_mask |= index_mask;
+}
+
+struct transaction *srdb_update_commit(struct srdb_update_transact *utr)
+{
+	struct transaction *tr;
+
+	tr = ovsdb_update(utr->srdb, utr->tbl->name, utr->entry->row,
+			  utr->fields);
+
+	json_decref(utr->fields);
+	free(utr);
+
 	return tr;
 }
 
-int srdb_update_sync(struct srdb *srdb, struct srdb_table *tbl,
-		     struct srdb_entry *entry, const char *fieldname,
-		     int *count)
+struct transaction *srdb_update(struct srdb *srdb, struct srdb_table *tbl,
+				struct srdb_entry *entry, unsigned int index)
+{
+	struct srdb_update_transact *utr;
+
+	utr = srdb_update_prepare(srdb, tbl, entry);
+	if (!utr)
+		return NULL;
+
+	srdb_update_append(utr, index);
+
+	return srdb_update_commit(utr);
+}
+
+int srdb_update_result(struct transaction *tr, int *count)
 {
 	json_t *res, *error, *jres, *jcount;
-	struct transaction *tr;
 	int ret = 0;
-
-	tr = srdb_update(srdb, tbl, entry, fieldname);
-	if (!tr)
-		return -1;
 
 	res = sbuf_pop(tr->result);
 
@@ -914,26 +1013,34 @@ out_error:
 	goto out_free;
 }
 
+int srdb_update_sync(struct srdb *srdb, struct srdb_table *tbl,
+		     struct srdb_entry *entry, unsigned int index,
+		     int *count)
+{
+	struct transaction *tr;
+
+	tr = srdb_update(srdb, tbl, entry, index);
+	if (!tr)
+		return -1;
+
+	return srdb_update_result(tr, count);
+}
+
 struct transaction *srdb_insert(struct srdb *srdb, struct srdb_table *tbl,
 				struct srdb_entry *entry)
 {
 	const struct srdb_descriptor *tmp;
 	struct transaction *tr = NULL;
-	int ret;
 
 	json_t *row = json_object();
 
 	for (tmp = tbl->desc; tmp->name; tmp++) {
-		if (!tmp->builtin) {
-			ret = write_desc_data(row, tmp, entry);
-			if (ret < 0)
-				goto free_json;
-		}
+		if (!tmp->builtin)
+			write_desc_data(row, tmp, entry);
 	}
 
 	tr = ovsdb_insert(srdb, tbl->name, row);
 
-free_json:
 	json_decref(row);
 	return tr;
 }

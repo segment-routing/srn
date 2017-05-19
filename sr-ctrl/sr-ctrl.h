@@ -86,6 +86,7 @@ struct src_prefix {
 };
 
 struct flow {
+	char uuid[SLEN + 1];
 	char src[SLEN + 1];
 	char dst[SLEN + 1];
 	struct in6_addr dstaddr;
@@ -99,7 +100,39 @@ struct flow {
 	uint32_t idle;
 	time_t timestamp;
 	enum flow_status status;
+	char proxy[SLEN + 1];
+	char request_id[SLEN + 1];
+	atomic_t refcount __refcount_aligned;
 };
+
+static inline void flow_hold(struct flow *fl)
+{
+	atomic_inc(&fl->refcount);
+}
+
+static inline void flow_release(struct flow *fl)
+{
+	if (atomic_dec(&fl->refcount) == 0) {
+		unsigned int i;
+
+		node_release(fl->srcrt->node);
+		node_release(fl->dstrt->node);
+
+		for (i = 0; i < fl->nb_prefixes; i++)
+			free_segments(fl->src_prefixes[i].segs);
+
+		free(fl->src_prefixes);
+		free(fl);
+	}
+}
+
+static inline struct in6_addr *segment_addr(struct segment *s)
+{
+	if (s->adjacency)
+		return &((struct link *)s->edge->data)->remote;
+	else
+		return &((struct router *)s->node->data)->addr;
+}
 
 extern struct d_ops delay_below_ops;
 extern struct graph_ops g_ops_srdns;

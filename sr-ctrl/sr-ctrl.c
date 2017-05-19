@@ -80,6 +80,7 @@ static void config_set_defaults(struct config *cfg)
 	strcpy(cfg->ovsdb_conf.ovsdb_client, "ovsdb-client");
 	strcpy(cfg->ovsdb_conf.ovsdb_server, "tcp:[::1]:6640");
 	strcpy(cfg->ovsdb_conf.ovsdb_database, "SR_test");
+	cfg->ovsdb_conf.ntransacts = 1;
 	cfg->worker_threads = 1;
 	cfg->req_buffer_size = 16;
 	cfg->providers = &internal_provider;
@@ -117,12 +118,19 @@ out_free_graph:
 	return -1;
 }
 
-static int __unused netstate_graph_sync(struct netstate *ns)
+static int netstate_graph_sync(struct netstate *ns)
 {
 	struct graph *g, *old_g;
 
 	graph_read_lock(ns->graph_staging);
+
+	if (!ns->graph_staging->dirty) {
+		graph_unlock(ns->graph_staging);
+		return 0;
+	}
+
 	g = graph_deepcopy(ns->graph_staging);
+
 	graph_unlock(ns->graph_staging);
 
 	if (!g)
@@ -140,10 +148,11 @@ static int __unused netstate_graph_sync(struct netstate *ns)
 
 	graph_destroy(old_g, false);
 
-	return 0;
+	return 1;
 }
 
-static int set_status(struct srdb_flowreq_entry *req, enum flowreq_status st)
+static int set_flowreq_status(struct srdb_flowreq_entry *req,
+			      enum flowreq_status st)
 {
 	struct srdb_table *tbl;
 
@@ -151,125 +160,170 @@ static int set_status(struct srdb_flowreq_entry *req, enum flowreq_status st)
 	req->status = st;
 
 	return srdb_update_sync(_cfg.srdb, tbl, (struct srdb_entry *)req,
-				"status", NULL);
+				FREQ_STATUS, NULL);
 }
 
-static int commit_flow(struct srdb_flowreq_entry *req, struct router *rt,
-		       struct flow *fl)
+static int set_flow_status(struct flow *fl, enum flow_status st)
 {
-	struct srdb_flow_entry flow_entry;
-	struct llist_node *iter;
+	struct srdb_flow_entry fe;
+	struct srdb_table *tbl;
+
+	fl->status = st;
+
+	tbl = srdb_table_by_name(_cfg.srdb->tables, "FlowState");
+	strncpy(fe._row, fl->uuid, SLEN);
+	fe.status = st;
+
+	return srdb_update_sync(_cfg.srdb, tbl, (struct srdb_entry *)&fe,
+				FE_STATUS, NULL);
+}
+
+static json_t *pref_bsid_to_json(struct flow *fl)
+{
+	char ip[INET6_ADDRSTRLEN];
 	unsigned int i;
-	unsigned int j = 0;
-	unsigned int k = 0;
-	unsigned int m = 0;
-	int length = 0;
-	int ret = 0;
+	json_t *json;
 
-	memset(&flow_entry, 0, sizeof(flow_entry));
-
-	memcpy(flow_entry.destination, fl->dst, SLEN);
-	memcpy(flow_entry.source, fl->src, SLEN);
-	inet_ntop(AF_INET6, &fl->dstaddr, flow_entry.dstaddr, INET6_ADDRSTRLEN);
-
-
-	flow_entry.segments = calloc(1, SLEN_LIST + 1);
-	if (!flow_entry.segments)
-		return -1;
+	json = json_array();
 
 	for (i = 0; i < fl->nb_prefixes; i++) {
-		length = snprintf(flow_entry.sourceIPs + j, SLEN_LIST + 1 - j,
-				  "%s[%d,\"%s\",%d]%s", i == 0 ? "[" : "",
-				  fl->src_prefixes[i].priority, fl->src_prefixes[i].addr,
-				  fl->src_prefixes[i].prefix_len,
-				  i == fl->nb_prefixes - 1 ? "]" : ",");
-		if (length >= (int) (SLEN_LIST + 1 - j))
-			goto err_many_segs;
-		j += length;
-
-		length = snprintf(flow_entry.bsid + k, SLEN_LIST + 1 - k, "%s\"", i == 0 ? "[" : "");
-		if (length >= (int) (SLEN_LIST + 1 - k))
-			goto err_many_segs;
-		k += length;
-
-		inet_ntop(AF_INET6, &fl->src_prefixes[i].bsid, flow_entry.bsid + k, SLEN_LIST + 1 - k);
-		k += strlen(flow_entry.bsid + k);
-
-		length = snprintf(flow_entry.bsid + k, SLEN_LIST + 1 - k, "\"%s",
-				  i == fl->nb_prefixes - 1 ? "]" : ",");
-		if (length >= (int) (SLEN_LIST + 1 - k))
-			goto err_many_segs;
-			k += length;
-
-		length = snprintf(flow_entry.segments + m, SLEN_LIST + 1 - m, "%s[", i == 0 ? "[" : "");
-		if (length >= (int) (SLEN_LIST + 1 - m))
-			goto err_many_segs;
-		m += length;
-
-		llist_node_foreach(fl->src_prefixes[i].segs, iter) {
-			struct segment *s;
-			struct in6_addr *seg_addr;
-
-			flow_entry.segments[m] = '"';
-			m++;
-
-			s = iter->data;
-			if (!s->adjacency) {
-				struct router *r;
-
-				r = s->node->data;
-				seg_addr = &r->addr;
-			} else {
-				struct link *l;
-
-				l = s->edge->data;
-				seg_addr = &l->remote;
-			}
-
-			inet_ntop(AF_INET6, seg_addr, flow_entry.segments + m, SLEN_LIST + 1 - m);
-			m += strlen(flow_entry.segments + m);
-			if (m + 1 >= SLEN_LIST)
-				goto err_many_segs;
-
-			flow_entry.segments[m] = '"';
-			m++;
-
-			if (iter != llist_node_last_entry(fl->src_prefixes[i].segs)) {
-				flow_entry.segments[m] = ',';
-				m++;
-			}
-		}
-		length = snprintf(flow_entry.segments + m, SLEN_LIST + 1 - m, "]%s",
-				  i == fl->nb_prefixes - 1 ? "]" : ",");
-		if (length >= (int) (SLEN_LIST + 1 - m))
-		goto err_many_segs;
-		m += length;
+		inet_ntop(AF_INET6, &fl->src_prefixes[i].bsid, ip,
+			  INET6_ADDRSTRLEN);
+		json_array_append_new(json, json_string(ip));
 	}
 
-	memcpy(flow_entry.router, rt->name, SLEN);
-	memcpy(flow_entry.proxy, req->proxy, SLEN);
+	return json;
+}
 
-	flow_entry.bandwidth = fl->bw;
-	flow_entry.delay = fl->delay;
-	flow_entry.ttl = fl->ttl;
-	flow_entry.idle = fl->idle;
-	flow_entry.timestamp = time(NULL);
-	flow_entry.status = FLOW_STATUS_ACTIVE;
+static json_t *pref_srcips_to_json(struct flow *fl)
+{
+	char ip[INET6_ADDRSTRLEN];
+	unsigned int i;
+	json_t *json;
 
-	memcpy(flow_entry.request_id, req->request_id, SLEN);
+	json = json_array();
 
-	ret = srdb_insert_sync(_cfg.srdb,
-			       srdb_table_by_name(_cfg.srdb->tables,
-						  "FlowState"),
-			       (struct srdb_entry *)&flow_entry, NULL);
+	for (i = 0; i < fl->nb_prefixes; i++) {
+		json_t *srcip;
 
-out:
-	free(flow_entry.segments);
+		srcip = json_array();
+		inet_ntop(AF_INET6, &fl->src_prefixes[i].addr, ip,
+			  INET6_ADDRSTRLEN);
+		json_array_append_new(srcip,
+				json_integer(fl->src_prefixes[i].priority));
+		json_array_append_new(srcip, json_string(ip));
+		json_array_append_new(srcip,
+				json_integer(fl->src_prefixes[i].prefix_len));
+		json_array_append_new(json, srcip);
+	}
 
-	return ret;
-err_many_segs:
-	ret = -1;
-	goto out;
+	return json;
+}
+
+static json_t *pref_segs_to_json(struct flow *fl)
+{
+	char ip[INET6_ADDRSTRLEN];
+	struct llist_node *iter;
+	unsigned int i;
+	json_t *json;
+
+	json = json_array();
+
+	for (i = 0; i < fl->nb_prefixes; i++) {
+		json_t *segs;
+
+		segs = json_array();
+		llist_node_foreach(fl->src_prefixes[i].segs, iter) {
+			struct segment *s = iter->data;
+			struct in6_addr *addr;
+
+			addr = segment_addr(s);
+			inet_ntop(AF_INET6, addr, ip, INET6_ADDRSTRLEN);
+			json_array_append_new(segs, json_string(ip));
+		}
+		json_array_append_new(json, segs);
+	}
+
+	return json;
+}
+
+static void flow_to_flowentry(struct flow *fl, struct srdb_flow_entry *fe,
+			      unsigned int fields)
+{
+	json_t *jsegs_all, *jsrcips_all, *jbsid_all;
+
+	memset(fe, 0, sizeof(struct srdb_flow_entry));
+
+	if (fields & FE_DESTINATION)
+		memcpy(fe->destination, fl->dst, SLEN);
+
+	if (fields & FE_SOURCE)
+		memcpy(fe->source, fl->src, SLEN);
+
+	if (fields & FE_DSTADDR)
+		inet_ntop(AF_INET6, &fl->dstaddr, fe->dstaddr, INET6_ADDRSTRLEN);
+
+	/* sourceIPs: [[5,2001:abcd::,64],[1,2001:abcd::42,64]]
+	 * bsid: [bsid1,bsid2]
+	 * segments: [[S1_1,S1_2,S1_3],[S2_1,S2_2]]
+	 */
+
+	if (fields & FE_SEGMENTS) {
+		jsegs_all = pref_segs_to_json(fl);
+		fe->segments = json_dumps(jsegs_all, JSON_COMPACT);
+		json_decref(jsegs_all);
+	}
+
+	if (fields & FE_SOURCEIPS) {
+		jsrcips_all = pref_srcips_to_json(fl);
+		fe->sourceIPs = json_dumps(jsrcips_all, JSON_COMPACT);
+		json_decref(jsrcips_all);
+	}
+
+	if (fields & FE_BSID) {
+		jbsid_all = pref_bsid_to_json(fl);
+		fe->bsid = json_dumps(jbsid_all, JSON_COMPACT);
+		json_decref(jbsid_all);
+	}
+
+	if (fields & FE_ROUTER)
+		memcpy(fe->router, fl->srcrt->name, SLEN);
+
+	if (fields & FE_PROXY)
+		memcpy(fe->proxy, fl->proxy, SLEN);
+
+	if (fields & FE_REQID)
+		memcpy(fe->request_id, fl->request_id, SLEN);
+
+	if (fields & FE_BANDWIDTH)
+		fe->bandwidth = fl->bw;
+
+	if (fields & FE_DELAY)
+		fe->delay = fl->delay;
+
+	if (fields & FE_TTL)
+		fe->ttl = fl->ttl;
+
+	if (fields & FE_IDLE)
+		fe->idle = fl->idle;
+
+	if (fields & FE_TS)
+		fe->timestamp = fl->timestamp;
+
+	if (fields & FE_STATUS)
+		fe->status = fl->status;
+}
+
+static int commit_flow(struct flow *fl)
+{
+	struct srdb_flow_entry fe;
+
+	flow_to_flowentry(fl, &fe, FE_ALL);
+
+	return srdb_insert_sync(_cfg.srdb,
+				srdb_table_by_name(_cfg.srdb->tables,
+						   "FlowState"),
+				(struct srdb_entry *)&fe, fl->uuid);
 }
 
 static void generate_bsid(struct router *rt, struct in6_addr *res)
@@ -410,7 +464,7 @@ static int select_providers(struct flow *fl)
 		fl->src_prefixes[i].priority = 0; /* XXX Play with it */
 	}
 
-	return fl->nb_prefixes;;
+	return fl->nb_prefixes;
 }
 
 static void process_request(struct srdb_entry *entry)
@@ -435,7 +489,7 @@ static void process_request(struct srdb_entry *entry)
 		rstat = REQ_STATUS_DENIED;
 
 	if (rstat == REQ_STATUS_DENIED) {
-		if (set_status(req, rstat) < 0)
+		if (set_flowreq_status(req, rstat) < 0)
 			pr_err("failed to update row uuid %s to status %d\n",
 			       req->_row, rstat);
 		return;
@@ -443,12 +497,14 @@ static void process_request(struct srdb_entry *entry)
 
 	fl = calloc(1, sizeof(*fl));
 	if (!fl) {
-		set_status(req, REQ_STATUS_ERROR);
+		set_flowreq_status(req, REQ_STATUS_ERROR);
 		return;
 	}
 
 	strncpy(fl->src, req->source, SLEN);
 	strncpy(fl->dst, req->destination, SLEN);
+	strncpy(fl->proxy, req->proxy, SLEN);
+	strncpy(fl->request_id, req->request_id, SLEN);
 	inet_pton(AF_INET6, req->dstaddr, &fl->dstaddr);
 	fl->bw = rule->bw ?: req->bandwidth;
 	fl->delay = rule->delay ?: req->delay;
@@ -459,7 +515,7 @@ static void process_request(struct srdb_entry *entry)
 
 	rt = hmap_get(_cfg.ns.routers, req->router);
 	if (!rt) {
-		set_status(req, REQ_STATUS_NOROUTER);
+		set_flowreq_status(req, REQ_STATUS_NOROUTER);
 		goto free_flow;
 	}
 
@@ -473,9 +529,12 @@ static void process_request(struct srdb_entry *entry)
 	if (graph_get_node_noref(_cfg.ns.graph, rt->node->id) != rt->node ||
 	    graph_get_node_noref(_cfg.ns.graph, dstrt->node->id) !=
 	    dstrt->node) {
-		set_status(req, REQ_STATUS_UNAVAILABLE);
+		set_flowreq_status(req, REQ_STATUS_UNAVAILABLE);
 		goto free_flow;
 	}
+
+	node_hold(rt->node);
+	node_hold(dstrt->node);
 
 	fl->srcrt = rt;
 	fl->dstrt = dstrt;
@@ -484,7 +543,7 @@ static void process_request(struct srdb_entry *entry)
 	 * either an error occurred or no source prefix is available.
 	 */
 	if (select_providers(fl) <= 0) {
-		if (set_status(req, REQ_STATUS_ERROR) < 0)
+		if (set_flowreq_status(req, REQ_STATUS_ERROR) < 0)
 			pr_err("failed to update row uuid %s to status %d\n",
 			       req->_row, REQ_STATUS_ERROR);
 		goto free_flow;
@@ -502,16 +561,16 @@ static void process_request(struct srdb_entry *entry)
 	segs = build_segpath(_cfg.ns.graph, &pspec);
 
 	if (!segs) {
-		set_status(req, REQ_STATUS_UNAVAILABLE);
+		set_flowreq_status(req, REQ_STATUS_UNAVAILABLE);
 		goto free_src_prefixes;
 	}
 
 	fl->src_prefixes[0].segs = segs;
+	fl->refcount = 1;
 
 	hmap_write_lock(_cfg.flows);
 	generate_unique_bsid(rt, &fl->src_prefixes[0].bsid);
 	hmap_set(_cfg.flows, &fl->src_prefixes[0].bsid, fl);
-	hmap_unlock(_cfg.flows);
 
 	for (i = 1; i < fl->nb_prefixes; i++) {
 		fl->src_prefixes[i].segs = copy_segments(segs);
@@ -519,19 +578,22 @@ static void process_request(struct srdb_entry *entry)
 		if (dstrt) {
 			fl->src_prefixes[i].bsid = fl->src_prefixes[0].bsid;
 		} else {
-			hmap_write_lock(_cfg.flows);
 			generate_unique_bsid(rt, &fl->src_prefixes[i].bsid);
+			fl->refcount++;
 			hmap_set(_cfg.flows, &fl->src_prefixes[i].bsid, fl);
-			hmap_unlock(_cfg.flows);
 		}
 	}
 
-	if (commit_flow(req, rt, fl)) {
-		set_status(req, REQ_STATUS_ERROR);
+	hmap_unlock(_cfg.flows);
+
+	fl->status = FLOW_STATUS_ACTIVE;
+
+	if (commit_flow(fl)) {
+		set_flowreq_status(req, REQ_STATUS_ERROR);
 		goto free_segs;
 	}
 
-	set_status(req, REQ_STATUS_ALLOWED);
+	set_flowreq_status(req, REQ_STATUS_ALLOWED);
 
 	net_state_unlock(&_cfg.ns);
 
@@ -758,6 +820,149 @@ static void *thread_worker(void *arg __unused)
 	return NULL;
 }
 
+static void gc_flows(void)
+{
+	struct llist_node *nhead, *iter;
+	struct hmap_entry *he, *tmp;
+	struct flow *fl;
+	time_t now;
+
+	/* Using a temporary list to store flows to be removed enables to
+	 * minimize the work performed with the flows write lock held.
+	 * The most expensive function is set_flow_status() which performs
+	 * a synchronous SRDB transaction and must be realised outside the
+	 * critical section.
+	 */
+	nhead = llist_node_alloc();
+	if (!nhead)
+		return;
+
+	now = time(NULL);
+
+	hmap_write_lock(_cfg.flows);
+
+	hmap_foreach_safe(_cfg.flows, he, tmp) {
+		fl = he->elem;
+
+		if (fl->ttl && now > fl->timestamp + fl->ttl) {
+			hmap_delete(_cfg.flows, he->key);
+			llist_node_insert_tail(nhead, fl);
+		}
+	}
+
+	hmap_unlock(_cfg.flows);
+
+	llist_node_foreach(nhead, iter) {
+		fl = iter->data;
+		set_flow_status(fl, FLOW_STATUS_EXPIRED);
+		flow_release(fl);
+	}
+
+	llist_node_destroy(nhead);
+}
+
+static void recompute_flow(struct flow *fl)
+{
+	struct srdb_flow_entry fe;
+	struct llist_node *segs;
+	struct srdb_table *tbl;
+	struct transaction *tr;
+	struct pathspec pspec;
+	unsigned int i;
+
+	struct srdb_update_transact *utr;
+
+	memset(&pspec, 0, sizeof(pspec));
+	pspec.src = fl->srcrt->node;
+	pspec.dst = fl->dstrt->node;
+
+	net_state_read_lock(&_cfg.ns);
+
+	segs = build_segpath(_cfg.ns.graph, &pspec);
+
+	if (!segs)
+		goto out_unlock;
+
+	/* TODO do not update if segs equal */
+
+	/* commit flow with updated segments */
+
+	free_segments(fl->src_prefixes[0].segs);
+	fl->src_prefixes[0].segs = segs;
+
+	for (i = 1; i < fl->nb_prefixes; i++) {
+		free_segments(fl->src_prefixes[i].segs);
+		fl->src_prefixes[i].segs = copy_segments(segs);
+	}
+
+	flow_to_flowentry(fl, &fe, FE_SEGMENTS);
+	tbl = srdb_table_by_name(_cfg.srdb->tables, "FlowState");
+	utr = srdb_update_prepare(_cfg.srdb, tbl, (struct srdb_entry *)&fe);
+	srdb_update_append(utr, FE_SEGMENTS);
+	tr = srdb_update_commit(utr);
+
+	if (srdb_update_result(tr, NULL) < 0)
+		pr_err("failed to commit recomputed segments.");
+
+out_unlock:
+	net_state_unlock(&_cfg.ns);
+}
+
+static void recompute_flows(void)
+{
+	struct llist_node *nhead, *iter;
+	struct hmap_entry *he;
+	struct flow *fl;
+
+	nhead = llist_node_alloc();
+	if (!nhead)
+		return;
+
+	hmap_read_lock(_cfg.flows);
+
+	hmap_foreach(_cfg.flows, he) {
+		fl = he->elem;
+		flow_hold(fl);
+		llist_node_insert_tail(nhead, fl);
+	}
+
+	hmap_unlock(_cfg.flows);
+
+	llist_node_foreach(nhead, iter) {
+		fl = iter->data;
+		recompute_flow(fl);
+		flow_release(fl);
+	}
+
+	llist_node_destroy(nhead);
+}
+
+static void *thread_netmon(void *arg __unused)
+{
+	struct netstate *ns = &_cfg.ns;
+	int ret;
+
+	for (;;) {
+		/* Synchronize network graph. If the frequency is too high,
+		 * a dedicated timer may be used to trigger the sync.
+		 */
+		ret = netstate_graph_sync(ns);
+		if (ret < 0)
+			pr_err("failed to synchronize staging network graph.");
+
+		/* garbage collect expired flows */
+		gc_flows();
+
+		/* process altered flows */
+		if (ret > 0)
+			recompute_flows();
+
+		usleep(20000);
+	}
+
+	return NULL;
+}
+
 struct monitor_arg {
 	struct srdb *srdb;
 	struct srdb_table *table;
@@ -852,6 +1057,7 @@ int main(int argc, char **argv)
 	struct monitor_arg margs[3];
 	pthread_t mon_thr[3];
 	pthread_t *workers;
+	pthread_t netmon;
 	unsigned int i;
 	int ret = 0;
 
@@ -916,6 +1122,8 @@ int main(int argc, char **argv)
 
 	launch_srdb(mon_thr, margs);
 
+	pthread_create(&netmon, NULL, thread_netmon, NULL);
+
 	for (i = 0; i < sizeof(mon_thr) / sizeof(pthread_t); i++)
 		pthread_join(mon_thr[i], NULL);
 
@@ -924,6 +1132,8 @@ int main(int argc, char **argv)
 
 	for (i = 0; i < _cfg.worker_threads; i++)
 		pthread_join(workers[i], NULL);
+
+	pthread_join(netmon, NULL);
 
 	free(workers);
 free_req_buffer:

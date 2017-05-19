@@ -140,7 +140,7 @@ static int set_status(struct srdb_flow_entry *flow_entry, enum flow_status st)
 	flow_entry->status = st;
 
 	return srdb_update_sync(_cfg.srdb, tbl, (struct srdb_entry *)flow_entry,
-			   "status", NULL);
+			   FE_STATUS, NULL);
 }
 
 static int read_flowstate(struct srdb_entry *entry)
