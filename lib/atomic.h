@@ -14,12 +14,12 @@ typedef int atomic_t;
 
 static inline atomic_t atomic_inc(atomic_t *val)
 {
-	return __sync_fetch_and_add(val, 1);
+	return __sync_add_and_fetch(val, 1);
 }
 
 static inline atomic_t atomic_dec(atomic_t *val)
 {
-	return __sync_fetch_and_sub(val, 1);
+	return __sync_sub_and_fetch(val, 1);
 }
 
 #endif

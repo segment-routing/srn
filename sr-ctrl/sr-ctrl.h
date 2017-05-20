@@ -48,7 +48,7 @@ static inline void rt_release(struct router *rt)
 {
 	struct llist_node *iter;
 
-	if (atomic_dec(&rt->refcount) == 1) {
+	if (atomic_dec(&rt->refcount) == 0) {
 		llist_node_foreach(rt->prefixes, iter)
 			free(iter->data);
 		llist_node_destroy(rt->prefixes);
@@ -72,7 +72,7 @@ static inline void link_hold(struct link *link)
 
 static inline void link_release(struct link *link)
 {
-	if (atomic_dec(&link->refcount) == 1)
+	if (atomic_dec(&link->refcount) == 0)
 		free(link);
 }
 
@@ -112,7 +112,7 @@ static inline void flow_hold(struct flow *fl)
 
 static inline void flow_release(struct flow *fl)
 {
-	if (atomic_dec(&fl->refcount) == 1) {
+	if (atomic_dec(&fl->refcount) == 0) {
 		unsigned int i;
 
 		node_release(fl->srcrt->node);

@@ -66,7 +66,7 @@ static inline void node_hold(struct node *node)
 
 static inline void node_release(struct node *node)
 {
-	if (atomic_dec(&node->refcount) == 1) {
+	if (atomic_dec(&node->refcount) == 0) {
 		if (node->destroy)
 			node->destroy(node);
 		free(node);
@@ -80,7 +80,7 @@ static inline void edge_hold(struct edge *edge)
 
 static inline void edge_release(struct edge *edge)
 {
-	if (atomic_dec(&edge->refcount) == 1) {
+	if (atomic_dec(&edge->refcount) == 0) {
 		if (edge->destroy)
 			edge->destroy(edge);
 		node_release(edge->local);
