@@ -260,13 +260,13 @@ static void flow_to_flowentry(struct flow *fl, struct srdb_flow_entry *fe,
 
 	memset(fe, 0, sizeof(struct srdb_flow_entry));
 
-	if (fields & FE_DESTINATION)
+	if (fields & (1 << FE_DESTINATION))
 		memcpy(fe->destination, fl->dst, SLEN);
 
-	if (fields & FE_SOURCE)
+	if (fields & (1 << FE_SOURCE))
 		memcpy(fe->source, fl->src, SLEN);
 
-	if (fields & FE_DSTADDR)
+	if (fields & (1 << FE_DSTADDR))
 		inet_ntop(AF_INET6, &fl->dstaddr, fe->dstaddr, INET6_ADDRSTRLEN);
 
 	/* sourceIPs: [[5,2001:abcd::,64],[1,2001:abcd::42,64]]
@@ -274,49 +274,49 @@ static void flow_to_flowentry(struct flow *fl, struct srdb_flow_entry *fe,
 	 * segments: [[S1_1,S1_2,S1_3],[S2_1,S2_2]]
 	 */
 
-	if (fields & FE_SEGMENTS) {
+	if (fields & (1 << FE_SEGMENTS)) {
 		jsegs_all = pref_segs_to_json(fl);
 		fe->segments = json_dumps(jsegs_all, JSON_COMPACT);
 		json_decref(jsegs_all);
 	}
 
-	if (fields & FE_SOURCEIPS) {
+	if (fields & (1 << FE_SOURCEIPS)) {
 		jsrcips_all = pref_srcips_to_json(fl);
 		fe->sourceIPs = json_dumps(jsrcips_all, JSON_COMPACT);
 		json_decref(jsrcips_all);
 	}
 
-	if (fields & FE_BSID) {
+	if (fields & (1 << FE_BSID)) {
 		jbsid_all = pref_bsid_to_json(fl);
 		fe->bsid = json_dumps(jbsid_all, JSON_COMPACT);
 		json_decref(jbsid_all);
 	}
 
-	if (fields & FE_ROUTER)
+	if (fields & (1 << FE_ROUTER))
 		memcpy(fe->router, fl->srcrt->name, SLEN);
 
-	if (fields & FE_PROXY)
+	if (fields & (1 << FE_PROXY))
 		memcpy(fe->proxy, fl->proxy, SLEN);
 
-	if (fields & FE_REQID)
+	if (fields & (1 << FE_REQID))
 		memcpy(fe->request_id, fl->request_id, SLEN);
 
-	if (fields & FE_BANDWIDTH)
+	if (fields & (1 << FE_BANDWIDTH))
 		fe->bandwidth = fl->bw;
 
-	if (fields & FE_DELAY)
+	if (fields & (1 << FE_DELAY))
 		fe->delay = fl->delay;
 
-	if (fields & FE_TTL)
+	if (fields & (1 << FE_TTL))
 		fe->ttl = fl->ttl;
 
-	if (fields & FE_IDLE)
+	if (fields & (1 << FE_IDLE))
 		fe->idle = fl->idle;
 
-	if (fields & FE_TS)
+	if (fields & (1 << FE_TS))
 		fe->timestamp = fl->timestamp;
 
-	if (fields & FE_STATUS)
+	if (fields & (1 << FE_STATUS))
 		fe->status = fl->status;
 }
 
