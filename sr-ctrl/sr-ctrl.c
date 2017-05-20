@@ -35,6 +35,8 @@ struct provider internal_provider = {
 struct netstate {
 	struct graph *graph;
 	struct graph *graph_staging;
+	struct timeval gs_mod;
+	struct timeval gs_dirty;
 	struct hashmap *routers;
 	struct lpm_tree *prefixes;
 	pthread_rwlock_t lock;
@@ -148,7 +150,11 @@ static int netstate_graph_sync(struct netstate *ns)
 
 	graph_destroy(old_g, false);
 
-	return 1;
+	graph_write_lock(ns->graph_staging);
+	ns->graph_staging->dirty = false;
+	graph_unlock(ns->graph_staging);
+
+	return 0;
 }
 
 static int set_flowreq_status(struct srdb_flowreq_entry *req,
@@ -670,6 +676,9 @@ static int read_nodestate(struct srdb_entry *entry)
 	free(vargs);
 
 	graph_write_lock(_cfg.ns.graph_staging);
+	if (!_cfg.ns.graph_staging->dirty)
+		gettimeofday(&_cfg.ns.gs_dirty, NULL);
+	gettimeofday(&_cfg.ns.gs_mod, NULL);
 	rt->node = graph_add_node(_cfg.ns.graph_staging, rt);
 	graph_unlock(_cfg.ns.graph_staging);
 
@@ -721,6 +730,9 @@ static int read_linkstate(struct srdb_entry *entry)
 	metric = (uint32_t)link_entry->metric ?: UINT32_MAX;
 
 	graph_write_lock(_cfg.ns.graph_staging);
+	if (!_cfg.ns.graph_staging->dirty)
+		gettimeofday(&_cfg.ns.gs_dirty, NULL);
+	gettimeofday(&_cfg.ns.gs_mod, NULL);
 	graph_add_edge(_cfg.ns.graph_staging, rt1->node, rt2->node, metric,
 		       true, link);
 	graph_unlock(_cfg.ns.graph_staging);
@@ -937,27 +949,47 @@ static void recompute_flows(void)
 	llist_node_destroy(nhead);
 }
 
+#define NETMON_LOOP_SLEEP	1
+#define GSYNC_SOFT_TIMEOUT	5
+#define GSYNC_HARD_TIMEOUT	50
+#define GC_FLOWS_TIMEOUT	1000
+
 static void *thread_netmon(void *arg __unused)
 {
 	struct netstate *ns = &_cfg.ns;
-	int ret;
+	struct timeval gc_time, now;
+
+	gettimeofday(&gc_time, NULL);
 
 	for (;;) {
-		/* Synchronize network graph. If the frequency is too high,
-		 * a dedicated timer may be used to trigger the sync.
+		gettimeofday(&now, NULL);
+
+		if (getmsdiff(&now, &gc_time) > GC_FLOWS_TIMEOUT) {
+			gc_flows();
+			gc_time = now;
+		}
+
+		/* attempt to resync graph if dirty and either:
+		 * - last graph mod > NS_GSYNC_SOFT_TIMEOUT
+		 * - dirty set time > NS_GSYNC_HARD_TIMEOUT
 		 */
-		ret = netstate_graph_sync(ns);
-		if (ret < 0)
-			pr_err("failed to synchronize staging network graph.");
 
-		/* garbage collect expired flows */
-		gc_flows();
+		if (!_cfg.ns.graph_staging->dirty)
+			goto next;
 
-		/* process altered flows */
-		if (ret > 0)
+		if (getmsdiff(&now, &_cfg.ns.gs_mod) > GSYNC_SOFT_TIMEOUT ||
+		    getmsdiff(&now, &_cfg.ns.gs_dirty) > GSYNC_HARD_TIMEOUT) {
+			if (netstate_graph_sync(ns) < 0) {
+				pr_err("failed to synchronize staging network "
+					"graph.");
+				goto next;
+			}
+
 			recompute_flows();
+		}
 
-		usleep(20000);
+next:
+		usleep(NETMON_LOOP_SLEEP * 1000);
 	}
 
 	return NULL;
