@@ -45,7 +45,7 @@ struct srdb_table {
 	int (*read_update)(struct srdb_entry *, struct srdb_entry *);
 	int (*read_delete)(struct srdb_entry *);
 	struct srdb_entry *update_entry;
-	struct timeval last_read;
+	sem_t initial_read;
 	bool delayed_free;
 };
 

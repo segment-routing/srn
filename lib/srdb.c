@@ -38,10 +38,12 @@ static int parse_ovsdb_update_tables(json_t *table_updates, int initial,
 	return ret;
 }
 
-static int parse_ovsdb_monitor_reply(json_t *monitor_reply, const char *table,
+static int parse_ovsdb_monitor_reply(json_t *monitor_reply, struct srdb_table *tbl,
 	                             int (*callback)(const char *, json_t *, int,
 						     void *), void *arg)
 {
+	int ret = 0;
+
 	if (!json_is_null(json_object_get(monitor_reply, "error"))) {
 		fprintf(stderr, "There is a non-null error message in the monitor reply\n");
 		return -1;
@@ -51,15 +53,16 @@ static int parse_ovsdb_monitor_reply(json_t *monitor_reply, const char *table,
 		fprintf(stderr, "Monitor reply parsing issue: No result found\n");
 		return -1;
 	}
-	json_t *table_updates = json_object_get(updates, table);
-	if (!table_updates) {
-		// No initial data
-		return 0;
-	}
-	return parse_ovsdb_update_tables(table_updates, 1, callback, arg);
+	json_t *table_updates = json_object_get(updates, tbl->name);
+	if (table_updates)
+		ret = parse_ovsdb_update_tables(table_updates, 1, callback, arg);
+
+	sem_post(&tbl->initial_read);
+
+	return ret;
 }
 
-static int parse_ovsdb_update(json_t *update, const char *table,
+static int parse_ovsdb_update(json_t *update, struct srdb_table *tbl,
 		              int (*callback)(const char *, json_t *, int, void *),
 					      void *arg)
 {
@@ -77,9 +80,9 @@ static int parse_ovsdb_update(json_t *update, const char *table,
 		fprintf(stderr, "Update parsing issue: No update found\n");
 		return -1;
 	}
-	json_t *table_updates = json_object_get(updates, table);
+	json_t *table_updates = json_object_get(updates, tbl->name);
 	if (!table_updates) {
-		fprintf(stderr, "Update parsing issue: No update for table %s found\n", table);
+		fprintf(stderr, "Update parsing issue: No update for table %s found\n", tbl->name);
 		return -1;
 	}
 	return parse_ovsdb_update_tables(table_updates, 0, callback, arg);
@@ -126,8 +129,8 @@ close_sfd:
 	goto out;
 }
 
-static int ovsdb_monitor(const struct ovsdb_config *conf, const char *table,
-			 int modify, int initial, int insert, int delete,
+static int ovsdb_monitor(struct srdb *srdb, struct srdb_table *tbl, int modify,
+			 int initial, int insert, int delete,
 			 int (*callback)(const char *, json_t *, int, void *),
 			 void *arg)
 {
@@ -142,7 +145,7 @@ static int ovsdb_monitor(const struct ovsdb_config *conf, const char *table,
 	char *echo_reply = "{\"id\":\"echo\",\"result\":[],\"error\":null}";
 	size_t echo_reply_len = strlen(echo_reply);
 
-	int sfd = ovsdb_socket(conf);
+	int sfd = ovsdb_socket(srdb->conf);
 	if (sfd < 0) {
 		ret = sfd;
 		goto out;
@@ -150,7 +153,7 @@ static int ovsdb_monitor(const struct ovsdb_config *conf, const char *table,
 
 	/* Request monitoring */
 	ret = snprintf(buf, JSON_BUFLEN + 1, "{\"id\":0,\"method\":\"monitor\",\"params\":[\"%s\",null,{\"%s\":[{\"select\":{\"modify\":%s,\"initial\":%s,\"insert\":%s,\"delete\":%s}}]}]}",
-                       conf->ovsdb_database, table, BOOL_TO_STR(modify),
+                       srdb->conf->ovsdb_database, tbl->name, BOOL_TO_STR(modify),
 		       BOOL_TO_STR(initial), BOOL_TO_STR(insert), BOOL_TO_STR(delete));
 	if (ret < 0) {
 		fprintf(stderr, "%s: snprintf to create monitoring command failed\n", __func__);
@@ -177,9 +180,9 @@ static int ovsdb_monitor(const struct ovsdb_config *conf, const char *table,
 				}
 			} else {
 				if (json_is_integer(json_object_get(json, "id")))
-					stop = parse_ovsdb_monitor_reply(json, table, callback, arg);
+					stop = parse_ovsdb_monitor_reply(json, tbl, callback, arg);
 				else
-					stop = parse_ovsdb_update(json, table, callback, arg);
+					stop = parse_ovsdb_update(json, tbl, callback, arg);
 			}
 			json_decref(json);
 		}
@@ -797,8 +800,6 @@ static int srdb_read(const char *uuid, json_t *json, int initial, void *arg)
 	json_t *old = NULL;
 	int ret = 0;
 
-	gettimeofday(&tbl->last_read, NULL);
-
 	if (!uuid || !json)
 		return -1;
 
@@ -876,8 +877,8 @@ int srdb_monitor(struct srdb *srdb, struct srdb_table *tbl, int modify,
 {
 	int ret;
 
-	ret = ovsdb_monitor(srdb->conf, tbl->name, modify, initial, insert,
-			    delete, srdb_read, tbl);
+	ret = ovsdb_monitor(srdb, tbl, modify, initial, insert, delete,
+			    srdb_read, tbl);
 
 	return ret;
 }

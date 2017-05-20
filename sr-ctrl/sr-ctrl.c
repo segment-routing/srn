@@ -1061,20 +1061,10 @@ static void *thread_monitor(void *_arg)
 static void launch_srdb(pthread_t *thr, struct monitor_arg *args)
 {
 	struct srdb_table *tbl;
-	struct timeval tv;
-
-	/* The tables need to be read in specific order: first nodes,
-	 * then links, finally flow requests. With the existing OVSDB
-	 * interface, it is not possible to know in advance the number
-	 * of initial rows. The workaround is to wait for 200 ms after
-	 * the latest insertion in each table before reading the next
-	 * table. This timer might be changed according to network
-	 * conditions. Fortunately, this ugly hack is only performed
-	 * at initialization.
-	 */
 
 	tbl = srdb_table_by_name(_cfg.srdb->tables, "NodeState");
 	srdb_set_read_cb(_cfg.srdb, "NodeState", read_nodestate);
+	sem_init(&tbl->initial_read, 0, 0);
 	args[0].srdb = _cfg.srdb;
 	args[0].table = tbl;
 	args[0].initial = 1;
@@ -1084,18 +1074,15 @@ static void launch_srdb(pthread_t *thr, struct monitor_arg *args)
 
 	printf("starting nodestate\n");
 
-	gettimeofday(&tbl->last_read, NULL);
 	pthread_create(&thr[0], NULL, thread_monitor, (void *)&args[0]);
 
-	do {
-		gettimeofday(&tv, NULL);
-		usleep(100000);
-	} while (getmsdiff(&tv, &tbl->last_read) < 200);
+	sem_wait(&tbl->initial_read);
 
 	printf("starting linkstate\n");
 
 	tbl = srdb_table_by_name(_cfg.srdb->tables, "LinkState");
 	srdb_set_read_cb(_cfg.srdb, "LinkState", read_linkstate);
+	sem_init(&tbl->initial_read, 0, 0);
 	args[1].srdb = _cfg.srdb;
 	args[1].table = tbl;
 	args[1].initial = 1;
@@ -1103,18 +1090,15 @@ static void launch_srdb(pthread_t *thr, struct monitor_arg *args)
 	args[1].insert = 1;
 	args[1].delete = 1;
 
-	gettimeofday(&tbl->last_read, NULL);
 	pthread_create(&thr[1], NULL, thread_monitor, (void *)&args[1]);
 
-	do {
-		gettimeofday(&tv, NULL);
-		usleep(100000);
-	} while (getmsdiff(&tv, &tbl->last_read) < 200);
+	sem_wait(&tbl->initial_read);
 
 	printf("starting flowreq\n");
 
 	tbl = srdb_table_by_name(_cfg.srdb->tables, "FlowReq");
 	srdb_set_read_cb(_cfg.srdb, "FlowReq", read_flowreq);
+	sem_init(&tbl->initial_read, 0, 0);
 	tbl->delayed_free = true;
 	args[2].srdb = _cfg.srdb;
 	args[2].table = tbl;
@@ -1124,6 +1108,8 @@ static void launch_srdb(pthread_t *thr, struct monitor_arg *args)
 	args[2].delete = 0;
 
 	pthread_create(&thr[2], NULL, thread_monitor, (void *)&args[2]);
+
+	sem_wait(&tbl->initial_read);
 }
 
 int main(int argc, char **argv)
