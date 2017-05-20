@@ -1297,13 +1297,18 @@ void *transaction_worker(void *args)
 	pfd.events = POLLIN | POLLPRI;
 
 	for (;;) {
-		ready = poll(&pfd, 1, 0);
+		ready = poll(&pfd, 1, 1);
 		if (ready < 0) {
 			perror("poll");
 			break;
 		}
 
 		if (ready) {
+			if (pfd.revents & POLLERR) {
+				perror("poll_revents");
+				break;
+			}
+
 			json = fetch_transaction_result(fd);
 			if (json && !pending) {
 				pr_err("received unknown transaction result.");

@@ -137,20 +137,30 @@ out_err:
 	return NULL;
 }
 
+void destroy_rule(struct rule *rule)
+{
+	struct llist_node *iter;
+
+	if (rule->path) {
+		llist_node_foreach(rule->path, iter)
+			free(iter->data);
+		llist_node_destroy(rule->path);
+	}
+
+	free(rule);
+}
+
 void destroy_rules(struct llist_node *rules, struct rule *defrule)
 {
 	struct llist_node *iter;
-	struct rule *rule;
 
 	if (rules) {
-		llist_node_foreach(rules, iter) {
-			rule = iter->data;
-			free(rule);
-		}
+		llist_node_foreach(rules, iter)
+			destroy_rule(iter->data);
 		llist_node_destroy(rules);
 	}
 	if (defrule)
-		free(defrule);
+		destroy_rule(defrule);
 }
 
 struct llist_node *load_rules(const char *fname, struct rule **defrule)

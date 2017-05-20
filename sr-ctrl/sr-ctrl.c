@@ -120,6 +120,25 @@ out_free_graph:
 	return -1;
 }
 
+static void destroy_netstate(void)
+{
+	struct netstate *ns = &_cfg.ns;
+	struct hmap_entry *he;
+
+	hmap_foreach(_cfg.flows, he)
+		flow_release(he->elem);
+
+	graph_destroy(ns->graph, false);
+	graph_destroy(ns->graph_staging, false);
+
+	hmap_foreach(ns->routers, he)
+		rt_release(he->elem);
+
+	hmap_destroy(ns->routers);
+
+	lpm_destroy(ns->prefixes);
+}
+
 static int netstate_graph_sync(struct netstate *ns)
 {
 	struct graph *g, *old_g;
@@ -440,11 +459,34 @@ static bool rt_node_equals(struct node *n1, struct node *n2)
 	return rt_node_data_equals(n1->data, n2->data);
 }
 
+static void *rt_node_data_copy(void *data)
+{
+	return data;
+}
+
+static void *link_edge_data_copy(void *data)
+{
+	struct link *l;
+
+	l = malloc(sizeof(*l));
+	memcpy(l, data, sizeof(*l));
+	l->refcount = 1;
+
+	return l;
+}
+
+static void link_edge_destroy(struct edge *e)
+{
+	link_release(e->data);
+}
+
 struct graph_ops g_ops_srdns = {
 	.node_equals		= rt_node_equals,
 	.node_data_equals	= rt_node_data_equals,
 	.node_destroy		= NULL,
-	.edge_destroy		= NULL,
+	.edge_destroy		= link_edge_destroy,
+	.node_data_copy		= rt_node_data_copy,
+	.edge_data_copy		= link_edge_data_copy,
 };
 
 static int select_providers(struct flow *fl)
@@ -954,14 +996,15 @@ static void recompute_flows(void)
 #define GSYNC_HARD_TIMEOUT	50
 #define GC_FLOWS_TIMEOUT	1000
 
-static void *thread_netmon(void *arg __unused)
+static void *thread_netmon(void *arg)
 {
 	struct netstate *ns = &_cfg.ns;
 	struct timeval gc_time, now;
+	bool *stop = arg;
 
 	gettimeofday(&gc_time, NULL);
 
-	for (;;) {
+	while (!*stop) {
 		gettimeofday(&now, NULL);
 
 		if (getmsdiff(&now, &gc_time) > GC_FLOWS_TIMEOUT) {
@@ -1087,6 +1130,7 @@ int main(int argc, char **argv)
 {
 	const char *conf = DEFAULT_CONFIG;
 	struct monitor_arg margs[3];
+	bool mon_stop = false;
 	pthread_t mon_thr[3];
 	pthread_t *workers;
 	pthread_t netmon;
@@ -1154,7 +1198,7 @@ int main(int argc, char **argv)
 
 	launch_srdb(mon_thr, margs);
 
-	pthread_create(&netmon, NULL, thread_netmon, NULL);
+	pthread_create(&netmon, NULL, thread_netmon, &mon_stop);
 
 	for (i = 0; i < sizeof(mon_thr) / sizeof(pthread_t); i++)
 		pthread_join(mon_thr[i], NULL);
@@ -1165,9 +1209,14 @@ int main(int argc, char **argv)
 	for (i = 0; i < _cfg.worker_threads; i++)
 		pthread_join(workers[i], NULL);
 
+	mon_stop = true;
+
 	pthread_join(netmon, NULL);
 
 	free(workers);
+
+	destroy_netstate();
+
 free_req_buffer:
 	sbuf_destroy(_cfg.req_buffer);
 free_flows:

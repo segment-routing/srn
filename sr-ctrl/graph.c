@@ -103,6 +103,9 @@ void graph_destroy(struct graph *g, bool shallow)
 	struct edge *e;
 	struct node *n;
 
+	graph_flush_cache(g);
+	hmap_destroy(g->dcache);
+
 	pthread_rwlock_destroy(&g->lock);
 
 	hmap_foreach(g->neighs, he) {
@@ -407,6 +410,7 @@ struct graph *graph_deepcopy(struct graph *g)
 		node = iter->data;
 		n2 = malloc(sizeof(*n2));
 		n2->id = node->id;
+		n2->destroy = g->ops->node_destroy;
 		n2->data = g->ops->node_data_copy(node->data);
 		n2->orphan = false;
 		n2->refcount = 1;
@@ -420,6 +424,7 @@ struct graph *graph_deepcopy(struct graph *g)
 		e2->metric = edge->metric;
 		e2->local = graph_get_node(g_copy, edge->local->id);
 		e2->remote = graph_get_node(g_copy, edge->remote->id);
+		e2->destroy = g->ops->edge_destroy;
 		e2->data = g->ops->edge_data_copy(edge->data);
 		e2->orphan = false;
 		e2->refcount = 1;
@@ -774,8 +779,10 @@ void graph_flush_cache(struct graph *g)
 {
 	struct hmap_entry *he;
 
-	hmap_foreach(g->dcache, he)
+	hmap_foreach(g->dcache, he) {
 		graph_dijkstra_free(he->elem);
+		free(he->elem);
+	}
 
 	hmap_flush(g->dcache);
 }
