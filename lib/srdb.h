@@ -12,7 +12,8 @@
 #define SLEN	127
 #define SLEN_LIST	7 * SLEN
 
-#define BITMASK_ALL(last) (0xffffffff & ((1 << ((last) + 1)) - 1))
+#define ENTRY_MASK(x) (1 << (x))
+#define ENTRY_MASK_ALL(last) (0xffffffff & ((ENTRY_MASK((last) + 1)) - 1))
 
 enum srdb_type {
 	SRDB_STR,
@@ -31,7 +32,6 @@ struct srdb_descriptor {
 
 struct srdb_entry {
 	char row[SLEN + 1];
-	char action[SLEN + 1];
 	char version[SLEN + 1];
 };
 
@@ -42,7 +42,8 @@ struct srdb_table {
 	size_t desc_size;
 	size_t entry_size;
 	int (*read)(struct srdb_entry *);
-	int (*read_update)(struct srdb_entry *, struct srdb_entry *);
+	int (*read_update)(struct srdb_entry *, struct srdb_entry *,
+			   unsigned int);
 	int (*read_delete)(struct srdb_entry *);
 	struct srdb_entry *update_entry;
 	sem_t initial_read;
@@ -78,7 +79,6 @@ struct srdb {
 };
 
 #define _row		entry.row
-#define _action		entry.action
 #define _version	entry.version
 
 /* OVSDB tables description */
@@ -93,7 +93,7 @@ enum {
 };
 
 #define RTE_LAST RTE_ROUTER
-#define RTE_ALL BITMASK_ALL(RTE_LAST)
+#define RTE_ALL ENTRY_MASK_ALL(RTE_LAST)
 
 struct srdb_flow_entry {
 	struct srdb_entry entry;
@@ -140,7 +140,7 @@ enum {
 };
 
 #define FE_LAST	FE_STATUS
-#define FE_ALL BITMASK_ALL(FE_LAST)
+#define FE_ALL ENTRY_MASK_ALL(FE_LAST)
 
 enum flow_status {
 	FLOW_STATUS_ACTIVE	= 0,
@@ -175,7 +175,7 @@ enum {
 };
 
 #define FREQ_LAST FREQ_STATUS
-#define FREQ_ALL BITMASK_ALL(FREQ_LAST)
+#define FREQ_ALL ENTRY_MASK_ALL(FREQ_LAST)
 
 enum flowreq_status {
 	REQ_STATUS_PENDING	= 0,
@@ -211,7 +211,7 @@ enum {
 };
 
 #define LS_LAST LS_DELAY
-#define LS_ALL BITMASK_ALL(LS_LAST)
+#define LS_ALL ENTRY_MASK_ALL(LS_LAST)
 
 struct srdb_nodestate_entry {
 	struct srdb_entry entry;
@@ -229,7 +229,7 @@ enum {
 };
 
 #define NODE_LAST NODE_PBSID
-#define NODE_ALL BITMASK_ALL(NODE_LAST)
+#define NODE_ALL ENTRY_MASK_ALL(NODE_LAST)
 
 struct srdb_update_transact {
 	struct srdb *srdb;

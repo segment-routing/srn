@@ -19,28 +19,28 @@
 
 #define MAX_PENDING_MSG 500
 
+typedef int (*srdb_read_cb_t)(const char *, json_t *, void *);
+
 void *transaction_worker(void *args);
 
-static int parse_ovsdb_update_tables(json_t *table_updates, int initial,
-				     int (*callback)(const char *,
-					     	     json_t *, int, void *),
+static int parse_ovsdb_update_tables(json_t *table_updates, srdb_read_cb_t cb,
 				     void *arg)
 {
+	json_t *modification;
+	const char *uuid;
 	int ret = 0;
-	json_t *modification = NULL;
-	const char *uuid = NULL;
 
 	json_object_foreach(table_updates, uuid, modification) {
-		if ((ret = callback(uuid, modification, initial, arg))) {
+		if ((ret = cb(uuid, modification, arg))) {
 			break;
 		}
 	}
 	return ret;
 }
 
-static int parse_ovsdb_monitor_reply(json_t *monitor_reply, struct srdb_table *tbl,
-	                             int (*callback)(const char *, json_t *, int,
-						     void *), void *arg)
+static int parse_ovsdb_monitor_reply(json_t *monitor_reply,
+				     struct srdb_table *tbl,
+				     srdb_read_cb_t cb, void *arg)
 {
 	int ret = 0;
 
@@ -55,7 +55,7 @@ static int parse_ovsdb_monitor_reply(json_t *monitor_reply, struct srdb_table *t
 	}
 	json_t *table_updates = json_object_get(updates, tbl->name);
 	if (table_updates)
-		ret = parse_ovsdb_update_tables(table_updates, 1, callback, arg);
+		ret = parse_ovsdb_update_tables(table_updates, cb, arg);
 
 	sem_post(&tbl->initial_read);
 
@@ -63,29 +63,34 @@ static int parse_ovsdb_monitor_reply(json_t *monitor_reply, struct srdb_table *t
 }
 
 static int parse_ovsdb_update(json_t *update, struct srdb_table *tbl,
-		              int (*callback)(const char *, json_t *, int, void *),
-					      void *arg)
+			      srdb_read_cb_t cb, void *arg)
 {
-	json_t *params = json_object_get(update, "params");
+	json_t *params, *updates, *table_updates;
+
+	params = json_object_get(update, "params");
 	if (!params) {
-		fprintf(stderr, "Update parsing issue: params key not found\n");
+		pr_err("no params object in json.");
 		return -1;
 	}
+
 	if (json_array_size(params) < 2) {
-		fprintf(stderr, "Update parsing issue: No params\n");
+		pr_err("params object has invalid array size.");
 		return -1;
 	}
-	json_t *updates = json_array_get(params, 1);
+
+	updates = json_array_get(params, 1);
 	if (!updates) {
-		fprintf(stderr, "Update parsing issue: No update found\n");
+		pr_err("cannot fetch updates from params array.");
 		return -1;
 	}
-	json_t *table_updates = json_object_get(updates, tbl->name);
+
+	table_updates = json_object_get(updates, tbl->name);
 	if (!table_updates) {
-		fprintf(stderr, "Update parsing issue: No update for table %s found\n", tbl->name);
+		pr_err("cannot fetch updates for table %s.", tbl->name);
 		return -1;
 	}
-	return parse_ovsdb_update_tables(table_updates, 0, callback, arg);
+
+	return parse_ovsdb_update_tables(table_updates, cb, arg);
 }
 
 static inline int parse_ovsdb_echo(json_t *msg)
@@ -130,8 +135,7 @@ close_sfd:
 }
 
 static int ovsdb_monitor(struct srdb *srdb, struct srdb_table *tbl, int modify,
-			 int initial, int insert, int delete,
-			 int (*callback)(const char *, json_t *, int, void *),
+			 int initial, int insert, int delete, srdb_read_cb_t cb,
 			 void *arg)
 {
 	int ret;
@@ -180,9 +184,9 @@ static int ovsdb_monitor(struct srdb *srdb, struct srdb_table *tbl, int modify,
 				}
 			} else {
 				if (json_is_integer(json_object_get(json, "id")))
-					stop = parse_ovsdb_monitor_reply(json, tbl, callback, arg);
+					stop = parse_ovsdb_monitor_reply(json, tbl, cb, arg);
 				else
-					stop = parse_ovsdb_update(json, tbl, callback, arg);
+					stop = parse_ovsdb_update(json, tbl, cb, arg);
 			}
 			json_decref(json);
 		}
@@ -288,18 +292,6 @@ static struct transaction *ovsdb_insert(struct srdb *srdb, const char *table,
 	return tr;
 }
 
-static int find_desc_fromname(struct srdb_descriptor *desc, const char *name)
-{
-	int i;
-
-	for (i = 0; desc[i].name; i++) {
-		if (!strcmp(desc[i].name, name))
-			return i;
-	}
-
-	return -1;
-}
-
 static int find_desc_fromindex(struct srdb_descriptor *desc, unsigned int index)
 {
 	int i;
@@ -312,12 +304,14 @@ static int find_desc_fromindex(struct srdb_descriptor *desc, unsigned int index)
 	return -1;
 }
 
-static void fill_srdb_entry(struct srdb_descriptor *desc,
-			    struct srdb_entry *entry, const char *uuid, json_t *line_json)
+static unsigned int fill_srdb_entry(struct srdb_descriptor *desc,
+				    struct srdb_entry *entry, const char *uuid,
+				    json_t *line_json)
 {
+	unsigned int index_mask = 0;
+	json_t *column_value;
 	void *data;
 	int i;
-	json_t *column_value;
 
 	for (i = 0; desc[i].name; i++) {
 		if (!strcmp(desc[i].name, "row")) {
@@ -326,10 +320,11 @@ static void fill_srdb_entry(struct srdb_descriptor *desc,
 		}
 
 		column_value = json_object_get(line_json, desc[i].name);
-		if (!column_value) {
-			/* XXX This is valid if an updated entry is filled (only changed fields will appear) */
+		if (!column_value)
 			continue;
-		}
+
+		index_mask |= ENTRY_MASK(desc[i].index);
+
 		if (!strcmp(desc[i].name, "_version")) {
 			column_value = json_object_get(line_json, "_version");
 			column_value = json_array_get(column_value, 1);
@@ -339,25 +334,36 @@ static void fill_srdb_entry(struct srdb_descriptor *desc,
 
 		switch (desc[i].type) {
 		case SRDB_STR:
-			if (!json_is_string(column_value))
-				fprintf(stderr, "String is expected for %s but the json is not of that type\n", desc[i].name);
-			else
-				strncpy((char *)data, json_string_value(column_value), desc[i].maxlen);
+			if (!json_is_string(column_value)) {
+				pr_err("type str mismatch for field name `%s'.",
+					desc[i].name);
+			} else {
+				strncpy((char *)data,
+					json_string_value(column_value),
+					desc[i].maxlen);
+			}
 			break;
 		case SRDB_INT:
-			if (!json_is_integer(column_value))
-				fprintf(stderr, "Integer is expected for %s but the json is not of that type\n", desc[i].name);
-			else
+			if (!json_is_integer(column_value)) {
+				pr_err("type int mismatch for field name `%s'.",
+					desc[i].name);
+			} else {
 				*(int *)data = json_integer_value(column_value);
+			}
 			break;
 		case SRDB_VARSTR:
-			if (!json_is_string(column_value))
-				fprintf(stderr, "String is expected for %s but the json is not of that type\n", desc[i].name);
-			else
-				*(char **)data = strndup(json_string_value(column_value), desc[i].maxlen);
+			if (!json_is_string(column_value)) {
+				pr_err("type str mismatch for field name `%s'.",
+					desc[i].name);
+			} else {
+				*(char **)data = strndup(json_string_value(column_value),
+							 desc[i].maxlen);
+			}
 			break;
 		}
 	}
+
+	return index_mask;
 }
 
 void free_srdb_entry(struct srdb_descriptor *desc,
@@ -382,13 +388,7 @@ void free_srdb_entry(struct srdb_descriptor *desc,
 		.maxlen	= SLEN,					\
 		.builtin = true,				\
 		.offset	= offsetof(struct srdb_entry, row),	\
-	},							\
-	{							\
-		.name	= "action",				\
-		.type	= SRDB_STR,				\
-		.maxlen	= SLEN,					\
-		.builtin = true,				\
-		.offset	= offsetof(struct srdb_entry, action),	\
+		.index	= 0,					\
 	},							\
 	{							\
 		.name	= "_version",				\
@@ -396,6 +396,7 @@ void free_srdb_entry(struct srdb_descriptor *desc,
 		.maxlen	= SLEN,					\
 		.builtin = true,				\
 		.offset = offsetof(struct srdb_entry, version),	\
+		.index	= 0,					\
 	}
 
 #define OFFSET_ROUTERIDS(NAME)	offsetof(struct srdb_router_entry, NAME)
@@ -790,14 +791,16 @@ struct srdb_table *srdb_table_by_name(struct srdb_table *tables,
 	return NULL;
 }
 
-static int srdb_read(const char *uuid, json_t *json, int initial, void *arg)
+#define OP_INSERT	1
+#define OP_UPDATE	2
+#define OP_DELETE	3
+
+static int srdb_read(const char *uuid, json_t *json, void *arg)
 {
-	int idx;
+	struct srdb_entry *entry, *update_entry;
 	struct srdb_table *tbl = arg;
-	struct srdb_entry *entry = NULL;
-	char *action;
-	json_t *new = NULL;
-	json_t *old = NULL;
+	unsigned int imask, op = 0;
+	json_t *new, *old;
 	int ret = 0;
 
 	if (!uuid || !json)
@@ -806,70 +809,59 @@ static int srdb_read(const char *uuid, json_t *json, int initial, void *arg)
 	new = json_object_get(json, "new");
 	old = json_object_get(json, "old");
 
-	idx = find_desc_fromname(tbl->desc, "action");
-	if (idx < 0) {
-		pr_err("field `action' not present in row.");
-		free_srdb_entry(tbl->desc, entry);
-		ret = -1;
-		goto out;
+	if (new && !old)
+		op = OP_INSERT;
+	else if (new && old)
+		op = OP_UPDATE;
+	else if (old)
+		op = OP_DELETE;
+
+	if (!op) {
+		pr_err("unknown row data configuration.");
+		return -1;
 	}
 
-	if (new) {
-		entry = calloc(1, tbl->entry_size);
-		action = (char *)entry + tbl->desc[idx].offset;
-		if (!entry) {
-			ret = -1;
-			goto out;
-		}
-	}
-	if (old) {
-		tbl->update_entry = calloc(1, tbl->entry_size);
-		if (!tbl->update_entry) {
-			ret = -1;
-			goto free_new;
-		}
-	}
+	entry = calloc(1, tbl->entry_size);
 
-
-	if (new && !old) {
-		sprintf(action, "%s", initial ? "initial" : "insert");
+	switch (op) {
+	case OP_INSERT:
 		fill_srdb_entry(tbl->desc, entry, uuid, new);
 
 		if (tbl->read)
 			ret = tbl->read(entry);
+
 		if (!tbl->delayed_free)
 			free_srdb_entry(tbl->desc, entry);
-	} else if (new && old) { /* TODO fix for delayed free / MT */
-		strcpy(action, "update");
-		fill_srdb_entry(tbl->desc, tbl->update_entry, uuid, old);
-		memcpy(entry, tbl->update_entry, tbl->entry_size);
-		fill_srdb_entry(tbl->desc, entry, uuid, new);
+
+		break;
+	case OP_UPDATE:
+		update_entry = calloc(1, tbl->entry_size);
+
+		imask = fill_srdb_entry(tbl->desc, entry, uuid, new);
+		fill_srdb_entry(tbl->desc, update_entry, uuid, old);
 
 		if (tbl->read_update)
-			ret = tbl->read_update(tbl->update_entry, entry);
-		free_srdb_entry(tbl->desc, tbl->update_entry);
-		free_srdb_entry(tbl->desc, entry);
-		tbl->update_entry = NULL;
-	} else if (old) {
-		action = (char *)(tbl->update_entry) + tbl->desc[idx].offset;
-		strcpy(action, "delete");
-		fill_srdb_entry(tbl->desc, tbl->update_entry, uuid, old);
+			ret = tbl->read_update(update_entry, entry, imask);
+
+		if (!tbl->delayed_free) {
+			free_srdb_entry(tbl->desc, update_entry);
+			free_srdb_entry(tbl->desc, entry);
+		}
+
+		break;
+	case OP_DELETE:
+		fill_srdb_entry(tbl->desc, entry, uuid, old);
+
 		if (tbl->read_delete)
-			ret = tbl->read_delete(tbl->update_entry);
-		free_srdb_entry(tbl->desc, tbl->update_entry);
-		tbl->update_entry = NULL;
-	} else {
-		free_srdb_entry(tbl->desc, entry);
-		pr_err("unknown action type `%s'.", action);
-		ret = -1;
+			ret = tbl->read_delete(entry);
+
+		if (!tbl->delayed_free)
+			free_srdb_entry(tbl->desc, entry);
+
+		break;
 	}
 
-out:
 	return ret;
-free_new:
-	if (entry)
-		free_srdb_entry(tbl->desc, entry);
-	goto out;
 }
 
 int srdb_monitor(struct srdb *srdb, struct srdb_table *tbl, int modify,
@@ -936,7 +928,7 @@ int srdb_update_append(struct srdb_update_transact *utr, unsigned int index)
 	desc = &utr->tbl->desc[idx];
 
 	write_desc_data(utr->fields, desc, utr->entry);
-	utr->index_mask |= 1 << index;
+	utr->index_mask |= ENTRY_MASK(index);
 
 	return 0;
 }
@@ -949,7 +941,7 @@ void srdb_update_append_mask(struct srdb_update_transact *utr,
 
 	for (i = 0; utr->tbl->desc[i].name; i++) {
 		desc = &utr->tbl->desc[i];
-		if (index_mask & (1 << desc->index))
+		if (index_mask & ENTRY_MASK(desc->index))
 			write_desc_data(utr->fields, desc, utr->entry);
 	}
 

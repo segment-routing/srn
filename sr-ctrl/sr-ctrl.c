@@ -282,13 +282,13 @@ static void flow_to_flowentry(struct flow *fl, struct srdb_flow_entry *fe,
 
 	memcpy(fe->_row, fl->uuid, SLEN);
 
-	if (fields & (1 << FE_DESTINATION))
+	if (fields & ENTRY_MASK(FE_DESTINATION))
 		memcpy(fe->destination, fl->dst, SLEN);
 
-	if (fields & (1 << FE_SOURCE))
+	if (fields & ENTRY_MASK(FE_SOURCE))
 		memcpy(fe->source, fl->src, SLEN);
 
-	if (fields & (1 << FE_DSTADDR))
+	if (fields & ENTRY_MASK(FE_DSTADDR))
 		inet_ntop(AF_INET6, &fl->dstaddr, fe->dstaddr, INET6_ADDRSTRLEN);
 
 	/* sourceIPs: [[5,2001:abcd::,64],[1,2001:abcd::42,64]]
@@ -296,49 +296,49 @@ static void flow_to_flowentry(struct flow *fl, struct srdb_flow_entry *fe,
 	 * segments: [[S1_1,S1_2,S1_3],[S2_1,S2_2]]
 	 */
 
-	if (fields & (1 << FE_SEGMENTS)) {
+	if (fields & ENTRY_MASK(FE_SEGMENTS)) {
 		jsegs_all = pref_segs_to_json(fl);
 		fe->segments = json_dumps(jsegs_all, JSON_COMPACT);
 		json_decref(jsegs_all);
 	}
 
-	if (fields & (1 << FE_SOURCEIPS)) {
+	if (fields & ENTRY_MASK(FE_SOURCEIPS)) {
 		jsrcips_all = pref_srcips_to_json(fl);
 		fe->sourceIPs = json_dumps(jsrcips_all, JSON_COMPACT);
 		json_decref(jsrcips_all);
 	}
 
-	if (fields & (1 << FE_BSID)) {
+	if (fields & ENTRY_MASK(FE_BSID)) {
 		jbsid_all = pref_bsid_to_json(fl);
 		fe->bsid = json_dumps(jbsid_all, JSON_COMPACT);
 		json_decref(jbsid_all);
 	}
 
-	if (fields & (1 << FE_ROUTER))
+	if (fields & ENTRY_MASK(FE_ROUTER))
 		memcpy(fe->router, fl->srcrt->name, SLEN);
 
-	if (fields & (1 << FE_PROXY))
+	if (fields & ENTRY_MASK(FE_PROXY))
 		memcpy(fe->proxy, fl->proxy, SLEN);
 
-	if (fields & (1 << FE_REQID))
+	if (fields & ENTRY_MASK(FE_REQID))
 		memcpy(fe->request_id, fl->request_id, SLEN);
 
-	if (fields & (1 << FE_BANDWIDTH))
+	if (fields & ENTRY_MASK(FE_BANDWIDTH))
 		fe->bandwidth = fl->bw;
 
-	if (fields & (1 << FE_DELAY))
+	if (fields & ENTRY_MASK(FE_DELAY))
 		fe->delay = fl->delay;
 
-	if (fields & (1 << FE_TTL))
+	if (fields & ENTRY_MASK(FE_TTL))
 		fe->ttl = fl->ttl;
 
-	if (fields & (1 << FE_IDLE))
+	if (fields & ENTRY_MASK(FE_IDLE))
 		fe->idle = fl->idle;
 
-	if (fields & (1 << FE_TS))
+	if (fields & ENTRY_MASK(FE_TS))
 		fe->timestamp = fl->timestamp;
 
-	if (fields & (1 << FE_STATUS))
+	if (fields & ENTRY_MASK(FE_STATUS))
 		fe->status = fl->status;
 }
 
