@@ -146,6 +146,7 @@ enum flow_status {
 	FLOW_STATUS_ACTIVE	= 0,
 	FLOW_STATUS_RUNNING	= 1,
 	FLOW_STATUS_EXPIRED	= 2,
+	FLOW_STATUS_ORPHAN	= 3,
 };
 
 struct srdb_flowreq_entry {

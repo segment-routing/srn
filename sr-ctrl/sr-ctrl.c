@@ -4,6 +4,7 @@
 #include <string.h>
 #include <arpa/inet.h>
 #include <time.h>
+#include <assert.h>
 
 #include "llist.h"
 #include "misc.h"
@@ -518,6 +519,7 @@ static int select_providers(struct flow *fl)
 static void process_request(struct srdb_entry *entry)
 {
 	struct srdb_flowreq_entry *req = (struct srdb_flowreq_entry *)entry;
+	struct node *src_node, *dst_node;
 	struct router *rt, *dstrt;
 	enum flowreq_status rstat;
 	struct llist_node *segs;
@@ -526,6 +528,9 @@ static void process_request(struct srdb_entry *entry)
 	struct rule *rule;
 	struct flow *fl;
 	unsigned int i;
+
+	if (req->status != REQ_STATUS_PENDING)
+		return;
 
 	rule = match_rules(_cfg.rules, req->source, req->destination);
 	if (!rule)
@@ -570,19 +575,22 @@ static void process_request(struct srdb_entry *entry)
 	inet_pton(AF_INET6, req->dstaddr, &addr);
 	dstrt = lpm_lookup(_cfg.ns.prefixes, &addr);
 
+	if (!dstrt) {
+		set_flowreq_status(req, REQ_STATUS_NOPREFIX);
+		goto free_flow;
+	}
+
+	src_node = graph_get_node_noref(_cfg.ns.graph, rt->node_id);
+	dst_node = graph_get_node_noref(_cfg.ns.graph, dstrt->node_id);
+
 	/* this may happen in the rare case where a new router appeared in the
 	 * network and was correspondingly inserted in the netstate, but its
 	 * associated graph node is still in the staging graph.
 	 */
-	if (graph_get_node_noref(_cfg.ns.graph, rt->node->id) != rt->node ||
-	    graph_get_node_noref(_cfg.ns.graph, dstrt->node->id) !=
-	    dstrt->node) {
+	if (!src_node || !dst_node) {
 		set_flowreq_status(req, REQ_STATUS_UNAVAILABLE);
 		goto free_flow;
 	}
-
-	node_hold(rt->node);
-	node_hold(dstrt->node);
 
 	fl->srcrt = rt;
 	fl->dstrt = dstrt;
@@ -598,8 +606,8 @@ static void process_request(struct srdb_entry *entry)
 	}
 
 	memset(&pspec, 0, sizeof(pspec));
-	pspec.src = rt->node;
-	pspec.dst = dstrt->node;
+	pspec.src = src_node;
+	pspec.dst = dst_node;
 	pspec.via = rule->path;
 	pspec.data = fl;
 	pspec.prune = pre_prune;
@@ -675,6 +683,7 @@ static int read_flowreq(struct srdb_entry *entry)
 static int read_nodestate(struct srdb_entry *entry)
 {
 	struct srdb_nodestate_entry *node_entry;
+	struct node *rt_node;
 	struct router *rt;
 	struct prefix *p;
 	char **vargs;
@@ -718,10 +727,15 @@ static int read_nodestate(struct srdb_entry *entry)
 	free(vargs);
 
 	graph_write_lock(_cfg.ns.graph_staging);
+
 	if (!_cfg.ns.graph_staging->dirty)
 		gettimeofday(&_cfg.ns.gs_dirty, NULL);
+
 	gettimeofday(&_cfg.ns.gs_mod, NULL);
-	rt->node = graph_add_node(_cfg.ns.graph_staging, rt);
+
+	rt_node = graph_add_node(_cfg.ns.graph_staging, rt);
+	rt->node_id = rt_node->id;
+
 	graph_unlock(_cfg.ns.graph_staging);
 
 	rt->refcount = 1;
@@ -739,6 +753,7 @@ out_err:
 static int read_linkstate(struct srdb_entry *entry)
 {
 	struct srdb_linkstate_entry *link_entry;
+	struct node *rt1_node, *rt2_node;
 	struct router *rt1, *rt2;
 	struct link *link;
 	uint32_t metric;
@@ -772,11 +787,20 @@ static int read_linkstate(struct srdb_entry *entry)
 	metric = (uint32_t)link_entry->metric ?: UINT32_MAX;
 
 	graph_write_lock(_cfg.ns.graph_staging);
+
 	if (!_cfg.ns.graph_staging->dirty)
 		gettimeofday(&_cfg.ns.gs_dirty, NULL);
+
 	gettimeofday(&_cfg.ns.gs_mod, NULL);
-	graph_add_edge(_cfg.ns.graph_staging, rt1->node, rt2->node, metric,
+
+	rt1_node = graph_get_node_noref(_cfg.ns.graph_staging, rt1->node_id);
+	rt2_node = graph_get_node_noref(_cfg.ns.graph_staging, rt2->node_id);
+
+	assert(rt1_node && rt2_node);
+
+	graph_add_edge(_cfg.ns.graph_staging, rt1_node, rt2_node, metric,
 		       true, link);
+
 	graph_unlock(_cfg.ns.graph_staging);
 
 	net_state_unlock(&_cfg.ns);
@@ -898,7 +922,11 @@ static void gc_flows(void)
 	hmap_foreach_safe(_cfg.flows, he, tmp) {
 		fl = he->elem;
 
-		if (fl->ttl && now > fl->timestamp + fl->ttl) {
+		/* Flows are orphaned when the source or destination router's
+		 * node is removed from the network.
+		 */
+		if ((fl->ttl && now > fl->timestamp + fl->ttl) ||
+		    fl->status == FLOW_STATUS_ORPHAN) {
 			hmap_delete(_cfg.flows, he->key);
 			llist_node_insert_tail(nhead, fl);
 		}
@@ -917,6 +945,8 @@ static void gc_flows(void)
 
 static void recompute_flow(struct flow *fl)
 {
+	struct node *src_node, *dst_node;
+	struct srdb_update_transact *utr;
 	struct srdb_flow_entry fe;
 	struct llist_node *segs;
 	struct srdb_table *tbl;
@@ -924,13 +954,20 @@ static void recompute_flow(struct flow *fl)
 	struct pathspec pspec;
 	unsigned int i;
 
-	struct srdb_update_transact *utr;
-
 	memset(&pspec, 0, sizeof(pspec));
-	pspec.src = fl->srcrt->node;
-	pspec.dst = fl->dstrt->node;
 
 	net_state_read_lock(&_cfg.ns);
+
+	src_node = graph_get_node_noref(_cfg.ns.graph, fl->srcrt->node_id);
+	dst_node = graph_get_node_noref(_cfg.ns.graph, fl->dstrt->node_id);
+
+	if (!src_node || !dst_node) {
+		fl->status = FLOW_STATUS_ORPHAN;
+		goto out_unlock;
+	}
+
+	pspec.src = src_node;
+	pspec.dst = dst_node;
 
 	segs = build_segpath(_cfg.ns.graph, &pspec);
 

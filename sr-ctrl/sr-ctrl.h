@@ -35,7 +35,7 @@ struct router {
 	struct in6_addr addr;
 	struct prefix pbsid;
 	struct llist_node *prefixes;
-	struct node *node;
+	unsigned int node_id;
 	atomic_t refcount __refcount_aligned;
 };
 
@@ -114,9 +114,6 @@ static inline void flow_release(struct flow *fl)
 {
 	if (atomic_dec(&fl->refcount) == 0) {
 		unsigned int i;
-
-		node_release(fl->srcrt->node);
-		node_release(fl->dstrt->node);
 
 		for (i = 0; i < fl->nb_prefixes; i++)
 			free_segments(fl->src_prefixes[i].segs);
