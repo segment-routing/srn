@@ -985,7 +985,7 @@ struct transaction *srdb_update(struct srdb *srdb, struct srdb_table *tbl,
 
 int srdb_update_result(struct transaction *tr, int *count)
 {
-	json_t *res, *error, *jres, *jcount;
+	json_t *res, *error, *jres, *jcount, *jerr;
 	int ret = 0;
 
 	res = sbuf_pop(tr->result);
@@ -999,8 +999,12 @@ int srdb_update_result(struct transaction *tr, int *count)
 		goto out_error;
 
 	jres = json_array_get(json_object_get(res, "result"), 0);
-	jcount = json_object_get(jres, "count");
 
+	jerr = json_object_get(jres, "error");
+	if (jerr && !json_is_null(jerr))
+		goto out_error;
+
+	jcount = json_object_get(jres, "count");
 	if (count)
 		*count = json_integer_value(jcount);
 
@@ -1049,7 +1053,7 @@ struct transaction *srdb_insert(struct srdb *srdb, struct srdb_table *tbl,
 int srdb_insert_sync(struct srdb *srdb, struct srdb_table *tbl,
 		     struct srdb_entry *entry, char *uuid)
 {
-	json_t *res, *error, *jres, *juuid;
+	json_t *res, *error, *jres, *juuid, *jerr;
 	struct transaction *tr;
 	int ret = 0;
 
@@ -1068,8 +1072,12 @@ int srdb_insert_sync(struct srdb *srdb, struct srdb_table *tbl,
 		goto out_error;
 
 	jres = json_array_get(json_object_get(res, "result"), 0);
-	juuid = json_array_get(json_object_get(jres, "uuid"), 1);
 
+	jerr = json_object_get(jres, "error");
+	if (jerr && !json_is_null(jerr))
+		goto out_error;
+
+	juuid = json_array_get(json_object_get(jres, "uuid"), 1);
 	if (uuid)
 		strncpy(uuid, json_string_value(juuid), SLEN + 1);
 
