@@ -280,6 +280,8 @@ static void flow_to_flowentry(struct flow *fl, struct srdb_flow_entry *fe,
 
 	memset(fe, 0, sizeof(struct srdb_flow_entry));
 
+	memcpy(fe->_row, fl->uuid, SLEN);
+
 	if (fields & (1 << FE_DESTINATION))
 		memcpy(fe->destination, fl->dst, SLEN);
 
@@ -1012,10 +1014,12 @@ static void recompute_flow(struct flow *fl)
 		fl->src_prefixes[i].segs = copy_segments(segs);
 	}
 
-	flow_to_flowentry(fl, &fe, FE_SEGMENTS);
+	flow_to_flowentry(fl, &fe, 1 << FE_SEGMENTS);
+
 	tbl = srdb_table_by_name(_cfg.srdb->tables, "FlowState");
 	utr = srdb_update_prepare(_cfg.srdb, tbl, (struct srdb_entry *)&fe);
 	srdb_update_append(utr, FE_SEGMENTS);
+
 	tr = srdb_update_commit(utr);
 
 	if (srdb_update_result(tr, NULL) < 0)
