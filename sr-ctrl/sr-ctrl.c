@@ -656,6 +656,7 @@ static void process_request(struct srdb_entry *entry)
 
 	hmap_unlock(_cfg.flows);
 
+	fl->timestamp = time(NULL);
 	fl->status = FLOW_STATUS_ACTIVE;
 
 	if (commit_flow(fl)) {
