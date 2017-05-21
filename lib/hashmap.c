@@ -62,7 +62,7 @@ static int hmap_grow(struct hashmap *hm, size_t nsize)
 	struct hmap_entry *he;
 	unsigned int idx, i;
 
-	new_map = malloc(nsize * sizeof(struct llist_node));
+	new_map = malloc(nsize * sizeof(struct llist_head));
 	if (!new_map)
 		return -1;
 
@@ -101,6 +101,8 @@ int hmap_set(struct hashmap *hm, void *key, void *elem)
 	if (hmap_must_grow(hm)) {
 		if (hmap_grow(hm, hm->size * 2) < 0)
 			return -1;
+
+		idx = hmap_hash(hm, key);
 	}
 
 	he = malloc(sizeof(*he));
