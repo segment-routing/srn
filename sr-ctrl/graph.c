@@ -14,14 +14,15 @@ static bool node_equals_default(struct node *n1, struct node *n2)
 	return n1->id == n2->id;
 }
 
-static bool node_data_equals_default(void *d1, void *d2)
+static bool data_equals_default(void *d1, void *d2)
 {
 	return d1 == d2;
 }
 
 static struct graph_ops g_ops_default = {
 	.node_equals		= node_equals_default,
-	.node_data_equals	= node_data_equals_default,
+	.node_data_equals	= data_equals_default,
+	.edge_data_equals	= data_equals_default,
 	.node_destroy		= NULL,
 	.edge_destroy		= NULL,
 };
@@ -217,6 +218,20 @@ struct node *graph_get_node_data(struct graph *g, void *data)
 		node = iter->data;
 		if (g->ops->node_data_equals(node->data, data))
 			return node;
+	}
+
+	return NULL;
+}
+
+struct edge *graph_get_edge_data(struct graph *g, void *data)
+{
+	struct llist_node *iter;
+	struct edge *edge;
+
+	llist_node_foreach(g->edges, iter) {
+		edge = iter->data;
+		if (g->ops->edge_data_equals(edge->data, data))
+			return edge;
 	}
 
 	return NULL;

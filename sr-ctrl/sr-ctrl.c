@@ -476,6 +476,17 @@ static void *link_edge_data_copy(void *data)
 	return l;
 }
 
+static bool link_edge_data_equals(void *d1, void *d2)
+{
+	struct link *l1, *l2;
+
+	l1 = d1;
+	l2 = d2;
+
+	return !memcmp(&l1->local, &l2->local, sizeof(struct in6_addr)) &&
+	       !memcmp(&l1->remote, &l2->remote, sizeof(struct in6_addr));
+}
+
 static void link_edge_destroy(struct edge *e)
 {
 	link_release(e->data);
@@ -484,6 +495,7 @@ static void link_edge_destroy(struct edge *e)
 struct graph_ops g_ops_srdns = {
 	.node_equals		= rt_node_equals,
 	.node_data_equals	= rt_node_data_equals,
+	.edge_data_equals	= link_edge_data_equals,
 	.node_destroy		= NULL,
 	.edge_destroy		= link_edge_destroy,
 	.node_data_copy		= rt_node_data_copy,
@@ -771,7 +783,10 @@ static int read_linkstate(struct srdb_entry *entry)
 	if (!rt1 || !rt2) {
 		pr_err("unknown router entry for link (`%s', `%s').",
 		       link_entry->name1, link_entry->name2);
+
 		net_state_unlock(&_cfg.ns);
+		free(link);
+
 		return -1;
 	}
 
@@ -787,6 +802,17 @@ static int read_linkstate(struct srdb_entry *entry)
 	metric = (uint32_t)link_entry->metric ?: UINT32_MAX;
 
 	graph_write_lock(_cfg.ns.graph_staging);
+
+	if (graph_get_edge_data(_cfg.ns.graph_staging, link)) {
+		pr_err("duplicate link entry %s -> %s.", link_entry->addr1,
+		       link_entry->addr2);
+
+		graph_unlock(_cfg.ns.graph_staging);
+		net_state_unlock(&_cfg.ns);
+		free(link);
+
+		return -1;
+	}
 
 	if (!_cfg.ns.graph_staging->dirty)
 		gettimeofday(&_cfg.ns.gs_dirty, NULL);

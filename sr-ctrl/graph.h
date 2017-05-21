@@ -95,6 +95,7 @@ static inline void edge_release(struct edge *edge)
 struct graph_ops {
 	bool (*node_equals)(struct node *n1, struct node *n2);
 	bool (*node_data_equals)(void *d1, void *d2);
+	bool (*edge_data_equals)(void *d1, void *d2);
 	void *(*node_data_copy)(void *data);
 	void *(*edge_data_copy)(void *data);
 	void (*node_destroy)(struct node *node);
@@ -141,6 +142,7 @@ struct edge *graph_add_edge(struct graph *g, struct node *local,
 			    struct node *remote, uint32_t metric, bool sym,
 			    void *data);
 void graph_remove_edge(struct graph *g, struct edge *edge);
+struct edge *graph_get_edge_data(struct graph *g, void *data);
 void graph_compute_minimal_edges(struct graph *g);
 void graph_compute_all_neighbors(struct graph *g);
 struct graph *graph_clone(struct graph *g);
