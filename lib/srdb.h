@@ -89,8 +89,8 @@ struct monitor_desc {
 	struct srdb *srdb;
 	struct srdb_table *tbl;
 	int mon_flags;
-	bool stop;
-	bool zombie;
+	sem_t stop;
+	sem_t zombie;
 };
 
 struct srdb {

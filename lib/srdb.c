@@ -200,7 +200,7 @@ static void *ovsdb_monitor(void *_args)
 		if (!ready)
 			continue;
 
-		if (desc->stop)
+		if (!sem_trywait(&desc->stop))
 			goto out_close;
 
 		if (pfd.revents & POLLERR) {
@@ -264,7 +264,7 @@ static void *ovsdb_monitor(void *_args)
 		}
 	}
 
-	desc->zombie = true;
+	sem_post(&desc->zombie);
 
 out_close:
 	close(fd);
@@ -954,8 +954,8 @@ int srdb_monitor(struct srdb *srdb, const char *table, int mon_flags,
 	desc->srdb = srdb;
 	desc->tbl = tbl;
 	desc->mon_flags = mon_flags;
-	desc->stop = false;
-	desc->zombie = false;
+	sem_init(&desc->stop, 0, 0);
+	sem_init(&desc->zombie, 0, 0);
 
 	llist_node_insert_tail(srdb->monitors, desc);
 
@@ -1232,7 +1232,7 @@ void srdb_destroy(struct srdb *srdb)
 
 	llist_node_foreach(srdb->monitors, iter) {
 		md = iter->data;
-		md->stop = true;
+		sem_post(&md->stop);
 		pthread_join(md->thread, NULL);
 		free(md);
 	}

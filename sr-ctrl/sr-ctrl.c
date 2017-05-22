@@ -649,6 +649,8 @@ static void process_request(struct srdb_entry *entry)
 
 	fl->src_prefixes[0].segs = segs;
 	fl->refcount = 1;
+	fl->timestamp = time(NULL);
+	fl->status = FLOW_STATUS_ACTIVE;
 
 	hmap_write_lock(_cfg.flows);
 	generate_unique_bsid(rt, &fl->src_prefixes[0].bsid);
@@ -667,9 +669,6 @@ static void process_request(struct srdb_entry *entry)
 	}
 
 	hmap_unlock(_cfg.flows);
-
-	fl->timestamp = time(NULL);
-	fl->status = FLOW_STATUS_ACTIVE;
 
 	if (commit_flow(fl)) {
 		set_flowreq_status(req, REQ_STATUS_ERROR);
@@ -1080,11 +1079,11 @@ static void *thread_netmon(void *arg)
 {
 	struct netstate *ns = &_cfg.ns;
 	struct timeval gc_time, now;
-	bool *stop = arg;
+	sem_t *stop = arg;
 
 	gettimeofday(&gc_time, NULL);
 
-	while (!*stop) {
+	while (sem_trywait(stop)) {
 		gettimeofday(&now, NULL);
 
 		if (getmsdiff(&now, &gc_time) > GC_FLOWS_TIMEOUT) {
@@ -1151,10 +1150,10 @@ static int launch_srdb(void)
 int main(int argc, char **argv)
 {
 	const char *conf = DEFAULT_CONFIG;
-	bool mon_stop = false;
 	pthread_t *workers;
 	pthread_t netmon;
 	unsigned int i;
+	sem_t mon_stop;
 	int ret = 0;
 
 	if (argc > 2) {
@@ -1221,6 +1220,7 @@ int main(int argc, char **argv)
 	for (i = 0; i < _cfg.worker_threads; i++)
 		pthread_create(&workers[i], NULL, thread_worker, NULL);
 
+	sem_init(&mon_stop, 0, 0);
 	pthread_create(&netmon, NULL, thread_netmon, &mon_stop);
 
 	srdb_monitor_join_all(_cfg.srdb);
@@ -1231,7 +1231,7 @@ int main(int argc, char **argv)
 	for (i = 0; i < _cfg.worker_threads; i++)
 		pthread_join(workers[i], NULL);
 
-	mon_stop = true;
+	sem_post(&mon_stop);
 
 	pthread_join(netmon, NULL);
 
