@@ -344,14 +344,26 @@ static void flow_to_flowentry(struct flow *fl, struct srdb_flow_entry *fe,
 
 static int commit_flow(struct flow *fl)
 {
-	struct srdb_flow_entry fe;
+	struct srdb_flow_entry *fe;
+	struct srdb_table *tbl;
+	int ret;
 
-	flow_to_flowentry(fl, &fe, FE_ALL);
+	fe = malloc(sizeof(*fe));
+	if (!fe)
+		return -1;
 
-	return srdb_insert_sync(_cfg.srdb,
-				srdb_table_by_name(_cfg.srdb->tables,
-						   "FlowState"),
-				(struct srdb_entry *)&fe, fl->uuid);
+	tbl = srdb_table_by_name(_cfg.srdb->tables, "FlowState");
+	if (!tbl)
+		return -1;
+
+	flow_to_flowentry(fl, fe, FE_ALL);
+
+	ret =  srdb_insert_sync(_cfg.srdb, tbl,
+				(struct srdb_entry *)fe, fl->uuid);
+
+	free_srdb_entry(tbl->desc, (struct srdb_entry *)fe);
+
+	return ret;
 }
 
 static void generate_bsid(struct router *rt, struct in6_addr *res)
@@ -1106,86 +1118,40 @@ next:
 	return NULL;
 }
 
-struct monitor_arg {
-	struct srdb *srdb;
-	struct srdb_table *table;
-	int modify;
-	int initial;
-	int insert;
-	int delete;
-};
-
-static void *thread_monitor(void *_arg)
+static int launch_srdb(void)
 {
-	struct monitor_arg *arg = _arg;
-	int ret;
+	unsigned int mon_flags;
 
-	ret = srdb_monitor(arg->srdb, arg->table, arg->modify, arg->initial,
-			   arg->insert, arg->delete);
+	mon_flags = MON_INITIAL | MON_INSERT | MON_UPDATE | MON_DELETE;
 
-	return (void *)(intptr_t)ret;
-}
+	if (srdb_monitor(_cfg.srdb, "NodeState", mon_flags, read_nodestate,
+			 NULL, NULL, false, true) < 0) {
+		pr_err("failed to start NodeState monitor.");
+		return -1;
+	}
 
-static void launch_srdb(pthread_t *thr, struct monitor_arg *args)
-{
-	struct srdb_table *tbl;
 
-	tbl = srdb_table_by_name(_cfg.srdb->tables, "NodeState");
-	srdb_set_read_cb(_cfg.srdb, "NodeState", read_nodestate);
-	sem_init(&tbl->initial_read, 0, 0);
-	args[0].srdb = _cfg.srdb;
-	args[0].table = tbl;
-	args[0].initial = 1;
-	args[0].modify = 1;
-	args[0].insert = 1;
-	args[0].delete = 1;
+	if (srdb_monitor(_cfg.srdb, "LinkState", mon_flags, read_linkstate,
+			 NULL, NULL, false, true) < 0) {
+		pr_err("failed to start LinkState monitor.");
+		return -1;
+	}
 
-	printf("starting nodestate\n");
+	mon_flags = MON_INITIAL | MON_INSERT;
 
-	pthread_create(&thr[0], NULL, thread_monitor, (void *)&args[0]);
+	if (srdb_monitor(_cfg.srdb, "FlowReq", mon_flags, read_flowreq, NULL,
+			 NULL, true, true) < 0) {
+		pr_err("failed to start FlowReq monitor.");
+		return -1;
+	}
 
-	sem_wait(&tbl->initial_read);
-
-	printf("starting linkstate\n");
-
-	tbl = srdb_table_by_name(_cfg.srdb->tables, "LinkState");
-	srdb_set_read_cb(_cfg.srdb, "LinkState", read_linkstate);
-	sem_init(&tbl->initial_read, 0, 0);
-	args[1].srdb = _cfg.srdb;
-	args[1].table = tbl;
-	args[1].initial = 1;
-	args[1].modify = 1;
-	args[1].insert = 1;
-	args[1].delete = 1;
-
-	pthread_create(&thr[1], NULL, thread_monitor, (void *)&args[1]);
-
-	sem_wait(&tbl->initial_read);
-
-	printf("starting flowreq\n");
-
-	tbl = srdb_table_by_name(_cfg.srdb->tables, "FlowReq");
-	srdb_set_read_cb(_cfg.srdb, "FlowReq", read_flowreq);
-	sem_init(&tbl->initial_read, 0, 0);
-	tbl->delayed_free = true;
-	args[2].srdb = _cfg.srdb;
-	args[2].table = tbl;
-	args[2].initial = 1;
-	args[2].modify = 0;
-	args[2].insert = 1;
-	args[2].delete = 0;
-
-	pthread_create(&thr[2], NULL, thread_monitor, (void *)&args[2]);
-
-	sem_wait(&tbl->initial_read);
+	return 0;
 }
 
 int main(int argc, char **argv)
 {
 	const char *conf = DEFAULT_CONFIG;
-	struct monitor_arg margs[3];
 	bool mon_stop = false;
-	pthread_t mon_thr[3];
 	pthread_t *workers;
 	pthread_t netmon;
 	unsigned int i;
@@ -1247,15 +1213,17 @@ int main(int argc, char **argv)
 		goto free_req_buffer;
 	}
 
+	if (launch_srdb() < 0) {
+		pr_err("failed to start srdb monitors.");
+		goto free_workers;
+	}
+
 	for (i = 0; i < _cfg.worker_threads; i++)
 		pthread_create(&workers[i], NULL, thread_worker, NULL);
 
-	launch_srdb(mon_thr, margs);
-
 	pthread_create(&netmon, NULL, thread_netmon, &mon_stop);
 
-	for (i = 0; i < sizeof(mon_thr) / sizeof(pthread_t); i++)
-		pthread_join(mon_thr[i], NULL);
+	srdb_monitor_join_all(_cfg.srdb);
 
 	for (i = 0; i < _cfg.worker_threads; i++)
 		sbuf_push(_cfg.req_buffer, NULL);
@@ -1267,10 +1235,10 @@ int main(int argc, char **argv)
 
 	pthread_join(netmon, NULL);
 
-	free(workers);
-
 	destroy_netstate();
 
+free_workers:
+	free(workers);
 free_req_buffer:
 	sbuf_destroy(_cfg.req_buffer);
 free_flows:

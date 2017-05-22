@@ -35,17 +35,20 @@ struct srdb_entry {
 	char version[SLEN + 1];
 };
 
+typedef int (*table_insert_cb_t)(struct srdb_entry *);
+typedef int (*table_update_cb_t)(struct srdb_entry *, struct srdb_entry *,
+				 unsigned int);
+typedef int (*table_delete_cb_t)(struct srdb_entry *);
+
 struct srdb_table {
 	const char *name;
 	const struct srdb_descriptor *desc_tmpl;
 	struct srdb_descriptor *desc;
 	size_t desc_size;
 	size_t entry_size;
-	int (*read)(struct srdb_entry *);
-	int (*read_update)(struct srdb_entry *, struct srdb_entry *,
-			   unsigned int);
-	int (*read_delete)(struct srdb_entry *);
-	struct srdb_entry *update_entry;
+	table_insert_cb_t cb_insert;
+	table_update_cb_t cb_update;
+	table_delete_cb_t cb_delete;
 	sem_t initial_read;
 	bool delayed_free;
 };
@@ -71,11 +74,31 @@ struct transaction {
 	"{\"method\":\"transact\",\"params\":[\"%s\",{\"row\":%s,"	\
 	"\"table\":\"%s\",\"op\":\"insert\"}]}"
 
+#define OVSDB_MONITOR_FORMAT						\
+	"{\"id\":0,\"method\":\"monitor\",\"params\":[\"%s\",null,"	\
+	"{\"%s\":[{\"select\":{\"modify\":%s,\"initial\":%s,"		\
+	"\"insert\":%s,\"delete\":%s}}]}]}"
+
+#define MON_INITIAL	1 << 0
+#define MON_INSERT	1 << 1
+#define MON_UPDATE	1 << 2
+#define MON_DELETE	1 << 3
+
+struct monitor_desc {
+	pthread_t thread;
+	struct srdb *srdb;
+	struct srdb_table *tbl;
+	int mon_flags;
+	bool stop;
+	bool zombie;
+};
+
 struct srdb {
 	struct ovsdb_config *conf;
 	struct srdb_table *tables;
 	struct sbuf *transactions;
 	pthread_t *tr_workers;
+	struct llist_node *monitors;
 };
 
 #define _row		entry.row
@@ -239,8 +262,9 @@ struct srdb_update_transact {
 	json_t *fields;
 };
 
-int srdb_monitor(struct srdb *srdb, struct srdb_table *tbl,
-		int modify, int initial, int insert, int delete);
+int srdb_monitor(struct srdb *srdb, const char *table, int mon_flags,
+		 table_insert_cb_t cb_insert, table_update_cb_t cb_update,
+		 table_delete_cb_t cb_delete, bool delayed_free, bool sync);
 struct transaction *srdb_update(struct srdb *srdb, struct srdb_table *tbl,
 				struct srdb_entry *entry,
 				unsigned int index);
@@ -270,9 +294,9 @@ struct srdb_table *srdb_table_by_name(struct srdb_table *tables,
 				      const char *name);
 struct srdb *srdb_new(struct ovsdb_config *conf);
 void srdb_destroy(struct srdb *srdb);
-void srdb_set_read_cb(struct srdb *srdb, const char *table,
-		      int (*cb)(struct srdb_entry *));
 void free_srdb_entry(struct srdb_descriptor *desc,
  		     struct srdb_entry *entry);
+
+void srdb_monitor_join_all(struct srdb *srdb);
 
 #endif
