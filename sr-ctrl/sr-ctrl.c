@@ -697,7 +697,7 @@ free_flow:
 	net_state_unlock(&_cfg.ns);
 }
 
-static int read_flowreq(struct srdb_entry *entry)
+static int flowreq_read(struct srdb_entry *entry)
 {
 	struct srdb_flowreq_entry *req = (struct srdb_flowreq_entry *)entry;
 
@@ -706,7 +706,7 @@ static int read_flowreq(struct srdb_entry *entry)
 	return 0;
 }
 
-static int read_nodestate(struct srdb_entry *entry)
+static int nodestate_read(struct srdb_entry *entry)
 {
 	struct srdb_nodestate_entry *node_entry;
 	struct node *rt_node;
@@ -776,18 +776,23 @@ out_err:
 	goto out_unlock;
 }
 
-static int read_linkstate(struct srdb_entry *entry)
+static int linkstate_read(struct srdb_entry *entry)
 {
 	struct srdb_linkstate_entry *link_entry;
 	struct node *rt1_node, *rt2_node;
+	struct link *link, *link2;
 	struct router *rt1, *rt2;
-	struct link *link;
 	uint32_t metric;
+	int ret = 0;
 
 	link_entry = (struct srdb_linkstate_entry *)entry;
 
 	link = malloc(sizeof(*link));
 	if (!link)
+		return -1;
+
+	link2 = malloc(sizeof(*link2));
+	if (!link2)
 		return -1;
 
 	net_state_read_lock(&_cfg.ns);
@@ -798,10 +803,7 @@ static int read_linkstate(struct srdb_entry *entry)
 		pr_err("unknown router entry for link (`%s', `%s').",
 		       link_entry->name1, link_entry->name2);
 
-		net_state_unlock(&_cfg.ns);
-		free(link);
-
-		return -1;
+		goto out_free;
 	}
 
 	inet_pton(AF_INET6, link_entry->addr1, &link->local);
@@ -809,9 +811,14 @@ static int read_linkstate(struct srdb_entry *entry)
 	link->bw = link_entry->bw;
 	link->ava_bw = link_entry->ava_bw;
 	link->delay = link_entry->delay;
+	link->refcount = 1;
 
-	/* we need two references, one for each direction of the link */
-	link->refcount = 2;
+	inet_pton(AF_INET6, link_entry->addr1, &link2->remote);
+	inet_pton(AF_INET6, link_entry->addr2, &link2->local);
+	link2->bw = link_entry->bw;
+	link2->ava_bw = link_entry->ava_bw;
+	link2->delay = link_entry->delay;
+	link2->refcount = 1;
 
 	metric = (uint32_t)link_entry->metric ?: UINT32_MAX;
 
@@ -822,10 +829,15 @@ static int read_linkstate(struct srdb_entry *entry)
 		       link_entry->addr2);
 
 		graph_unlock(_cfg.ns.graph_staging);
-		net_state_unlock(&_cfg.ns);
-		free(link);
+		goto out_free;
+	}
 
-		return -1;
+	if (graph_get_edge_data(_cfg.ns.graph_staging, link2)) {
+		pr_err("duplicate link entry %s -> %s.", link_entry->addr2,
+		       link_entry->addr1);
+
+		graph_unlock(_cfg.ns.graph_staging);
+		goto out_free;
 	}
 
 	if (!_cfg.ns.graph_staging->dirty)
@@ -839,13 +851,21 @@ static int read_linkstate(struct srdb_entry *entry)
 	assert(rt1_node && rt2_node);
 
 	graph_add_edge(_cfg.ns.graph_staging, rt1_node, rt2_node, metric,
-		       true, link);
+		       false, link);
+	graph_add_edge(_cfg.ns.graph_staging, rt2_node, rt1_node, metric,
+		       false, link2);
 
 	graph_unlock(_cfg.ns.graph_staging);
 
+out_nsunlock:
 	net_state_unlock(&_cfg.ns);
+	return ret;
 
-	return 0;
+out_free:
+	free(link);
+	free(link2);
+	ret = -1;
+	goto out_nsunlock;
 }
 
 #define READ_STRING(b, arg, dst) sscanf(b, #arg " \"%[^\"]\"", (dst)->arg)
@@ -1123,14 +1143,14 @@ static int launch_srdb(void)
 
 	mon_flags = MON_INITIAL | MON_INSERT | MON_UPDATE | MON_DELETE;
 
-	if (srdb_monitor(_cfg.srdb, "NodeState", mon_flags, read_nodestate,
+	if (srdb_monitor(_cfg.srdb, "NodeState", mon_flags, nodestate_read,
 			 NULL, NULL, false, true) < 0) {
 		pr_err("failed to start NodeState monitor.");
 		return -1;
 	}
 
 
-	if (srdb_monitor(_cfg.srdb, "LinkState", mon_flags, read_linkstate,
+	if (srdb_monitor(_cfg.srdb, "LinkState", mon_flags, linkstate_read,
 			 NULL, NULL, false, true) < 0) {
 		pr_err("failed to start LinkState monitor.");
 		return -1;
@@ -1138,7 +1158,7 @@ static int launch_srdb(void)
 
 	mon_flags = MON_INITIAL | MON_INSERT;
 
-	if (srdb_monitor(_cfg.srdb, "FlowReq", mon_flags, read_flowreq, NULL,
+	if (srdb_monitor(_cfg.srdb, "FlowReq", mon_flags, flowreq_read, NULL,
 			 NULL, true, true) < 0) {
 		pr_err("failed to start FlowReq monitor.");
 		return -1;
