@@ -270,6 +270,9 @@ out_close:
 	close(fd);
 	free(buf);
 out:
+	/* temp hack to prevent deadlock when ovsdb server is down at startup */
+	sem_post(&tbl->initial_read);
+
 	return NULL;
 }
 
