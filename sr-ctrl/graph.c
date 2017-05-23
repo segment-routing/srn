@@ -349,6 +349,9 @@ static struct llist_node *graph_compute_neighbors(struct graph *g,
 		if (edge->local->id != node->id)
 			continue;
 
+		if (edge->metric == UINT32_MAX)
+			continue;
+
 		if (llist_node_exist(neighs, edge->remote))
 			continue;
 
