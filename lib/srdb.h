@@ -112,7 +112,7 @@ struct srdb_router_entry {
 };
 
 enum {
-	RTE_ROUTER = 0,
+	RTE_ROUTER = 1,
 };
 
 #define RTE_LAST RTE_ROUTER
@@ -142,7 +142,7 @@ struct srdb_flow_entry {
 
 /* flow entry fields */
 enum {
-	FE_DESTINATION = 0,
+	FE_DESTINATION = 1,
 	FE_DSTADDR,
 	FE_BSID,
 	FE_SEGMENTS,
@@ -186,7 +186,7 @@ struct srdb_flowreq_entry {
 };
 
 enum {
-	FREQ_REQID = 0,
+	FREQ_REQID = 1,
 	FREQ_DESTINATION,
 	FREQ_DSTADDR,
 	FREQ_SOURCE,
@@ -223,7 +223,7 @@ struct srdb_linkstate_entry {
 };
 
 enum {
-	LS_NAME1 = 0,
+	LS_NAME1 = 1,
 	LS_ADDR1,
 	LS_NAME2,
 	LS_ADDR2,
@@ -245,7 +245,7 @@ struct srdb_nodestate_entry {
 };
 
 enum {
-	NODE_NAME = 0,
+	NODE_NAME = 1,
 	NODE_ADDR,
 	NODE_PREFIX,
 	NODE_PBSID,

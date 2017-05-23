@@ -393,7 +393,8 @@ static unsigned int fill_srdb_entry(struct srdb_descriptor *desc,
 		if (!column_value)
 			continue;
 
-		index_mask |= ENTRY_MASK(desc[i].index);
+		if (desc[i].index)
+			index_mask |= ENTRY_MASK(desc[i].index);
 
 		if (!strcmp(desc[i].name, "_version")) {
 			column_value = json_object_get(line_json, "_version");
@@ -906,11 +907,14 @@ static int srdb_read(const char *uuid, json_t *json, struct srdb_table *tbl)
 	case OP_UPDATE:
 		update_entry = calloc(1, tbl->entry_size);
 
-		imask = fill_srdb_entry(tbl->desc, entry, uuid, new);
-		fill_srdb_entry(tbl->desc, update_entry, uuid, old);
+		/* "new" contains *all* field set, with new values */
+		fill_srdb_entry(tbl->desc, entry, uuid, new);
+
+		/* "old" contains only changed fields, with old values */
+		imask = fill_srdb_entry(tbl->desc, update_entry, uuid, old);
 
 		if (tbl->cb_update)
-			ret = tbl->cb_update(update_entry, entry, imask);
+			ret = tbl->cb_update(entry, update_entry, imask);
 
 		if (!tbl->delayed_free) {
 			free_srdb_entry(tbl->desc, update_entry);
@@ -1036,6 +1040,10 @@ void srdb_update_append_mask(struct srdb_update_transact *utr,
 
 	for (i = 0; utr->tbl->desc[i].name; i++) {
 		desc = &utr->tbl->desc[i];
+
+		if (!desc->index)
+			continue;
+
 		if (index_mask & ENTRY_MASK(desc->index))
 			write_desc_data(utr->fields, desc, utr->entry);
 	}

@@ -140,6 +140,16 @@ static void destroy_netstate(void)
 	lpm_destroy(ns->prefixes);
 }
 
+static void mark_graph_dirty(void)
+{
+	if (!_cfg.ns.graph_staging->dirty)
+		gettimeofday(&_cfg.ns.gs_dirty, NULL);
+
+	gettimeofday(&_cfg.ns.gs_mod, NULL);
+
+	_cfg.ns.graph_staging->dirty = true;
+}
+
 static int netstate_graph_sync(struct netstate *ns)
 {
 	struct graph *g, *old_g;
@@ -754,10 +764,7 @@ static int nodestate_read(struct srdb_entry *entry)
 
 	graph_write_lock(_cfg.ns.graph_staging);
 
-	if (!_cfg.ns.graph_staging->dirty)
-		gettimeofday(&_cfg.ns.gs_dirty, NULL);
-
-	gettimeofday(&_cfg.ns.gs_mod, NULL);
+	mark_graph_dirty();
 
 	rt_node = graph_add_node(_cfg.ns.graph_staging, rt);
 	rt->node_id = rt_node->id;
@@ -840,10 +847,7 @@ static int linkstate_read(struct srdb_entry *entry)
 		goto out_free;
 	}
 
-	if (!_cfg.ns.graph_staging->dirty)
-		gettimeofday(&_cfg.ns.gs_dirty, NULL);
-
-	gettimeofday(&_cfg.ns.gs_mod, NULL);
+	mark_graph_dirty();
 
 	rt1_node = graph_get_node_noref(_cfg.ns.graph_staging, rt1->node_id);
 	rt2_node = graph_get_node_noref(_cfg.ns.graph_staging, rt2->node_id);
@@ -866,6 +870,115 @@ out_free:
 	free(link2);
 	ret = -1;
 	goto out_nsunlock;
+}
+
+static int linkstate_update(struct srdb_entry *entry,
+			    struct srdb_entry *diff __unused,
+			    unsigned int fmask)
+{
+	struct srdb_linkstate_entry *link_entry;
+	struct edge *edge, *edge2;
+	struct link *link, *link2;
+	struct linkpair lp1, lp2;
+	int ret = 0;
+
+	link_entry = (struct srdb_linkstate_entry *)entry;
+
+	inet_pton(AF_INET6, link_entry->addr1, &lp1.local);
+	inet_pton(AF_INET6, link_entry->addr2, &lp1.remote);
+
+	inet_pton(AF_INET6, link_entry->addr1, &lp2.remote);
+	inet_pton(AF_INET6, link_entry->addr2, &lp2.local);
+
+	graph_write_lock(_cfg.ns.graph_staging);
+
+	edge = graph_get_edge_data(_cfg.ns.graph_staging, &lp1);
+	if (!edge)
+		goto out_err;
+
+	link = edge->data;
+	if (!link)
+		goto out_err;
+
+	edge2 = graph_get_edge_data(_cfg.ns.graph_staging, &lp2);
+	if (!edge2)
+		goto out_err;
+
+	link2 = edge->data;
+	if (!link2)
+		goto out_err;
+
+	if (fmask & ENTRY_MASK(LS_METRIC)) {
+		uint32_t metric;
+
+		metric = (uint32_t)link_entry->metric ?: UINT32_MAX;
+		edge->metric = metric;
+		edge2->metric = metric;
+		fmask &= ~ENTRY_MASK(LS_METRIC);
+	}
+
+	if (fmask & ENTRY_MASK(LS_BW)) {
+		link->bw = link_entry->bw;
+		link2->bw = link_entry->bw;
+		fmask &= ~ENTRY_MASK(LS_BW);
+	}
+
+	if (fmask & ENTRY_MASK(LS_AVA_BW)) {
+		link->ava_bw = link_entry->ava_bw;
+		link2->ava_bw = link_entry->ava_bw;
+		fmask &= ~ENTRY_MASK(LS_AVA_BW);
+	}
+
+	if (fmask & ENTRY_MASK(LS_DELAY)) {
+		link->delay = link_entry->delay;
+		link2->delay = link_entry->delay;
+		fmask &= ~ENTRY_MASK(LS_DELAY);
+	}
+
+	mark_graph_dirty();
+
+	graph_unlock(_cfg.ns.graph_staging);
+
+	if (fmask)
+		pr_err("non-empty field mask after update (%u).", fmask);
+
+out:
+	return ret;
+out_err:
+	graph_unlock(_cfg.ns.graph_staging);
+	ret = -1;
+	goto out;
+}
+
+static int linkstate_delete(struct srdb_entry *entry)
+{
+	struct srdb_linkstate_entry *link_entry;
+	struct linkpair lp1, lp2;
+	struct edge *edge;
+
+	link_entry = (struct srdb_linkstate_entry *)entry;
+
+	inet_pton(AF_INET6, link_entry->addr1, &lp1.local);
+	inet_pton(AF_INET6, link_entry->addr2, &lp1.remote);
+
+	inet_pton(AF_INET6, link_entry->addr1, &lp2.remote);
+	inet_pton(AF_INET6, link_entry->addr2, &lp2.local);
+
+	graph_write_lock(_cfg.ns.graph_staging);
+
+	edge = graph_get_edge_data(_cfg.ns.graph_staging, &lp1);
+	if (edge)
+		graph_remove_edge(_cfg.ns.graph_staging, edge);
+
+	edge = graph_get_edge_data(_cfg.ns.graph_staging, &lp2);
+	if (edge)
+		graph_remove_edge(_cfg.ns.graph_staging, edge);
+
+	mark_graph_dirty();
+
+	graph_unlock(_cfg.ns.graph_staging);
+
+	return 0;
 }
 
 #define READ_STRING(b, arg, dst) sscanf(b, #arg " \"%[^\"]\"", (dst)->arg)
@@ -1151,7 +1264,7 @@ static int launch_srdb(void)
 
 
 	if (srdb_monitor(_cfg.srdb, "LinkState", mon_flags, linkstate_read,
-			 NULL, NULL, false, true) < 0) {
+			 linkstate_update, linkstate_delete, false, true) < 0) {
 		pr_err("failed to start LinkState monitor.");
 		return -1;
 	}

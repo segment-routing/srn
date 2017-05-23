@@ -56,6 +56,11 @@ static inline void rt_release(struct router *rt)
 	}
 }
 
+struct linkpair {
+	struct in6_addr local;
+	struct in6_addr remote;
+};
+
 struct link {
 	struct in6_addr local;
 	struct in6_addr remote;
