@@ -1345,13 +1345,13 @@ int main(int argc, char **argv)
 		goto free_req_buffer;
 	}
 
+	for (i = 0; i < _cfg.worker_threads; i++)
+		pthread_create(&workers[i], NULL, thread_worker, NULL);
+
 	if (launch_srdb() < 0) {
 		pr_err("failed to start srdb monitors.");
 		goto free_workers;
 	}
-
-	for (i = 0; i < _cfg.worker_threads; i++)
-		pthread_create(&workers[i], NULL, thread_worker, NULL);
 
 	sem_init(&mon_stop, 0, 0);
 	pthread_create(&netmon, NULL, thread_netmon, &mon_stop);
