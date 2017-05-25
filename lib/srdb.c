@@ -17,6 +17,7 @@
 
 #define BUFLEN 1024
 #define JSON_BUFLEN 4096
+#define JSON_BUFLEN_MONMAX (8*1024*1024)
 #define READ_OVSDB_SERVER(b, addr, port) sscanf(b, "tcp:[%[^]]]:%hu", addr, port)
 #define BOOL_TO_STR(boolean) ((boolean) ? "true" : "false")
 
@@ -151,13 +152,13 @@ static void *ovsdb_monitor(void *_args)
 	struct monitor_desc *desc = _args;
 	json_error_t json_error;
 	struct srdb_table *tbl;
+	size_t cur_buflen, len;
 	struct pollfd pfd;
 	struct srdb *srdb;
 	int mon_flags;
 	json_t *json;
-	int fd, len;
+	int ret, fd;
 	char *buf;
-	int ret;
 
 	srdb = desc->srdb;
 	tbl = desc->tbl;
@@ -167,11 +168,12 @@ static void *ovsdb_monitor(void *_args)
 	if (fd < 0)
 		goto out;
 
-	buf = malloc(JSON_BUFLEN);
+	cur_buflen = JSON_BUFLEN;
+	buf = malloc(cur_buflen);
 	if (!buf)
 		goto out_close;
 
-	len = snprintf(buf, JSON_BUFLEN, OVSDB_MONITOR_FORMAT,
+	len = snprintf(buf, cur_buflen, OVSDB_MONITOR_FORMAT,
 		       srdb->conf->ovsdb_database, tbl->name,
 		       BOOL_TO_STR(mon_flags & MON_UPDATE),
 		       BOOL_TO_STR(mon_flags & MON_INITIAL),
@@ -189,7 +191,8 @@ static void *ovsdb_monitor(void *_args)
 	pfd.events = POLLIN | POLLPRI;
 
 	for (;;) {
-		int ready, jpos = 0;
+		size_t jpos = 0;
+		int ready;
 
 		ready = poll(&pfd, 1, 1);
 		if (ready < 0) {
@@ -208,7 +211,7 @@ static void *ovsdb_monitor(void *_args)
 			goto out_close;
 		}
 
-		ret = recv(fd, buf + len, JSON_BUFLEN - len, 0);
+		ret = recv(fd, buf + len, cur_buflen - len, 0);
 		if (ret < 0) {
 			pr_err("failed to read from monitor socket (%s).",
 				strerror(errno));
@@ -258,9 +261,18 @@ static void *ovsdb_monitor(void *_args)
 		}
 
 		/* abort if buffer is full and no processing was possible */
-		if (len == JSON_BUFLEN) {
+		if (len == JSON_BUFLEN_MONMAX) {
 			pr_err("max recvq exceeded.");
 			goto out_close;
+		} else if (len == cur_buflen) {
+			pr_err("cur recvq exceeded, increasing to %lu.",
+				cur_buflen * 2);
+			cur_buflen *= 2;
+			buf = realloc(buf, cur_buflen);
+			if (!buf) {
+				pr_err("failed to increase json buffer.");
+				goto out_close;
+			}
 		}
 	}
 
@@ -1415,7 +1427,7 @@ static void *transaction_worker(void *args)
 	pfd.events = POLLIN | POLLPRI;
 
 	for (;;) {
-		ready = poll(&pfd, 1, 1);
+		ready = poll(&pfd, 1, 0);
 		if (ready < 0) {
 			perror("poll");
 			break;
