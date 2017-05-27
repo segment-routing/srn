@@ -141,6 +141,7 @@ struct node *graph_get_node_data(struct graph *g, void *data);
 struct edge *graph_add_edge(struct graph *g, struct node *local,
 			    struct node *remote, uint32_t metric, bool sym,
 			    void *data);
+struct edge *graph_get_edge_noref(struct graph *g, unsigned int id);
 void graph_remove_edge(struct graph *g, struct edge *edge);
 struct edge *graph_get_edge_data(struct graph *g, void *data);
 void graph_compute_minimal_edges(struct graph *g);
@@ -156,10 +157,13 @@ int graph_minseg(struct graph *g, struct llist_node *path,
 
 void free_segments(struct llist_node *segs);
 struct llist_node *copy_segments(struct llist_node *segs);
+bool compare_segments(struct llist_node *segs1, struct llist_node *segs2);
 int graph_build_cache_one(struct graph *g, struct node *node);
 int graph_build_cache(struct graph *g);
 void graph_flush_cache(struct graph *g);
 struct graph *graph_deepcopy(struct graph *g);
+void destroy_edgepath(struct llist_node *path);
+struct llist_node *copy_edgepath(struct llist_node *path);
 
 struct pathspec {
 	struct node *src;
@@ -170,7 +174,8 @@ struct pathspec {
 	void *data;
 };
 
-struct llist_node *build_segpath(struct graph *g, struct pathspec *pspec);
+struct llist_node *build_segpath(struct graph *g, struct pathspec *pspec,
+				 struct llist_node **epath);
 
 static inline void graph_finalize(struct graph *g)
 {

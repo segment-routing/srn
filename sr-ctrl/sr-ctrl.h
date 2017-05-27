@@ -88,6 +88,7 @@ struct src_prefix {
 	int priority;
 	struct in6_addr bsid;
 	struct llist_node *segs;
+	struct llist_node *epath;
 };
 
 struct flow {

@@ -223,6 +223,20 @@ struct node *graph_get_node_data(struct graph *g, void *data)
 	return NULL;
 }
 
+struct edge *graph_get_edge_noref(struct graph *g, unsigned int id)
+{
+	struct llist_node *iter;
+	struct edge *edge;
+
+	llist_node_foreach(g->edges, iter) {
+		edge = iter->data;
+		if (edge->id == id)
+			return edge;
+	}
+
+	return NULL;
+}
+
 struct edge *graph_get_edge_data(struct graph *g, void *data)
 {
 	struct llist_node *iter;
@@ -756,6 +770,35 @@ out_free:
 	return NULL;
 }
 
+bool compare_segments(struct llist_node *segs1, struct llist_node *segs2)
+{
+	struct llist_node *iter1, *iter2;
+	struct segment *s1, *s2;
+
+	iter2 = llist_node_first_entry(segs2);
+
+	if (llist_node_size(segs1) != llist_node_size(segs2))
+		return false;
+
+	llist_node_foreach(segs1, iter1) {
+		s1 = iter1->data;
+		s2 = iter2->data;
+
+		if (s1->adjacency != s2->adjacency)
+			return false;
+
+		if (s1->adjacency && (s1->edge->id != s2->edge->id))
+			return false;
+
+		if (!s1->adjacency && (s1->node->id != s2->node->id))
+			return false;
+
+		iter2 = llist_node_next_entry(iter2);
+	}
+
+	return true;
+}
+
 int graph_build_cache_one(struct graph *g, struct node *node)
 {
 	struct dres *res, *old_res;
@@ -892,9 +935,82 @@ out_error:
 	return -1;
 }
 
-struct llist_node *build_segpath(struct graph *g, struct pathspec *pspec)
+static struct llist_node *nodes_to_edges(struct graph *g,
+					 struct llist_node *path)
 {
-	struct llist_node *res, *path, *iter;
+	struct llist_node *res, *iter;
+	struct node *node_i, *node_ii;
+	struct nodepair pair;
+	struct edge *edge;
+
+	res = llist_node_alloc();
+	if (!res)
+		return NULL;
+
+	llist_node_foreach(path, iter) {
+		if (iter == llist_node_last_entry(path))
+			break;
+
+		node_i = iter->data;
+		node_ii = llist_node_next_entry(iter)->data;
+
+		pair.local = node_i;
+		pair.remote = node_ii;
+
+		edge = hmap_get(g->min_edges, &pair);
+		if (!edge)
+			goto out_err;
+
+		edge_hold(edge);
+		llist_node_insert_tail(res, edge);
+	}
+
+	return res;
+
+out_err:
+	llist_node_destroy(res);
+	return NULL;
+}
+
+void destroy_edgepath(struct llist_node *path)
+{
+	struct llist_node *iter;
+
+	if (!path)
+		return;
+
+	llist_node_foreach(path, iter) {
+		edge_release((struct edge *)iter->data);
+	}
+
+	llist_node_destroy(path);
+}
+
+struct llist_node *copy_edgepath(struct llist_node *path)
+{
+	struct llist_node *iter, *res;
+	struct edge *edge;
+
+	if (!path)
+		return NULL;
+
+	res = llist_node_alloc();
+	if (!res)
+		return NULL;
+
+	llist_node_foreach(path, iter) {
+		edge = iter->data;
+		edge_hold(edge);
+		llist_node_insert_tail(res, edge);
+	}
+
+	return res;
+}
+
+struct llist_node *build_segpath(struct graph *g, struct pathspec *pspec,
+				 struct llist_node **epath)
+{
+	struct llist_node *res, *path, *iter, *fpath = NULL;
 	struct node *cur_node;
 	struct graph *gc;
 	struct dres gres;
@@ -904,8 +1020,19 @@ struct llist_node *build_segpath(struct graph *g, struct pathspec *pspec)
 		return NULL;
 
 	path = llist_node_alloc();
-	if (!path)
+	if (!path) {
+		llist_node_destroy(res);
 		return NULL;
+	}
+
+	if (epath) {
+		fpath = llist_node_alloc();
+		if (!fpath) {
+			llist_node_destroy(path);
+			llist_node_destroy(res);
+			return NULL;
+		}
+	}
 
 	gc = g;
 
@@ -944,6 +1071,9 @@ struct llist_node *build_segpath(struct graph *g, struct pathspec *pspec)
 		if (graph_minseg(g, rev_path, res) < 0)
 			goto out_error;
 
+		if (fpath)
+			llist_node_append(fpath, rev_path);
+
 		/* append waypoint segment only if there is no adjacency
 		 * segment for the last hop (i.e. breaking link bundle)
 		 */
@@ -959,13 +1089,22 @@ struct llist_node *build_segpath(struct graph *g, struct pathspec *pspec)
 
 	if (gc->cloned)
 		graph_destroy(gc, true);
+
 	llist_node_destroy(path);
+
+	if (fpath) {
+		*epath = nodes_to_edges(g, fpath);
+		llist_node_destroy(fpath);
+	}
+
 	return res;
 
 out_error:
 	graph_dijkstra_free(&gres);
 	if (gc->cloned)
 		graph_destroy(gc, true);
+	if (fpath)
+		llist_node_destroy(fpath);
 	llist_node_destroy(path);
 	free_segments(res);
 	return NULL;

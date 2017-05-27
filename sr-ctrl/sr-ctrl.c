@@ -558,6 +558,7 @@ static void process_request(struct srdb_entry *entry)
 	struct node *src_node, *dst_node;
 	struct router *rt, *dstrt;
 	enum flowreq_status rstat;
+	struct llist_node *epath;
 	struct llist_node *segs;
 	struct pathspec pspec;
 	struct in6_addr addr;
@@ -650,14 +651,17 @@ static void process_request(struct srdb_entry *entry)
 	if (fl->delay)
 		pspec.d_ops = &delay_below_ops;
 
-	segs = build_segpath(_cfg.ns.graph, &pspec);
+	epath = NULL;
+	segs = build_segpath(_cfg.ns.graph, &pspec, &epath);
 
 	if (!segs) {
 		set_flowreq_status(req, REQ_STATUS_UNAVAILABLE);
+		destroy_edgepath(epath);
 		goto free_src_prefixes;
 	}
 
 	fl->src_prefixes[0].segs = segs;
+	fl->src_prefixes[0].epath = epath;
 	fl->refcount = 1;
 	fl->timestamp = time(NULL);
 	fl->status = FLOW_STATUS_ACTIVE;
@@ -668,6 +672,7 @@ static void process_request(struct srdb_entry *entry)
 
 	for (i = 1; i < fl->nb_prefixes; i++) {
 		fl->src_prefixes[i].segs = copy_segments(segs);
+		fl->src_prefixes[i].epath = copy_edgepath(epath);
 
 		if (dstrt) {
 			fl->src_prefixes[i].bsid = fl->src_prefixes[0].bsid;
@@ -697,8 +702,10 @@ free_segs:
 		hmap_delete(_cfg.flows, &fl->src_prefixes[i].bsid);
 	hmap_unlock(_cfg.flows);
 
-	for (i = 0; i < fl->nb_prefixes; i++)
+	for (i = 0; i < fl->nb_prefixes; i++) {
 		free_segments(fl->src_prefixes[i].segs);
+		destroy_edgepath(fl->src_prefixes[i].epath);
+	}
 
 free_src_prefixes:
 	free(fl->src_prefixes);
@@ -1121,10 +1128,12 @@ static void recompute_flow(struct flow *fl)
 	struct node *src_node, *dst_node;
 	struct srdb_update_transact *utr;
 	struct srdb_flow_entry fe;
+	struct llist_node *epath;
 	struct llist_node *segs;
 	struct srdb_table *tbl;
 	struct transaction *tr;
 	struct pathspec pspec;
+	bool diff = false;
 	unsigned int i;
 
 	memset(&pspec, 0, sizeof(pspec));
@@ -1142,24 +1151,37 @@ static void recompute_flow(struct flow *fl)
 	pspec.src = src_node;
 	pspec.dst = dst_node;
 
-	segs = build_segpath(_cfg.ns.graph, &pspec);
+	epath = NULL;
+	segs = build_segpath(_cfg.ns.graph, &pspec, &epath);
 
 	if (!segs)
 		goto out_unlock;
 
-	/* TODO do not update if segs equal */
-
 	/* commit flow with updated segments */
 
+	if (!compare_segments(segs, fl->src_prefixes[0].segs))
+		diff = true;
+
 	free_segments(fl->src_prefixes[0].segs);
+	destroy_edgepath(fl->src_prefixes[0].epath);
 	fl->src_prefixes[0].segs = segs;
+	fl->src_prefixes[0].epath = epath;
 
 	for (i = 1; i < fl->nb_prefixes; i++) {
+		if (!compare_segments(segs, fl->src_prefixes[i].segs))
+			diff = true;
+
 		free_segments(fl->src_prefixes[i].segs);
+		destroy_edgepath(fl->src_prefixes[i].epath);
 		fl->src_prefixes[i].segs = copy_segments(segs);
+		fl->src_prefixes[i].epath = copy_edgepath(epath);
 	}
 
-	flow_to_flowentry(fl, &fe, 1 << FE_SEGMENTS);
+	/* do not update srdb if segments are unchanged */
+	if (!diff)
+		goto out_unlock;
+
+	flow_to_flowentry(fl, &fe, ENTRY_MASK(FE_SEGMENTS));
 
 	tbl = srdb_table_by_name(_cfg.srdb->tables, "FlowState");
 	utr = srdb_update_prepare(_cfg.srdb, tbl, (struct srdb_entry *)&fe);
@@ -1174,6 +1196,29 @@ out_unlock:
 	net_state_unlock(&_cfg.ns);
 }
 
+static bool flow_affected(struct flow *fl)
+{
+	struct llist_node *iter;
+	struct edge *e1, *e2;
+	unsigned int i;
+
+	for (i = 0; i < fl->nb_prefixes; i++) {
+		llist_node_foreach(fl->src_prefixes[i].epath, iter) {
+			e1 = iter->data;
+			e2 = graph_get_edge_noref(_cfg.ns.graph, e1->id);
+
+			if (!e2)
+				return true;
+
+			/* TODO add hook to check edge data (delay, bw, ...) */
+			if (e1->metric != e2->metric)
+				return true;
+		}
+	}
+
+	return false;
+}
+
 static void recompute_flows(void)
 {
 	struct llist_node *nhead, *iter;
@@ -1184,15 +1229,22 @@ static void recompute_flows(void)
 	if (!nhead)
 		return;
 
+	net_state_read_lock(&_cfg.ns);
 	hmap_read_lock(_cfg.flows);
 
 	hmap_foreach(_cfg.flows, he) {
 		fl = he->elem;
-		flow_hold(fl);
-		llist_node_insert_tail(nhead, fl);
+
+		if (flow_affected(fl)) {
+			flow_hold(fl);
+			llist_node_insert_tail(nhead, fl);
+		}
 	}
 
 	hmap_unlock(_cfg.flows);
+	net_state_unlock(&_cfg.ns);
+
+	printf("%lu affected flows.\n", llist_node_size(nhead));
 
 	llist_node_foreach(nhead, iter) {
 		fl = iter->data;
@@ -1231,6 +1283,10 @@ static void *thread_netmon(void *arg)
 
 		if (!_cfg.ns.graph_staging->dirty)
 			goto next;
+
+		/* check adversely affected flows. Normally, by constraint but
+		 * for benchmarks, consider link-down events as adverse
+		 */
 
 		if (getmsdiff(&now, &_cfg.ns.gs_mod) > GSYNC_SOFT_TIMEOUT ||
 		    getmsdiff(&now, &_cfg.ns.gs_dirty) > GSYNC_HARD_TIMEOUT) {
