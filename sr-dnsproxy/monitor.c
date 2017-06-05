@@ -19,14 +19,17 @@ struct queue_thread replies_waiting_controller;
 
 struct srdb *srdb;
 
-struct queue_thread transact_input;
-struct queue_thread transact_output;
-
-static int read_flowreq(__attribute__((unused)) struct srdb_entry *old_entry, struct srdb_entry *entry)
+static int read_flowreq(struct srdb_entry *entry,
+			struct srdb_entry *diff __unused,
+			unsigned int fmask)
 {
-	struct srdb_flowreq_entry *flowreq = (struct srdb_flowreq_entry *) entry;
-	struct reply *reply = NULL;
-	struct reply *tmp = NULL;
+	struct srdb_flowreq_entry *flowreq;
+	struct reply *reply, *tmp;
+
+	flowreq = (struct srdb_flowreq_entry *)entry;
+
+	if (!(fmask & ENTRY_MASK(FREQ_STATUS)))
+		return -1;
 
 	print_debug("A modified entry in the flowreq table is considered with id %s and status %d\n", flowreq->request_id, flowreq->status);
 
@@ -204,23 +207,7 @@ free_json:
 	return stop;
 }
 
-static void *thread_monitor(void *_arg)
-{
-	struct monitor_arg *arg = _arg;
-	int ret;
-
-	print_debug("A monitor thread has started\n");
-
-	ret = srdb_monitor(arg->srdb, arg->table, arg->modify, arg->initial,
-			   arg->insert, arg->delete);
-
-	print_debug("A monitor thread has finished\n");
-
-	return (void *)(intptr_t)ret;
-}
-
-int init_monitor(struct monitor_arg *args, pthread_t *monitor_flowreqs_thread,
-		 pthread_t *monitor_flows_thread)
+int init_monitor(void)
 {
 	struct addrinfo hints;
 	struct addrinfo *result, *rp;
@@ -258,50 +245,40 @@ int init_monitor(struct monitor_arg *args, pthread_t *monitor_flowreqs_thread,
 
 	if (rp == NULL) {
 		fprintf(stderr, "Could not bind\n");
-		status = -1;
 		goto out_err;
 	}
 
 	/* Init ovsdb monitoring */
-	struct srdb_table *tbl;
 	cfg.ovsdb_conf.ntransacts = 1;
 	srdb = srdb_new(&cfg.ovsdb_conf);
 	if (!srdb) {
 		fprintf(stderr, "Cannot connect to the database\n");
-		status = -1;
 		goto out_err;
 	}
 
-	tbl = srdb_table_by_name(srdb->tables, "FlowReq");
-	tbl->read_update = read_flowreq;
-	args[0].srdb = srdb;
-	args[0].table = tbl;
-	args[0].initial = 0;
-	args[0].modify = 1;
-	args[0].insert = 0;
-	args[0].delete = 0;
-	pthread_create(monitor_flowreqs_thread, NULL, thread_monitor, (void *) &args[0]);
+	if (srdb_monitor(srdb, "FlowReq", MON_UPDATE, NULL, read_flowreq, NULL,
+			 false, true) < 0) {
+		pr_err("failed to start FlowReq monitor.");
+		goto out_err;
+	}
 
-	tbl = srdb_table_by_name(srdb->tables, "FlowState");
-	tbl->read = read_flowstate;
-	args[1].srdb = srdb;
-	args[1].table = tbl;
-	args[1].initial = 0;
-	args[1].modify = 0;
-	args[1].insert = 1;
-	args[1].delete = 0;
-	pthread_create(monitor_flows_thread, NULL, thread_monitor, (void *) &args[1]);
+	if (srdb_monitor(srdb, "FlowState", MON_INSERT, read_flowstate, NULL,
+			 NULL, false, true) < 0) {
+		pr_err("failed to start FlowState monitor.");
+		goto out_err;
+	}
 
 	mqueue_init(&replies_waiting_controller, max_queries);
 
-out_err:
+out:
 	return status;
+out_err:
+	status = -1;
+	goto out;
 }
 
 void close_monitor()
 {
 	srdb_destroy(srdb);
 	mqueue_destroy(&replies_waiting_controller);
-	mqueue_destroy(&transact_input);
-	mqueue_destroy(&transact_output);
 }

@@ -19,7 +19,6 @@ pthread_t client_producer_thread;
 pthread_t client_consumer_thread;
 pthread_t monitor_flowreqs_thread;
 pthread_t monitor_flows_thread;
-pthread_t transact_thread;
 
 volatile sig_atomic_t stop;
 
@@ -31,8 +30,6 @@ void inthand(int signum)
 		/* Unblocking threads waiting for these queues */
 		mqueue_close(&queries, 1, 1);
 		mqueue_close(&replies, 1, 1);
-		mqueue_close(&transact_input, 1, 2);
-		mqueue_close(&transact_output, 1, 2);
 		mqueue_close(&replies_waiting_controller, 1, 1);
 
 		/* Unblocking threads waiting for blocking system calls (e.g., select()) */
@@ -42,7 +39,6 @@ void inthand(int signum)
 		pthread_kill(client_consumer_thread, SIGUSR1);
 		pthread_kill(monitor_flowreqs_thread, SIGUSR1);
 		pthread_kill(monitor_flows_thread, SIGUSR1);
-		pthread_kill(transact_thread, SIGUSR1);
 
 	} else if (signum == SIGUSR1) {
 		print_debug("Thread is stopped gracefully\n");
@@ -64,8 +60,6 @@ int main(int argc, char *argv[])
 
 	sigset_t set;
 	struct sigaction sa;
-
-	struct monitor_arg args[3];
 
 	struct ares_addr_node *servers = NULL;
 
@@ -99,7 +93,7 @@ int main(int argc, char *argv[])
 	}
 
 	/* Setup of the controller monitoring */
-	err = init_monitor(args, &monitor_flowreqs_thread, &monitor_flows_thread);
+	err = init_monitor();
 	if (err) {
 		goto out_err_free_args;
 	}
@@ -145,7 +139,6 @@ int main(int argc, char *argv[])
 	pthread_join(client_producer_thread, NULL);
 	pthread_join(monitor_flowreqs_thread, NULL);
 	pthread_join(monitor_flows_thread, NULL);
-	pthread_join(transact_thread, NULL);
 
 	print_debug("All the threads returned\n");
 
