@@ -317,13 +317,13 @@ out_err:
 #if USE_DNS_CACHE
 static void destroy_dns_cache()
 {
+	struct hmap_entry *he;
+	struct reply *reply;
 
 	/* Free DNS names and DNS replies along with the arraylists */
-	while (dns_cache->keys->elem_count) {
-		char *name;
-		alist_get(dns_cache->keys, 0, &name);
-		struct reply *reply = hmap_get(dns_cache, name);
-		hmap_delete(dns_cache, name);
+
+	hmap_foreach(dns_cache, he) {
+		reply = he->elem;
 		free(reply);
 	}
 
