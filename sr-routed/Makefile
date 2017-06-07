@@ -1,5 +1,5 @@
 CC=gcc
-CFLAGS=-g -Wall -W -O0 -I../lib -Werror
+CFLAGS=-g -Wall -W -O2 -I../lib -Werror
 LDFLAGS=-L../lib -lsr -pthread -ljansson
 SRC=sr-routed.c
 OBJ=$(SRC:.c=.o)
