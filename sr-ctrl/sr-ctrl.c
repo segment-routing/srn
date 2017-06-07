@@ -469,6 +469,21 @@ struct d_ops delay_below_ops = {
 	.update		= delay_update,
 };
 
+static uint32_t delay_min_cost(uint32_t cur_cost, struct edge *e,
+			       void *state __unused, void *data __unused)
+{
+	struct link *l = e->data;
+
+	return cur_cost + l->delay;
+}
+
+struct d_ops delay_min_ops = {
+	.init		= NULL,
+	.destroy	= NULL,
+	.cost		= delay_min_cost,
+	.update		= NULL,
+};
+
 static bool rt_node_data_equals(void *d1, void *d2)
 {
 	struct router *rt1, *rt2;
@@ -649,7 +664,7 @@ static void process_request(struct srdb_entry *entry)
 	pspec.data = fl;
 	pspec.prune = pre_prune;
 	if (fl->delay)
-		pspec.d_ops = &delay_below_ops;
+		pspec.d_ops = &delay_min_ops;
 
 	epath = NULL;
 	segs = build_segpath(_cfg.ns.graph, &pspec, &epath);
@@ -1150,6 +1165,10 @@ static void recompute_flow(struct flow *fl)
 
 	pspec.src = src_node;
 	pspec.dst = dst_node;
+	pspec.data = fl;
+	pspec.prune = pre_prune;
+	if (fl->delay)
+		pspec.d_ops = &delay_min_ops;
 
 	epath = NULL;
 	segs = build_segpath(_cfg.ns.graph, &pspec, &epath);

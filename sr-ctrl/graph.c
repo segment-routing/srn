@@ -547,7 +547,7 @@ void graph_dijkstra(const struct graph *g, struct node *src, struct dres *res,
 		llist_node_insert_tail(Q, node);
 	}
 
-	if (ops)
+	if (ops && ops->init)
 		ops->init(g, src, &state, data);
 
 	while (!llist_node_empty(Q)) {
@@ -605,7 +605,7 @@ void graph_dijkstra(const struct graph *g, struct node *src, struct dres *res,
 			u_dist = (uintptr_t)hmap_get(dist, u);
 			v_dist = (uintptr_t)hmap_get(dist, v);
 
-			if (ops)
+			if (ops && ops->cost)
 				alt = ops->cost(u_dist, min_edge, state, data);
 			else
 				alt = u_dist + min_edge->metric;
@@ -616,7 +616,7 @@ void graph_dijkstra(const struct graph *g, struct node *src, struct dres *res,
 				llist_node_insert_tail(prev_list, u);
 				hmap_set(dist, v, (void *)(uintptr_t)alt);
 
-				if (ops)
+				if (ops && ops->update)
 					ops->update(min_edge, state, data);
 			} else if (alt == v_dist) {
 				prev_list = hmap_get(prev, v);
@@ -625,7 +625,7 @@ void graph_dijkstra(const struct graph *g, struct node *src, struct dres *res,
 		}
 	}
 
-	if (ops)
+	if (ops && ops->destroy)
 		ops->destroy(state);
 
 	llist_node_destroy(Q);
