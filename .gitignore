@@ -7,4 +7,6 @@ sr-nsd/sr-quagga-bin/
 sr-ctrl/sr-ctrl
 sr-routed/sr-routed
 tfoproxy/tfo-proxy
+sr-nsd/srnospf6d
+sr-nsd/srnzebra
 
