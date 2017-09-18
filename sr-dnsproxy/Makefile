@@ -8,14 +8,14 @@ CFLAGS += -fstack-protector-all # Add canary code to detect stack smashing
 CFLAGS += -I../lib/c-ares -I../lib
 LDFLAGS += -L../lib/c-ares/lib -L../lib
 LDFLAGS += -Wl,-Bstatic -lcares -Wl,-Bdynamic -lpthread -lsr -ljansson
-EXEC=proxy
+EXEC=sr-dnsproxy
 SRC= $(wildcard *.c)
 OBJ= $(SRC:.c=.o)
 
 
 all: $(EXEC)
 
-proxy: $(OBJ)
+$(EXEC): $(OBJ)
 	$(CC) -o $@ $^ $(LDFLAGS)
 
 proxy.o: proxy.h
