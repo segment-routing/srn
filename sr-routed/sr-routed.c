@@ -29,6 +29,7 @@ struct config {
 	atomic64_t last_vnh;
 	int dns_fd;
 	struct hashmap *routes;
+	char logfile[SLEN + 1];
 };
 
 struct route {
@@ -290,6 +291,45 @@ static int update_flowstate(struct srdb_entry *entry,
 }
 
 #define READ_STRING(b, arg, dst) sscanf(b, #arg " \"%[^\"]\"", (dst)->arg)
+#define READ_INT(b, arg, dst) sscanf(b, #arg " %i", &(dst)->arg)
+
+int load_args(int argc, char **argv, const char **conf, int *dryrun)
+{
+	int c;
+	opterr = 0;
+
+	while ((c = getopt(argc, argv, "d")) != -1)
+		switch (c)
+		{
+			case 'd':
+				*dryrun = 1;
+				break;
+			case '?':
+				fprintf(stderr, "Unknown option `-%c'.\n", optopt);
+				return -1;
+			default:
+				return -1;
+		}
+
+	if (optind == argc - 1)
+		*conf = argv[optind];
+	else if (optind > argc)
+		return -1;
+	return 0;
+}
+
+static void config_set_defaults(struct config *cfg)
+{
+	strcpy(cfg->ovsdb_conf.ovsdb_client, "ovsdb-client");
+	strcpy(cfg->ovsdb_conf.ovsdb_server, "tcp:[::1]:6640");
+	strcpy(cfg->ovsdb_conf.ovsdb_database, "SR_test");
+	strcpy(cfg->dns_fifo, "../dns.fifo");
+	strcpy(cfg->iproute, "ip -6");
+	strcpy(cfg->vnhpref, "2001:db8::");
+	strcpy(cfg->ingress_iface, "lo");
+	strcpy(cfg->logfile, "");
+	cfg->ovsdb_conf.ntransacts = 1;
+}
 
 static int load_config(const char *fname, struct config *cfg)
 {
@@ -309,6 +349,11 @@ static int load_config(const char *fname, struct config *cfg)
 			continue;
 		if (READ_STRING(buf, ovsdb_database, &cfg->ovsdb_conf))
 			continue;
+		if (READ_INT(buf, ntransacts, &cfg->ovsdb_conf)) {
+			if (!cfg->ovsdb_conf.ntransacts)
+				cfg->ovsdb_conf.ntransacts = 1;
+			continue;
+		}
 		if (READ_STRING(buf, dns_fifo, cfg))
 			continue;
 		if (READ_STRING(buf, iproute, cfg))
@@ -318,6 +363,8 @@ static int load_config(const char *fname, struct config *cfg)
 			continue;
 		}
 		if (READ_STRING(buf, ingress_iface, cfg))
+			continue;
+		if (READ_STRING(buf, logfile, cfg))
 			continue;
 		pr_err("parse error: unknown line `%s'.", buf);
 		ret = -1;
@@ -331,17 +378,26 @@ static int load_config(const char *fname, struct config *cfg)
 int main(int argc, char **argv)
 {
 	const char *conf = DEFAULT_CONFIG;
+	int dryrun = 0;
 
-	if (argc > 2) {
-		fprintf(stderr, "Usage: %s [configfile]\n", argv[0]);
+	if (load_args(argc, argv, &conf, &dryrun)) {
+		fprintf(stderr, "Usage: %s [-d] [configfile]\n", argv[0]);
 		return -1;
 	}
 
-	if (argc == 2)
-		conf = argv[1];
-
+	config_set_defaults(&_cfg);
 	if (load_config(conf, &_cfg) < 0) {
 		pr_err("failed to load configuration file.");
+		return -1;
+	}
+
+	if (dryrun) {
+		printf("Configuration file is correct");
+		return 0;
+	}
+
+	if (*_cfg.logfile && !set_logfile(_cfg.logfile)) {
+		pr_err("Cannot redirect output to logfile %s", _cfg.logfile);
 		return -1;
 	}
 

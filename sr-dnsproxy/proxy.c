@@ -13,6 +13,9 @@
 
 #include "proxy.h"
 
+#define DEFAULT_CONFIG "sr-dnsproxy.conf"
+
+
 pthread_t server_producer_thread;
 pthread_t server_consumer_thread;
 pthread_t client_producer_thread;
@@ -65,13 +68,28 @@ int main(int argc, char *argv[])
 
 	int optmask = ARES_OPT_FLAGS;
 
-	if (argc != 2) {
-		fprintf(stderr, "Usage: %s config_file\n", argv[0]);
+	const char *conf = DEFAULT_CONFIG;
+	int dryrun = 0;
+
+	if (load_args(argc, argv, &conf, &dryrun)) {
+		fprintf(stderr, "Usage: %s [-d] [configfile]\n", argv[0]);
 		goto out_err;
 	}
 
-	if (load_config(argv[1], &optmask, &servers)) {
+	config_set_defaults();
+	if (load_config(conf, &optmask, &servers)) {
 		goto out_err;
+	}
+
+	if (dryrun) {
+		printf("Configuration file is correct");
+		destroy_addr_list(servers);
+		return 0;
+	}
+
+	if (*cfg.logfile && !set_logfile(cfg.logfile)) {
+		pr_err("Cannot redirect output to logfile %s", cfg.logfile);
+		goto out_err_free_args;
 	}
 
 	/* Block SIGINT here to make this property inherited by the child process */

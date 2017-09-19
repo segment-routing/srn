@@ -280,7 +280,7 @@ int init_client(int optmask, struct ares_addr_node *servers,
 	}
 #endif
 
-	mqueue_init(&replies, max_queries);
+	mqueue_init(&replies, cfg.max_queries);
 
 	pthread_mutex_init(&channel_mutex, NULL);
 

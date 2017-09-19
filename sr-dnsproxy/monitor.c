@@ -268,7 +268,7 @@ int init_monitor(void)
 		goto out_err;
 	}
 
-	mqueue_init(&replies_waiting_controller, max_queries);
+	mqueue_init(&replies_waiting_controller, cfg.max_queries);
 
 out:
 	return status;

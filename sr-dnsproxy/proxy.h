@@ -112,13 +112,13 @@ struct config {
 	struct ovsdb_config ovsdb_conf;
 	char dns_fifo[SLEN + 1];
 	char router_name[SLEN + 1];
-	char max_parallel_queries[SLEN + 1];
+	unsigned int max_queries;
 	char proxy_listen_port[SLEN + 1];
 	char dns_server_port[SLEN + 1];
+	char logfile[SLEN + 1];
 };
 
 extern volatile sig_atomic_t stop;
-extern int max_queries;
 extern struct config cfg;
 extern struct queue_thread queries;
 extern struct queue_thread replies;
@@ -163,6 +163,8 @@ static inline void append_addr_list(struct ares_addr_node **head, struct ares_ad
 		*head = node;
 }
 
+int load_args(int argc, char **argv, const char **conf, int *dryrun);
+void config_set_defaults();
 int load_config(const char *fname, int *optmask, struct ares_addr_node **servers);
 
 int init_server(pthread_t *server_consumer_thread, pthread_t *server_producer_thread);

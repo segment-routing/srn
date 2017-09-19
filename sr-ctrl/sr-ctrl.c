@@ -50,6 +50,7 @@ struct config {
 	unsigned int req_buffer_size;
 	struct provider *providers;
 	unsigned int nb_providers;
+	char logfile[SLEN + 1];
 
 	/* internal data */
 	struct srdb *srdb;
@@ -83,6 +84,7 @@ static void config_set_defaults(struct config *cfg)
 	strcpy(cfg->ovsdb_conf.ovsdb_client, "ovsdb-client");
 	strcpy(cfg->ovsdb_conf.ovsdb_server, "tcp:[::1]:6640");
 	strcpy(cfg->ovsdb_conf.ovsdb_database, "SR_test");
+	strcpy(cfg->logfile, "");
 	cfg->ovsdb_conf.ntransacts = 1;
 	cfg->worker_threads = 1;
 	cfg->req_buffer_size = 16;
@@ -1018,6 +1020,8 @@ static int load_config(const char *fname, struct config *cfg)
 
 	while (fgets(buf, 128, fp)) {
 		strip_crlf(buf);
+		if (READ_STRING(buf, logfile, cfg))
+			continue;
 		if (READ_STRING(buf, ovsdb_client, &cfg->ovsdb_conf))
 			continue;
 		if (READ_STRING(buf, ovsdb_server, &cfg->ovsdb_conf))
@@ -1355,6 +1359,31 @@ static int launch_srdb(void)
 	return 0;
 }
 
+int load_args(int argc, char **argv, const char **conf, int *dryrun)
+{
+	int c;
+	opterr = 0;
+
+	while ((c = getopt(argc, argv, "d")) != -1)
+		switch (c)
+		{
+			case 'd':
+				*dryrun = 1;
+				break;
+			case '?':
+				fprintf(stderr, "Unknown option `-%c'.\n", optopt);
+				return -1;
+			default:
+				return -1;
+		}
+
+	if (optind == argc - 1)
+		*conf = argv[optind];
+	else if (optind > argc)
+		return -1;
+	return 0;
+}
+
 int main(int argc, char **argv)
 {
 	const char *conf = DEFAULT_CONFIG;
@@ -1363,14 +1392,12 @@ int main(int argc, char **argv)
 	unsigned int i;
 	sem_t mon_stop;
 	int ret = 0;
+	int dryrun = 0;
 
-	if (argc > 2) {
-		fprintf(stderr, "Usage: %s [configfile]\n", argv[0]);
+	if (load_args(argc, argv, &conf, &dryrun)) {
+		fprintf(stderr, "Usage: %s [-d] [configfile]\n", argv[0]);
 		return -1;
 	}
-
-	if (argc == 2)
-		conf = argv[1];
 
 	config_set_defaults(&_cfg);
 
@@ -1384,6 +1411,16 @@ int main(int argc, char **argv)
 		pr_err("failed to load rules file.");
 		ret = -1;
 		goto free_conf;
+	}
+
+	if (dryrun) {
+		printf("Configuration and rules files are correct");
+		goto free_rules;
+	}
+
+	if (*_cfg.logfile && !set_logfile(_cfg.logfile)) {
+		pr_err("Cannot redirect output to logfile %s", _cfg.logfile);
+		goto free_rules;
 	}
 
 	_cfg.srdb = srdb_new(&_cfg.ovsdb_conf);
