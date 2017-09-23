@@ -11,9 +11,9 @@
 #include "redblack.h"
 #include "net.h"
 
-#define __unused __attribute__((unused))
+#define __unused__ __attribute__((unused))
 
-static int compare(const void *a, const void *b, const void *config __unused)
+static int compare(const void *a, const void *b, const void *config __unused__)
 {
 	struct socket *sk1 = (struct socket *)a;
 	struct socket *sk2 = (struct socket *)b;

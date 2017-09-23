@@ -20,7 +20,7 @@ struct queue_thread replies_waiting_controller;
 struct srdb *srdb;
 
 static int read_flowreq(struct srdb_entry *entry,
-			struct srdb_entry *diff __unused,
+			struct srdb_entry *diff __unused__,
 			unsigned int fmask)
 {
 	struct srdb_flowreq_entry *flowreq;

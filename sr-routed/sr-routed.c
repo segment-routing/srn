@@ -242,7 +242,7 @@ static int read_flowstate(struct srdb_entry *entry)
 }
 
 static int update_flowstate(struct srdb_entry *entry,
-			    struct srdb_entry *diff __unused,
+			    struct srdb_entry *diff __unused__,
 			    unsigned int fmask)
 {
 	struct srdb_flow_entry *flow_entry = (struct srdb_flow_entry *)entry;

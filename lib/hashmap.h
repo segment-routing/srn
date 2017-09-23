@@ -2,8 +2,9 @@
 #define _HASHMAP_H
 
 #include <pthread.h>
-#include <linux/in6.h>
+#include <netinet/in.h>
 #include <stdint.h>
+#include <string.h>
 
 #include "llist.h"
 #include "misc.h"

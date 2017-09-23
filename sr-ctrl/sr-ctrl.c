@@ -411,7 +411,7 @@ static void pre_prune(struct graph *g, struct pathspec *pspec)
 }
 
 static void delay_init(const struct graph *g, struct node *src, void **state,
-		       void *data __unused)
+		       void *data __unused__)
 {
 	struct llist_node *iter;
 	struct hashmap *dist;
@@ -453,7 +453,7 @@ static uint32_t delay_below_cost(uint32_t cur_cost, struct edge *e, void *state,
 	return cur_cost + e->metric;
 }
 
-static void delay_update(struct edge *e, void *state, void *data __unused)
+static void delay_update(struct edge *e, void *state, void *data __unused__)
 {
 	struct hashmap *dist = state;
 	uint32_t cur_delay;
@@ -472,7 +472,7 @@ struct d_ops delay_below_ops = {
 };
 
 static uint32_t delay_min_cost(uint32_t cur_cost, struct edge *e,
-			       void *state __unused, void *data __unused)
+			       void *state __unused__, void *data __unused__)
 {
 	struct link *l = e->data;
 
@@ -897,7 +897,7 @@ out_free:
 }
 
 static int linkstate_update(struct srdb_entry *entry,
-			    struct srdb_entry *diff __unused,
+			    struct srdb_entry *diff __unused__,
 			    unsigned int fmask)
 {
 	struct srdb_linkstate_entry *link_entry;
@@ -1079,7 +1079,7 @@ static int load_config(const char *fname, struct config *cfg)
 	return ret;
 }
 
-static void *thread_worker(void *arg __unused)
+static void *thread_worker(void *arg __unused__)
 {
 	struct srdb_entry *entry;
 	struct srdb_table *tbl;
