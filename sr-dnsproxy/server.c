@@ -201,7 +201,7 @@ static void *server_consumer_main(__attribute__((unused)) void *_arg)
 	struct callback_args *args = NULL;
 	char *name = NULL;
 
-	server_pipe_fd = open(FIFO_CLIENT_SERVER_NAME, O_WRONLY);
+	server_pipe_fd = open(cfg.client_server_fifo, O_WRONLY);
 	if (server_pipe_fd < 0) {
 		perror("Cannot open pipe");
 		return NULL;

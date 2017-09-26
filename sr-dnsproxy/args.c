@@ -22,7 +22,7 @@ void config_set_defaults()
 	strcpy(cfg.ovsdb_conf.ovsdb_client, "ovsdb-client");
 	strcpy(cfg.ovsdb_conf.ovsdb_server, "ovsdb-server");
 	strcpy(cfg.ovsdb_conf.ovsdb_database, "SR_test");
-	strcpy(cfg.dns_fifo, "../dns.fifo");
+	strcpy(cfg.client_server_fifo, FIFO_CLIENT_SERVER_NAME);
 	strcpy(cfg.router_name, "A");
 	strcpy(cfg.dns_server_port, DEFAULT_DNS_PORT);
 	strcpy(cfg.proxy_listen_port, "2000");
@@ -86,7 +86,7 @@ int load_config(const char *fname, int *optmask, struct ares_addr_node **servers
 				cfg.ovsdb_conf.ntransacts = 1;
 			continue;
 		}
-		if (READ_STRING(buf, dns_fifo, &cfg))
+		if (READ_STRING(buf, client_server_fifo, &cfg))
 			continue;
 		if (READ_STRING(buf, router_name, &cfg))
 			continue;

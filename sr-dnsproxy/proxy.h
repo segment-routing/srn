@@ -110,7 +110,7 @@ struct monitor_arg {
 
 struct config {
 	struct ovsdb_config ovsdb_conf;
-	char dns_fifo[SLEN + 1];
+	char client_server_fifo[SLEN + 1];
 	char router_name[SLEN + 1];
 	unsigned int max_queries;
 	char proxy_listen_port[SLEN + 1];

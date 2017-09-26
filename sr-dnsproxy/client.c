@@ -108,7 +108,7 @@ static void *client_producer_main(__attribute__((unused)) void *args)
 
 	print_debug("A client producer thread has started\n");
 
-	client_pipe_fd = open(FIFO_CLIENT_SERVER_NAME, O_RDONLY);
+	client_pipe_fd = open(cfg.client_server_fifo, O_RDONLY);
 	if (client_pipe_fd < 0) {
 		perror("Cannot open pipe");
 		return NULL;
@@ -245,7 +245,10 @@ int init_client(int optmask, struct ares_addr_node *servers,
 	memset(&options, 0, sizeof(struct ares_options));
 
 	/* Create pipe between the client and the server */
-	mkfifo(FIFO_CLIENT_SERVER_NAME, 0640);
+	if (mkfifo(cfg.client_server_fifo, 0640)) {
+		perror("mkfifo failed");
+		goto out_err;
+	}
 
 	status = ares_library_init(ARES_LIB_INIT_ALL);
 	if (status != ARES_SUCCESS) {
