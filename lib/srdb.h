@@ -106,6 +106,17 @@ struct srdb {
 
 /* OVSDB tables description */
 
+struct srdb_namemap_entry {
+	struct srdb_entry entry;
+	char routerName[SLEN + 1];
+	int routerId;
+};
+
+enum {
+	ME_ROUTERNAME = 1,
+	ME_ROUTERID,
+};
+
 struct srdb_router_entry {
 	struct srdb_entry entry;
 	char router[SLEN + 1];

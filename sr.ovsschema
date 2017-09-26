@@ -1,6 +1,13 @@
 { "name": "SR_test",
   "version": "0.0.1",
   "tables": {
+    "NameIdMapping": {
+      "columns": {
+        "routerName": {
+          "type": "string"},
+        "routerId": {
+          "type": "integer"}},
+    "isRoot": true},
     "RouterIds": {
       "columns": {
         "router": {

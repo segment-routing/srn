@@ -484,6 +484,29 @@ void free_srdb_entry(struct srdb_descriptor *desc,
 		.index	= 0,					\
 	}
 
+#define OFFSET_NAMEMAP(NAME)	offsetof(struct srdb_namemap_entry, NAME)
+static struct srdb_descriptor namemap_desc_tmpl[] = {
+		SRDB_BUILTIN_ENTRIES(),
+
+		{
+				.name	= "routerName",
+				.type	= SRDB_STR,
+				.maxlen	= SLEN,
+				.offset	= OFFSET_NAMEMAP(routerName),
+				.index	= ME_ROUTERNAME,
+		},
+		{
+				.name	= "routerId",
+				.type	= SRDB_INT,
+				.maxlen	= sizeof(int),
+				.offset	= OFFSET_NAMEMAP(routerId),
+				.index	= ME_ROUTERID,
+		},
+		{
+				.name	= NULL,
+		},
+};
+
 #define OFFSET_ROUTERIDS(NAME)	offsetof(struct srdb_router_entry, NAME)
 static struct srdb_descriptor routerids_desc_tmpl[] = {
 	SRDB_BUILTIN_ENTRIES(),
@@ -799,6 +822,12 @@ static struct srdb_descriptor nodestate_desc_tmpl[] = {
 };
 
 static struct srdb_table srdb_tables[] = {
+	{
+		.name		= "NameIdMapping",
+		.entry_size	= sizeof(struct srdb_namemap_entry),
+		.desc_tmpl	= namemap_desc_tmpl,
+		.desc_size	= sizeof(namemap_desc_tmpl),
+	},
 	{
 		.name		= "RouterIds",
 		.entry_size	= sizeof(struct srdb_router_entry),
