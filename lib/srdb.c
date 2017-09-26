@@ -52,7 +52,9 @@ static int parse_ovsdb_monitor_reply(json_t *monitor_reply,
 	int ret = 0;
 
 	if (!json_is_null(json_object_get(monitor_reply, "error"))) {
-		fprintf(stderr, "There is a non-null error message in the monitor reply\n");
+		char * err = json_dumps(json_object_get(monitor_reply, "error"), 0);
+		fprintf(stderr, "There is a non-null error message in the monitor reply: %s\n", err);
+		free(err);
 		return -1;
 	}
 	json_t *updates = json_object_get(monitor_reply, "result");
