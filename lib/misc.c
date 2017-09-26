@@ -88,20 +88,3 @@ char *strreplace(char *line, char from, char to)
 
 	return line;
 }
-
-FILE *set_logfile(char *logfile)
-{
-	fflush(stdout);
-	fflush(stderr);
-	FILE *fp = freopen(logfile, "a", stdout);
-	if (fp) {
-		if (dup2(fileno(stderr), fileno(stdout)) < 0) {
-			pr_err("Cannot redirect stderr to stdout");
-			return NULL;
-		}
-	} else {
-		perror("Cannot redirect stdout");
-	}
-
-	return fp;
-}

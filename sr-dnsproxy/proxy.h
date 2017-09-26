@@ -115,7 +115,6 @@ struct config {
 	unsigned int max_queries;
 	char proxy_listen_port[SLEN + 1];
 	char dns_server_port[SLEN + 1];
-	char logfile[SLEN + 1];
 };
 
 extern volatile sig_atomic_t stop;

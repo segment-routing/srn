@@ -26,7 +26,6 @@ void config_set_defaults()
 	strcpy(cfg.router_name, "A");
 	strcpy(cfg.dns_server_port, DEFAULT_DNS_PORT);
 	strcpy(cfg.proxy_listen_port, "2000");
-	strcpy(cfg.logfile, "");
 	cfg.ovsdb_conf.ntransacts = 1;
 	cfg.max_queries = 50;
 }
@@ -100,8 +99,6 @@ int load_config(const char *fname, int *optmask, struct ares_addr_node **servers
 				cfg.max_queries = 1;
 			continue;
 		}
-		if (READ_STRING(buf, logfile, &cfg))
-			continue;
 		if (sscanf(buf, "dns_server \"%[^\"]\"", dns_server)) {
 			srvr = malloc(sizeof(struct ares_addr_node));
 			if (!srvr) {

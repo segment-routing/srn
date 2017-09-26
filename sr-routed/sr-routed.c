@@ -29,7 +29,6 @@ struct config {
 	atomic64_t last_vnh;
 	int dns_fd;
 	struct hashmap *routes;
-	char logfile[SLEN + 1];
 };
 
 struct route {
@@ -327,7 +326,6 @@ static void config_set_defaults(struct config *cfg)
 	strcpy(cfg->iproute, "ip -6");
 	strcpy(cfg->vnhpref, "2001:db8::");
 	strcpy(cfg->ingress_iface, "lo");
-	strcpy(cfg->logfile, "");
 	cfg->ovsdb_conf.ntransacts = 1;
 }
 
@@ -364,8 +362,6 @@ static int load_config(const char *fname, struct config *cfg)
 		}
 		if (READ_STRING(buf, ingress_iface, cfg))
 			continue;
-		if (READ_STRING(buf, logfile, cfg))
-			continue;
 		pr_err("parse error: unknown line `%s'.", buf);
 		ret = -1;
 		break;
@@ -394,11 +390,6 @@ int main(int argc, char **argv)
 	if (dryrun) {
 		printf("Configuration file is correct");
 		return 0;
-	}
-
-	if (*_cfg.logfile && !set_logfile(_cfg.logfile)) {
-		pr_err("Cannot redirect output to logfile %s", _cfg.logfile);
-		return -1;
 	}
 
 	if (init_dns_fifo() < 0) {

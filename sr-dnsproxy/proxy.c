@@ -87,11 +87,6 @@ int main(int argc, char *argv[])
 		return 0;
 	}
 
-	if (*cfg.logfile && !set_logfile(cfg.logfile)) {
-		pr_err("Cannot redirect output to logfile %s", cfg.logfile);
-		goto out_err_free_args;
-	}
-
 	/* Block SIGINT here to make this property inherited by the child process */
 	sigemptyset(&set);
 	sigaddset(&set, SIGINT);
