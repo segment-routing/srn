@@ -91,13 +91,13 @@
           "type": "string"},
         "source": {
           "type": "string"},
+        "srcaddr": {
+          "type": "string"},
         "bandwidth": {
           "type": "integer"},
         "delay": {
           "type": "integer"},
         "proxy": {
-          "type": "string"},
-        "router": {
           "type": "string"},
         "status": {
           "type": "integer"}},
