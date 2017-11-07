@@ -618,9 +618,11 @@ static void process_request(struct srdb_entry *entry)
 
 	net_state_read_lock(&_cfg.ns);
 
-	rt = hmap_get(_cfg.ns.routers, req->router);
+	inet_pton(AF_INET6, req->srcaddr, &addr);
+	rt = lpm_lookup(_cfg.ns.prefixes, &addr);
+
 	if (!rt) {
-		set_flowreq_status(req, REQ_STATUS_NOROUTER);
+		set_flowreq_status(req, REQ_STATUS_NOPREFIX);
 		goto free_flow;
 	}
 

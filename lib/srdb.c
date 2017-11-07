@@ -591,6 +591,13 @@ static struct srdb_descriptor flowreq_desc_tmpl[] = {
 		.index	= FREQ_SOURCE,
 	},
 	{
+		.name	= "srcaddr",
+		.type	= SRDB_STR,
+		.maxlen	= SLEN,
+		.offset	= OFFSET_FLOWREQ(srcaddr),
+		.index	= FREQ_SRCADDR,
+	},
+	{
 		.name	= "bandwidth",
 		.type	= SRDB_INT,
 		.maxlen	= sizeof(int),
@@ -603,13 +610,6 @@ static struct srdb_descriptor flowreq_desc_tmpl[] = {
 		.maxlen	= sizeof(int),
 		.offset	= OFFSET_FLOWREQ(delay),
 		.index	= FREQ_DELAY,
-	},
-	{
-		.name	= "router",
-		.type	= SRDB_STR,
-		.maxlen	= SLEN,
-		.offset = OFFSET_FLOWREQ(router),
-		.index	= FREQ_ROUTER,
 	},
 	{
 		.name	= "proxy",

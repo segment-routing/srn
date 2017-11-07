@@ -210,9 +210,9 @@ struct srdb_flowreq_entry {
 	char destination[SLEN + 1];
 	char dstaddr[SLEN + 1];
 	char source[SLEN + 1];
+	char srcaddr[SLEN + 1];
 	int bandwidth;
 	int delay;
-	char router[SLEN + 1]; /* Name of the access router */
 	char proxy[SLEN + 1]; /* Name of the DNS proxy that inserts the rule in the database */
 	int status;
 };
@@ -222,9 +222,9 @@ enum {
 	FREQ_DESTINATION,
 	FREQ_DSTADDR,
 	FREQ_SOURCE,
+	FREQ_SRCADDR,
 	FREQ_BANDWIDTH,
 	FREQ_DELAY,
-	FREQ_ROUTER,
 	FREQ_PROXY,
 	FREQ_STATUS,
 };

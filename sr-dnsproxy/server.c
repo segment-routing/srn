@@ -85,10 +85,6 @@ static int dns_parse_edns(struct query *query, char **name)
 		case T_OPT_OPCODE_LATENCY:
 			query->latency_req = DNS__32BIT(aptr + i + 4);
 			break;
-		case T_OPT_OPCODE_ACCESS_ROUTER_NAME:
-			memcpy(query->access_router, aptr + i + 4, option_length);
-			query->access_router[option_length] = '\0';
-			break;
 		default: /* Unknown values are skipped */
 			print_debug("Unknown option code %d in a T_OPT RR of a DNS query\n", option_code);
 			break;
@@ -245,7 +241,6 @@ static void *server_consumer_main(__attribute__((unused)) void *_arg)
 			args->bandwidth_req = query->bandwidth_req;
 			args->latency_req = query->latency_req;
 			strncpy(args->app_name_req, query->app_name_req, SLEN + 1);
-			strncpy(args->access_router, query->access_router, SLEN + 1);
 #if DEBUG_PERF
 			args->query_rcv_time = query->query_rcv_time;
 			args->query_forward_time = query->query_forward_time;
@@ -276,7 +271,6 @@ static void *server_consumer_main(__attribute__((unused)) void *_arg)
 			reply->bandwidth_req = query->bandwidth_req;
 			reply->latency_req = query->latency_req;
 			strncpy(reply->app_name_req, query->app_name_req, SLEN + 1);
-			strncpy(reply->access_router, query->access_router, SLEN + 1);
 			uint16_t qid = DNS_HEADER_QID((char *) query->data);
 			DNS_HEADER_SET_QID((char *) reply->data, qid);
 #if DEBUG_PERF

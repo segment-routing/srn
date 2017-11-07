@@ -50,7 +50,6 @@ struct query {
 	uint32_t bandwidth_req;
 	uint32_t latency_req;
 	char app_name_req [SLEN + 1];
-	char access_router [SLEN + 1];
 #if DEBUG_PERF
 	struct timespec query_rcv_time;
 	struct timespec query_forward_time;
@@ -69,7 +68,6 @@ struct reply {
 	uint32_t bandwidth_req;
 	uint32_t latency_req;
 	char app_name_req [SLEN + 1];
-	char access_router [SLEN + 1];
 	char ovsdb_req_uuid[SLEN + 1];
 	char destination[SLEN + 1];
 	char destination_addr[SLEN + 1];
@@ -92,7 +90,6 @@ struct callback_args {
 	uint32_t bandwidth_req;
 	uint32_t latency_req;
 	char app_name_req [SLEN + 1];
-	char access_router [SLEN + 1];
 #if DEBUG_PERF
 	struct timespec query_rcv_time;
 	struct timespec query_forward_time;
@@ -114,6 +111,7 @@ struct config {
 	char router_name[SLEN + 1];
 	unsigned int max_queries;
 	char proxy_listen_port[SLEN + 1];
+	char proxy_listen_addr[SLEN + 1];
 	char dns_server_port[SLEN + 1];
 };
 

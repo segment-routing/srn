@@ -43,7 +43,6 @@ void client_callback(void *arg, int status, __attribute__((unused)) int timeouts
 		reply->bandwidth_req = call_args->bandwidth_req;
 		reply->latency_req = call_args->latency_req;
 		strncpy(reply->app_name_req, call_args->app_name_req, SLEN +1);
-		strncpy(reply->access_router, call_args->access_router, SLEN + 1);
 		memcpy(reply->data, abuf, alen);
 #if DEBUG_PERF
 		reply->query_rcv_time = call_args->query_rcv_time;
@@ -209,9 +208,9 @@ static void *client_consumer_main(__attribute__((unused)) void *args)
 		strncpy(entry.destination, reply->destination, SLEN + 1);
 		strncpy(entry.dstaddr, reply->destination_addr, SLEN + 1);
 		strncpy(entry.source, reply->app_name_req, SLEN + 1);
+		inet_ntop(AF_INET6, &reply->addr.sin6_addr, entry.srcaddr, SLEN + 1);
 		entry.bandwidth = reply->bandwidth_req;
 		entry.delay = reply->latency_req;
-		strncpy(entry.router, reply->access_router, SLEN + 1);
 		strncpy(entry.request_id, reply->ovsdb_req_uuid, SLEN + 1);
 		strncpy(entry.proxy, cfg.router_name, SLEN + 1);
 
