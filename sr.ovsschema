@@ -6,6 +6,35 @@
         "routerName": {
           "type": "string"},
         "routerId": {
+          "type": "integer"},
+        "addr": {
+          "type": "string"},
+        "prefix": {
+          "type": "string"},
+        "pbsid": {
+          "type": "string"}},
+    "isRoot": true},
+    "AvailableLink": {
+      "columns": {
+        "name1": {
+          "type": "string"},
+        "addr1": {
+          "type": "string"},
+        "routerId1": {
+          "type": "integer"},
+        "name2": {
+          "type": "string"},
+        "addr2": {
+          "type": "string"},
+        "routerId2": {
+          "type": "integer"},
+        "metric": {
+          "type": "integer"},
+        "bw": {
+          "type": "integer"},
+        "ava_bw": {
+          "type": "integer"},
+        "delay": {
           "type": "integer"}},
     "isRoot": true},
     "RouterIds": {

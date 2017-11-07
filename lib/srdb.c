@@ -502,23 +502,44 @@ void free_srdb_entry(struct srdb_descriptor *desc,
 static struct srdb_descriptor namemap_desc_tmpl[] = {
 		SRDB_BUILTIN_ENTRIES(),
 
-		{
-				.name	= "routerName",
-				.type	= SRDB_STR,
-				.maxlen	= SLEN,
-				.offset	= OFFSET_NAMEMAP(routerName),
-				.index	= ME_ROUTERNAME,
-		},
-		{
-				.name	= "routerId",
-				.type	= SRDB_INT,
-				.maxlen	= sizeof(int),
-				.offset	= OFFSET_NAMEMAP(routerId),
-				.index	= ME_ROUTERID,
-		},
-		{
-				.name	= NULL,
-		},
+	{
+			.name	= "routerName",
+			.type	= SRDB_STR,
+			.maxlen	= SLEN,
+			.offset	= OFFSET_NAMEMAP(routerName),
+			.index	= ME_ROUTERNAME,
+	},
+	{
+			.name	= "routerId",
+			.type	= SRDB_INT,
+			.maxlen	= sizeof(int),
+			.offset	= OFFSET_NAMEMAP(routerId),
+			.index	= ME_ROUTERID,
+	},
+	{
+			.name	= "addr",
+			.type	= SRDB_STR,
+			.maxlen	= SLEN,
+			.offset	= OFFSET_NAMEMAP(addr),
+			.index	= ME_ADDR,
+	},
+	{
+			.name	= "prefix",
+			.type	= SRDB_VARSTR,
+			.maxlen	= BUFLEN,
+			.offset	= OFFSET_NAMEMAP(prefix),
+			.index	= ME_PREFIX,
+	},
+	{
+			.name	= "pbsid",
+			.type	= SRDB_STR,
+			.maxlen	= SLEN,
+			.offset	= OFFSET_NAMEMAP(pbsid),
+			.index	= ME_PBSID,
+	},
+	{
+			.name	= NULL,
+	},
 };
 
 #define OFFSET_ROUTERIDS(NAME)	offsetof(struct srdb_router_entry, NAME)
@@ -835,6 +856,79 @@ static struct srdb_descriptor nodestate_desc_tmpl[] = {
 	},
 };
 
+#define OFFSET_AVAILLINK(NAME)	offsetof(struct srdb_availlink_entry, NAME)
+static struct srdb_descriptor availlink_desc_tmpl[] = {
+		SRDB_BUILTIN_ENTRIES(),
+
+	{
+			.name	= "name1",
+			.type	= SRDB_STR,
+			.maxlen	= SLEN,
+			.offset	= OFFSET_AVAILLINK(name1),
+			.index	= AL_NAME1,
+	},
+	{
+			.name	= "addr1",
+			.type	= SRDB_STR,
+			.maxlen	= SLEN,
+			.offset	= OFFSET_AVAILLINK(addr1),
+			.index	= AL_ADDR1,
+	},
+	{
+			.name	= "routerId1",
+			.type	= SRDB_INT,
+			.offset	= OFFSET_AVAILLINK(routerId1),
+			.index	= AL_RTID1,
+	},
+	{
+			.name	= "name2",
+			.type	= SRDB_STR,
+			.maxlen	= SLEN,
+			.offset	= OFFSET_AVAILLINK(name2),
+			.index	= AL_NAME2,
+	},
+	{
+			.name	= "addr2",
+			.type	= SRDB_STR,
+			.maxlen	= SLEN,
+			.offset	= OFFSET_AVAILLINK(addr2),
+			.index	= AL_ADDR2,
+	},
+	{
+			.name	= "routerId2",
+			.type	= SRDB_INT,
+			.offset	= OFFSET_AVAILLINK(routerId2),
+			.index	= AL_RTID2,
+	},
+	{
+			.name	= "metric",
+			.type	= SRDB_INT,
+			.offset	= OFFSET_AVAILLINK(metric),
+			.index	= AL_METRIC,
+	},
+	{
+			.name	= "bw",
+			.type	= SRDB_INT,
+			.offset	= OFFSET_AVAILLINK(bw),
+			.index	= AL_BW,
+	},
+	{
+			.name	= "ava_bw",
+			.type	= SRDB_INT,
+			.offset	= OFFSET_AVAILLINK(ava_bw),
+			.index	= AL_AVA_BW,
+	},
+	{
+			.name	= "delay",
+			.type	= SRDB_INT,
+			.offset	= OFFSET_AVAILLINK(delay),
+			.index	= AL_DELAY,
+	},
+	{
+			.name	= NULL,
+	},
+};
+
 static struct srdb_table srdb_tables[] = {
 	{
 		.name		= "NameIdMapping",
@@ -871,6 +965,12 @@ static struct srdb_table srdb_tables[] = {
 		.entry_size	= sizeof(struct srdb_nodestate_entry),
 		.desc_tmpl	= nodestate_desc_tmpl,
 		.desc_size	= sizeof(nodestate_desc_tmpl),
+	},
+	{
+		.name		= "AvailableLink",
+		.entry_size	= sizeof(struct srdb_availlink_entry),
+		.desc_tmpl	= availlink_desc_tmpl,
+		.desc_size	= sizeof(availlink_desc_tmpl),
 	},
 	{
 		.name		= NULL,

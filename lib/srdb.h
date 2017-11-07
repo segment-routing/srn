@@ -122,12 +122,21 @@ struct srdb_namemap_entry {
 	struct srdb_entry entry;
 	char routerName[SLEN + 1];
 	int routerId;
+	char addr[SLEN + 1];
+	char *prefix;
+	char pbsid[SLEN + 1];
 };
 
 enum {
 	ME_ROUTERNAME = 1,
 	ME_ROUTERID,
+	ME_ADDR,
+	ME_PREFIX,
+	ME_PBSID,
 };
+
+#define ME_LAST ME_PBSID
+#define ME_ALL ENTRY_MASK_ALL(RTE_LAST)
 
 struct srdb_router_entry {
 	struct srdb_entry entry;
@@ -284,6 +293,36 @@ struct srdb_update_transact {
 	unsigned int index_mask;
 	json_t *fields;
 };
+
+struct srdb_availlink_entry {
+	struct srdb_entry entry;
+	char name1[SLEN + 1];
+	char addr1[SLEN + 1]; /* List of prefixes on the prefixes available */
+	int routerId1;
+	char name2[SLEN + 1];
+	char addr2[SLEN + 1];
+	int routerId2;
+	int metric;
+	int bw;
+	int ava_bw;
+	int delay;
+};
+
+enum {
+	AL_NAME1 = 1,
+	AL_ADDR1,
+	AL_RTID1,
+	AL_NAME2,
+	AL_ADDR2,
+	AL_RTID2,
+	AL_METRIC,
+	AL_BW,
+	AL_AVA_BW,
+	AL_DELAY,
+};
+
+#define AL_LAST AL_DELAY
+#define AL_ALL ENTRY_MASK_ALL(AL_LAST)
 
 int srdb_monitor(struct srdb *srdb, const char *table, int mon_flags,
 		 table_insert_cb_t cb_insert, table_update_cb_t cb_update,
