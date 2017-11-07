@@ -70,7 +70,9 @@ static int read_flowreq(struct srdb_entry *entry,
 	return stop;
 }
 
-static int read_flowstate(struct srdb_entry *entry)
+static int read_flowstate(struct srdb_entry *entry,
+                          struct srdb_entry *diff __unused__,
+                          unsigned int fmask)
 {
 	struct reply *reply = NULL;
 	struct reply *tmp = NULL;
@@ -87,6 +89,10 @@ static int read_flowstate(struct srdb_entry *entry)
 		perror("Cannot get controller_reply time");
 	}
 #endif
+
+	/* We only consider the entry when the access router has installed the SR policy */
+	if (!(fmask & ENTRY_MASK(FE_STATUS)) || flowstate->status != FLOW_STATUS_RUNNING)
+		return stop;
 
 	/* Find the concerned reply */
 	mqueue_walk_safe(&replies_waiting_controller, reply, tmp, struct reply *) {
@@ -262,7 +268,7 @@ int init_monitor(void)
 		goto out_err;
 	}
 
-	if (srdb_monitor(srdb, "FlowState", MON_INSERT, read_flowstate, NULL,
+	if (srdb_monitor(srdb, "FlowState", MON_UPDATE, NULL, read_flowstate,
 			 NULL, false, true) < 0) {
 		pr_err("failed to start FlowState monitor.");
 		goto out_err;
