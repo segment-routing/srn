@@ -224,7 +224,7 @@ int init_monitor(void)
 	hints.ai_addr = NULL;
 	hints.ai_next = NULL;
 
-	status = getaddrinfo(NULL, cfg.proxy_listen_port, &hints, &result);
+	status = getaddrinfo(cfg.proxy_listen_addr, cfg.proxy_listen_port, &hints, &result);
 	if (status != 0) {
 		fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(status));
 		goto out_err;
