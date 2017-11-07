@@ -96,15 +96,6 @@ struct callback_args {
 #endif
 };
 
-struct monitor_arg {
-	struct srdb *srdb;
-	struct srdb_table *table;
-	int modify;
-	int initial;
-	int insert;
-	int delete;
-};
-
 struct config {
 	struct ovsdb_config ovsdb_conf;
 	char client_server_fifo[SLEN + 1];
