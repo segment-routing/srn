@@ -19,7 +19,6 @@
 
 struct config {
 	struct ovsdb_config ovsdb_conf;
-	char dns_fifo[SLEN + 1];
 	char iproute[SLEN + 1];
 	char vnhpref[SLEN + 1];
 	char ingress_iface[SLEN + 1];
@@ -156,20 +155,6 @@ static void send_flow(const json_t *bsids)
 
 	if (write(_cfg.dns_fd, line, j+1) < 0)
 		perror("write");
-}
-
-static int init_dns_fifo(void)
-{
-	int fd;
-
-	mkfifo(_cfg.dns_fifo, 0640);
-
-	fd = open(_cfg.dns_fifo, O_WRONLY);
-	if (fd < 0)
-		return fd;
-
-	_cfg.dns_fd = fd;
-	return 0;
 }
 
 static int set_status(struct srdb_flow_entry *flow_entry, enum flow_status st)
@@ -322,7 +307,6 @@ static void config_set_defaults(struct config *cfg)
 	strcpy(cfg->ovsdb_conf.ovsdb_client, "ovsdb-client");
 	strcpy(cfg->ovsdb_conf.ovsdb_server, "tcp:[::1]:6640");
 	strcpy(cfg->ovsdb_conf.ovsdb_database, "SR_test");
-	strcpy(cfg->dns_fifo, "../dns.fifo");
 	strcpy(cfg->iproute, "ip -6");
 	strcpy(cfg->vnhpref, "2001:db8::");
 	strcpy(cfg->ingress_iface, "lo");
@@ -352,8 +336,6 @@ static int load_config(const char *fname, struct config *cfg)
 				cfg->ovsdb_conf.ntransacts = 1;
 			continue;
 		}
-		if (READ_STRING(buf, dns_fifo, cfg))
-			continue;
 		if (READ_STRING(buf, iproute, cfg))
 			continue;
 		if (READ_STRING(buf, vnhpref, cfg)) {
@@ -390,11 +372,6 @@ int main(int argc, char **argv)
 	if (dryrun) {
 		printf("Configuration file is correct");
 		return 0;
-	}
-
-	if (init_dns_fifo() < 0) {
-		pr_err("failed to initialize DNS pipe.");
-		return -1;
 	}
 
 	_cfg.routes = hmap_new(hash_in6, compare_in6);
