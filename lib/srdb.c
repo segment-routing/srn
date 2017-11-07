@@ -165,15 +165,20 @@ static void *ovsdb_monitor(void *_args)
 	srdb = desc->srdb;
 	tbl = desc->tbl;
 	mon_flags = desc->mon_flags;
+	desc->mon_status = MON_STATUS_RUNNING;
 
 	fd = ovsdb_socket(srdb->conf);
-	if (fd < 0)
+	if (fd < 0) {
+		desc->mon_status = MON_STATUS_CONNREFUSED;
 		goto out;
+	}
 
 	cur_buflen = JSON_BUFLEN;
 	buf = malloc(cur_buflen);
-	if (!buf)
+	if (!buf) {
+		desc->mon_status = MON_STATUS_NOMEM;
 		goto out_close;
+	}
 
 	len = snprintf(buf, cur_buflen, OVSDB_MONITOR_FORMAT,
 		       srdb->conf->ovsdb_database, tbl->name,
@@ -184,6 +189,7 @@ static void *ovsdb_monitor(void *_args)
 
 	ret = send(fd, buf, len, 0);
 	if (ret < 0) {
+		desc->mon_status = MON_STATUS_REQFAIL;
 		pr_err("failed to send monitor request (%s).", strerror(errno));
 		goto out_close;
 	}
@@ -199,17 +205,21 @@ static void *ovsdb_monitor(void *_args)
 		ready = poll(&pfd, 1, 1);
 		if (ready < 0) {
 			pr_err("poll (%s).", strerror(errno));
+			desc->mon_status = MON_STATUS_READERR;
 			goto out_close;
 		}
 
 		if (!ready)
 			continue;
 
-		if (!sem_trywait(&desc->stop))
+		if (!sem_trywait(&desc->stop)) {
+			desc->mon_status = MON_STATUS_FINISHED;
 			goto out_close;
+		}
 
 		if (pfd.revents & POLLERR) {
 			pr_err("poll_revents (%s).", strerror(errno));
+			desc->mon_status = MON_STATUS_READERR;
 			goto out_close;
 		}
 
@@ -217,11 +227,13 @@ static void *ovsdb_monitor(void *_args)
 		if (ret < 0) {
 			pr_err("failed to read from monitor socket (%s).",
 				strerror(errno));
+			desc->mon_status = MON_STATUS_READERR;
 			goto out_close;
 		}
 
 		if (!ret) {
 			pr_err("ovsdb server closed the connection.");
+			desc->mon_status = MON_STATUS_CONNCLOSED;
 			goto out_close;
 		}
 
@@ -265,6 +277,7 @@ static void *ovsdb_monitor(void *_args)
 		/* abort if buffer is full and no processing was possible */
 		if (len == JSON_BUFLEN_MONMAX) {
 			pr_err("max recvq exceeded.");
+			desc->mon_status = MON_STATUS_NOMEM;
 			goto out_close;
 		} else if (len == cur_buflen) {
 			pr_err("cur recvq exceeded, increasing to %lu.",
@@ -273,6 +286,7 @@ static void *ovsdb_monitor(void *_args)
 			buf = realloc(buf, cur_buflen);
 			if (!buf) {
 				pr_err("failed to increase json buffer.");
+				desc->mon_status = MON_STATUS_NOMEM;
 				goto out_close;
 			}
 		}
@@ -1006,6 +1020,7 @@ int srdb_monitor(struct srdb *srdb, const char *table, int mon_flags,
 	desc->mon_flags = mon_flags;
 	sem_init(&desc->stop, 0, 0);
 	sem_init(&desc->zombie, 0, 0);
+	desc->mon_status = MON_STATUS_STARTING;
 
 	llist_node_insert_tail(srdb->monitors, desc);
 
@@ -1014,7 +1029,7 @@ int srdb_monitor(struct srdb *srdb, const char *table, int mon_flags,
 	if (sync)
 		sem_wait(&tbl->initial_read);
 
-	return 0;
+	return desc->mon_status;
 }
 
 static void write_desc_data(json_t *row, const struct srdb_descriptor *desc,

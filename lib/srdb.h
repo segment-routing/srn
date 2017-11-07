@@ -91,6 +91,18 @@ struct monitor_desc {
 	int mon_flags;
 	sem_t stop;
 	sem_t zombie;
+	int mon_status;
+};
+
+enum {
+	MON_STATUS_STARTING	= 0,
+	MON_STATUS_RUNNING	= 1,
+	MON_STATUS_FINISHED	= 2,
+	MON_STATUS_CONNREFUSED	= -1, /* Cannot create ovsdb socket */
+	MON_STATUS_CONNCLOSED	= -2, /* Connection closed remotely */
+	MON_STATUS_NOMEM	= -3, /* Cannot allocate memory */
+	MON_STATUS_REQFAIL	= -4, /* Cannot request monitoring */
+	MON_STATUS_READERR      = -5, /* Failed read or poll or non empty error queue */
 };
 
 struct srdb {
