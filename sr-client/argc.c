@@ -13,6 +13,7 @@ int parse_args(int argc, char * const argv[], struct client_conf *conf)
   memset(conf, 0, sizeof(*conf));
   conf->number_req = 1;
   conf->request_rate = 1;
+  conf->probe_rate = 100;
   while ((c = getopt(argc, argv, "S:s:CDrn:p:R:")) != -1) {
     switch (c) {
     case 'S':

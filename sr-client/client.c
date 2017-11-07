@@ -115,8 +115,8 @@ int main(int argc, char * const argv[])
   char parent_directory [STR_LEN + 1];
   char file_path [STR_LEN + 1];
   if (parse_args(argc, argv, &conf)) {
-      fprintf(stderr, "Usage: %s dst port [-CDr] [-S output_file_suffix] [-s servername] [-n number_req] [-R request_rate] [-p probe_rate] \n", argv[0]);
-      return -1;
+    fprintf(stderr, "Usage: %s [-CDr] [-S output_file_suffix] [-s servername] [-n number_req] [-R request_rate] [-p probe_rate] dst port\n", argv[0]);
+    return -1;
   }
 
   /* Path and file creation */
@@ -161,10 +161,10 @@ int main(int argc, char * const argv[])
 
   if (pthread_mutex_init(&conf.mutex, NULL) != 0)
   {
-      fprintf(stderr, "\n mutex init failed\n");
-      free(thread);
-      free(probe);
-      return -1;
+    fprintf(stderr, "\n mutex init failed\n");
+    free(thread);
+    free(probe);
+    return -1;
   }
 
   /* Convert request rate to sleep time between each request */
