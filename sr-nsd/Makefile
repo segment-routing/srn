@@ -9,13 +9,13 @@ sr-quagga: sr-quagga/Makefile
 	$(MAKE) -C $@
 	$(MAKE) -C $@ install
 	# To prevent name conflicts with the regular version of Quagga
-	if ! [ -f srnzebra ]; then \
-		ln -s $(QUAGGA_BIN_FOLDER)/sbin/zebra srnzebra; \
-		chmod +x $(QUAGGA_BIN_FOLDER)/sbin/zebra srnzebra; \
+	if ! [ -f zebra ]; then \
+		ln -s $(QUAGGA_BIN_FOLDER)/sbin/zebra zebra; \
+		chmod +x $(QUAGGA_BIN_FOLDER)/sbin/zebra zebra; \
 	fi
-	if ! [ -f srnospf6d ]; then \
-		ln -s $(QUAGGA_BIN_FOLDER)/sbin/ospf6d srnospf6d; \
-		chmod +x $(QUAGGA_BIN_FOLDER)/sbin/ospf6d srnospf6d; \
+	if ! [ -f ospf6d ]; then \
+		ln -s $(QUAGGA_BIN_FOLDER)/sbin/ospf6d ospf6d; \
+		chmod +x $(QUAGGA_BIN_FOLDER)/sbin/ospf6d ospf6d; \
 	fi
 
 sr-quagga/configure:
@@ -26,6 +26,6 @@ sr-quagga/Makefile: sr-quagga/configure
 
 clean:
 	$(MAKE) -C sr-quagga clean
-	rm -f srnzebra
-	rm -f srnospf6d
+	rm -f zebra
+	rm -f ospf6d
 	rm -rf $(QUAGGA_BIN_FOLDER)
