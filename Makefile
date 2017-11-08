@@ -1,4 +1,4 @@
-BINDIRS=sr-client sr-ctrl sr-dnsproxy sr-routed tfoproxy sr-dnsfwd sr-nsd
+BINDIRS=sr-client sr-ctrl sr-dnsproxy sr-routed tfoproxy sr-dnsfwd sr-nsd sr-testdns
 clean_BINDIRS=$(addprefix clean_,$(BINDIRS))
 
 .PHONY: lib $(BINDIRS)

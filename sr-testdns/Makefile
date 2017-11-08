@@ -1,5 +1,5 @@
 CC=gcc
-CFLAGS=-g -Wall -W -O2 -I../lib -I../lib/c-ares -Werror
+CFLAGS=-Wall -W -O2 -I../lib -I../lib/c-ares -Werror
 LDFLAGS=-L../lib -L../lib/c-ares/lib -lsr -Wl,-Bstatic -lcares -Wl,-Bdynamic -pthread
 SRC=sr-testdns.c
 OBJ=$(SRC:.c=.o)
