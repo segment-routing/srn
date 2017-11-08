@@ -1265,7 +1265,7 @@ static void recompute_flows(void)
 	hmap_unlock(_cfg.flows);
 	net_state_unlock(&_cfg.ns);
 
-	printf("%lu affected flows.\n", llist_node_size(nhead));
+	// printf("%lu affected flows.\n", llist_node_size(nhead));
 
 	llist_node_foreach(nhead, iter) {
 		fl = iter->data;
