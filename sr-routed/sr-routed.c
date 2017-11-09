@@ -141,22 +141,6 @@ static void update_fib_entry(struct route *rt)
 	exec_route_change_encap(vnh, rt->segs);
 }
 
-static void send_flow(const json_t *bsids)
-{
-	char line [SLEN + 1];
-	json_t * bsid = NULL;
-	unsigned int i = 0;
-	unsigned int j = 0;
-	json_array_foreach(bsids, i, bsid) {
-		j += snprintf(line + j, SLEN - j, "%s%s", json_string_value(bsid),
-			      i == json_array_size(bsids) - 1 ? "" : ",");
-	}
-	line[j] = '\n';
-
-	if (write(_cfg.dns_fd, line, j+1) < 0)
-		perror("write");
-}
-
 static int set_status(struct srdb_flow_entry *flow_entry, enum flow_status st)
 {
 	struct srdb_table *tbl;
@@ -216,7 +200,6 @@ static int read_flowstate(struct srdb_entry *entry)
 		add_fib_entry(rt);
 	}
 
-	send_flow(bsids);
 	set_status(flow_entry, FLOW_STATUS_RUNNING);
 
 	json_decref(segment_lists);
