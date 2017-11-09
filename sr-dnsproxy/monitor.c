@@ -150,7 +150,6 @@ static int read_flowstate(struct srdb_entry *entry,
 		srh_rr = dns_fixed_hdr + RRFIXEDSZ;
 
 		DNS__SET16BIT(srh_rr, prefix_priority);
-		printf("prefix_priority = %u prefix_priority = %u byte %u byte %u", DNS__16BIT(srh_rr), prefix_priority, (unsigned char) srh_rr[0], (unsigned char) srh_rr[1]);
 		srh_rr += 2;
 		if (inet_pton(AF_INET6, prefix_addr_str, srh_rr) != 1) {
 			fprintf(stderr, "Not a valid IPv6 address received as Provider prefix: %s\n", prefix_addr_str);
