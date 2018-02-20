@@ -1,3 +1,3 @@
-[submodule "ipmininet"]
+[submodule "sr-quagga"]
 	path = sr-nsd/sr-quagga
-	url = git@bitbucket.org:jadinm/sr-quagga.git
+	url = https://github.com/segment-routing/sr-quagga.git
