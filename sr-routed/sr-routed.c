@@ -39,7 +39,6 @@ struct route {
 static struct config _cfg;
 
 #define BUFLEN 1024
-#define MAX_REQUEST 500
 
 static int exec_route_add_encap(const char *route, const char *segments)
 {
@@ -363,7 +362,6 @@ int main(int argc, char **argv)
 		return -1;
 	}
 
-	_cfg.ovsdb_conf.ntransacts = 1;
 	_cfg.srdb = srdb_new(&_cfg.ovsdb_conf);
 	if (!_cfg.srdb) {
 		pr_err("failed to initialize SRDB.");
