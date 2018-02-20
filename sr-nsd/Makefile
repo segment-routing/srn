@@ -1,5 +1,6 @@
 
 QUAGGA_BIN_FOLDER=$(HOME)/sr-quagga-bin/
+SR_LIB=$(dir $(abspath $(lastword $(MAKEFILE_LIST))))/../lib
 
 .PHONY: all sr-quagga clean
 
@@ -8,7 +9,6 @@ all: sr-quagga
 sr-quagga: sr-quagga/Makefile
 	$(MAKE) -C $@
 	$(MAKE) -C $@ install
-	# To prevent name conflicts with the regular version of Quagga
 	if ! [ -f zebra ]; then \
 		ln -s $(QUAGGA_BIN_FOLDER)/sbin/zebra zebra; \
 		chmod +x $(QUAGGA_BIN_FOLDER)/sbin/zebra zebra; \
@@ -22,7 +22,7 @@ sr-quagga/configure:
 	cd sr-quagga && ./bootstrap.sh
 
 sr-quagga/Makefile: sr-quagga/configure
-	cd sr-quagga && ./configure --prefix=$(QUAGGA_BIN_FOLDER)
+	cd sr-quagga && env CPPFLAGS="-I$(SR_LIB)" LDFLAGS="-L$(SR_LIB)" ./configure --prefix=$(QUAGGA_BIN_FOLDER)
 
 clean:
 	$(MAKE) -C sr-quagga clean
