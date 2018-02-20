@@ -252,7 +252,7 @@ static void *server_consumer_main(__attribute__((unused)) void *_arg)
 			}
 			ares_query(channel, name, C_IN, T_AAAA, client_callback, (void *) args);
 			pthread_mutex_unlock(&channel_mutex);
-			if (write(server_pipe_fd, "1", 1) < 0) {
+			if (write(server_pipe_fd, "1", 1) != 1) {
 				perror("Problem writing to pipe");
 			}
 #if DEBUG_PERF

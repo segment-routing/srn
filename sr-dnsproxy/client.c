@@ -123,6 +123,7 @@ static void *client_producer_main(__attribute__((unused)) void *args)
 		timeout.tv_usec = 0;
 		FD_SET(client_pipe_fd, &read_fds);
 		nfds = ares_fds(channel, &read_fds, &write_fds);
+		nfds = nfds > client_pipe_fd ? nfds : client_pipe_fd + 1;
 		err = select(nfds, &read_fds, &write_fds, NULL, &timeout);
 		if (err < 0) {
 			perror("Select fail");
