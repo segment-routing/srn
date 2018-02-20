@@ -370,14 +370,9 @@ int main(int argc, char **argv)
 		return -1;
 	}
 
-	/* Retry because the link-state routing protocols might still be booting */
-	int err;
-	while((err = srdb_monitor(_cfg.srdb, "FlowState", MON_INSERT | MON_UPDATE,
-	                          read_flowstate, update_flowstate, NULL, false,
-	                          true)) == MON_STATUS_CONNREFUSED) {
-		usleep(50);
-	}
-	if (err < 0) {
+	if (srdb_monitor(_cfg.srdb, "FlowState", MON_INSERT | MON_UPDATE,
+	                 read_flowstate, update_flowstate, NULL, false, true)
+	    != MON_STATUS_RUNNING) {
 		pr_err("failed to start FlowState monitor.");
 		srdb_destroy(_cfg.srdb);
 		return -1;

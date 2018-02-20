@@ -119,6 +119,7 @@ static int ovsdb_socket(const struct ovsdb_config *conf)
 	int fd = -1;
 	char str_addr[BUFLEN+1];
 	unsigned short port;
+	int err = 0;
 
 	READ_OVSDB_SERVER(conf->ovsdb_server, str_addr, &port);
 	struct sockaddr_in6 addr = {
@@ -130,7 +131,12 @@ static int ovsdb_socket(const struct ovsdb_config *conf)
 	inet_pton(AF_INET6, str_addr, &addr.sin6_addr);
 
 	fd = socket(AF_INET6, SOCK_STREAM | SOCK_CLOEXEC, 0);
-	if (connect(fd, (struct sockaddr *) &addr, sizeof(addr))) {
+
+	/* Retry because the link-state routing protocols might still be booting */
+	while ((err = connect(fd, (struct sockaddr *) &addr, sizeof(addr)))
+	       && errno == ENETUNREACH);
+	if (err < 0) {
+		fprintf(stderr, "error %d\n", errno);
 		perror("connect to ovsdb server");
 		goto close_fd;
 	}
