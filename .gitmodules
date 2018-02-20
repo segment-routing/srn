@@ -1,0 +1,3 @@
+[submodule "ipmininet"]
+	path = sr-nsd/sr-quagga
+	url = git@bitbucket.org:jadinm/sr-quagga.git
