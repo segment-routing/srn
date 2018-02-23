@@ -16,7 +16,7 @@ $(LIBFILE): ares $(OBJ)
 	$(AR) r $@ $(OBJ)
 
 ares:
-	cd c-ares && cmake -DCARES_STATIC=1 && $(MAKE) && cd ..
+	cd c-ares && cmake -DCARES_STATIC=1 -DCARES_SHARED=0 && $(MAKE) && cd ..
 
 clean:
 	rm -f $(LIBFILE) $(OBJ) libredblack.a

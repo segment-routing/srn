@@ -1,3 +1,6 @@
 [submodule "sr-quagga"]
 	path = sr-nsd/sr-quagga
 	url = https://github.com/segment-routing/sr-quagga.git
+[submodule "lib/c-ares"]
+	path = lib/c-ares
+	url = https://github.com/segment-routing/c-ares.git
