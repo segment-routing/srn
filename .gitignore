@@ -10,4 +10,5 @@ tfoproxy/tfo-proxy
 sr-nsd/ospf6d
 sr-nsd/zebra
 sr-testdns/sr-testdns
-
+bin/
+*.swp

@@ -16,6 +16,7 @@ OBJ= $(SRC:.c=.o)
 
 
 all: $(EXEC)
+	ln -fs $(CURDIR)/$(EXEC) ../bin/$(EXEC)
 
 client: $(OBJ)
 	$(CC) -o $@ $^ $(LDFLAGS)
@@ -27,6 +28,4 @@ client: $(OBJ)
 
 clean:
 	rm -rf *.o
-
-mrproper: clean
-	rm -rf $(EXEC)
+	rm -rf $(EXEC) $(OBJ) ../bin/$(EXEC)

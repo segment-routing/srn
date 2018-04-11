@@ -1,6 +1,5 @@
 
-QUAGGA_BIN_FOLDER=$(HOME)/sr-quagga-bin/
-SR_LIB=$(dir $(abspath $(lastword $(MAKEFILE_LIST))))/../lib
+QUAGGA_BIN_FOLDER=$(HOME)/sr-quagga-bin
 
 .PHONY: all sr-quagga clean
 
@@ -9,23 +8,25 @@ all: sr-quagga
 sr-quagga: sr-quagga/Makefile
 	$(MAKE) -C $@
 	$(MAKE) -C $@ install
-	if ! [ -f zebra ]; then \
-		ln -s $(QUAGGA_BIN_FOLDER)/sbin/zebra zebra; \
-		chmod +x $(QUAGGA_BIN_FOLDER)/sbin/zebra zebra; \
-	fi
-	if ! [ -f ospf6d ]; then \
-		ln -s $(QUAGGA_BIN_FOLDER)/sbin/ospf6d ospf6d; \
-		chmod +x $(QUAGGA_BIN_FOLDER)/sbin/ospf6d ospf6d; \
-	fi
+	ln -fs $(QUAGGA_BIN_FOLDER)/sbin/zebra zebra
+	ln -fs $(CURDIR)/zebra ../bin/zebra
+	ln -fs $(QUAGGA_BIN_FOLDER)/sbin/ospf6d ospf6d
+	ln -fs $(CURDIR)/ospf6d ../bin/ospf6d
 
 sr-quagga/configure:
 	cd sr-quagga && ./bootstrap.sh
 
+sr-quagga/Makefile: export LDFLAGS=-L$(CURDIR)/../lib
+sr-quagga/Makefile: export CFLAGS=-I$(CURDIR)/../lib
 sr-quagga/Makefile: sr-quagga/configure
-	cd sr-quagga && env CPPFLAGS="-I$(SR_LIB)" LDFLAGS="-L$(SR_LIB)" ./configure --prefix=$(QUAGGA_BIN_FOLDER)
+	echo "$$LDFLAGS"
+	cd sr-quagga && ./configure --prefix=$(QUAGGA_BIN_FOLDER) --with-gnu-ld
 
 clean:
-	$(MAKE) -C sr-quagga clean
-	rm -f zebra
-	rm -f ospf6d
+	if [ -f sr-quagga/Makefile ]; then \
+		$(MAKE) -C sr-quagga clean; \
+		$(MAKE) -C sr-quagga distclean || true; \
+	fi
+	rm -f zebra ../bin/zebra
+	rm -f ospf6d ../bin/ospf6d
 	rm -rf $(QUAGGA_BIN_FOLDER)

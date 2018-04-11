@@ -9,6 +9,7 @@ lib:
 	$(MAKE) -C lib
 
 $(BINDIRS): lib
+	mkdir -p bin/
 	$(MAKE) -C $@
 
 clean: $(clean_BINDIRS)

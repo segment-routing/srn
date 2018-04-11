@@ -14,6 +14,7 @@ OBJ= $(SRC:.c=.o)
 
 
 all: $(EXEC)
+	ln -fs $(CURDIR)/$(EXEC) ../bin/$(EXEC)
 
 $(EXEC): $(OBJ)
 	$(CC) -o $@ $^ $(LDFLAGS)
@@ -27,6 +28,4 @@ proxy.o: proxy.h
 
 clean:
 	rm -rf *.o
-
-mrproper: clean
-	rm -rf $(EXEC)
+	rm -rf $(EXEC) $(OBJ) ../bin/$(EXEC)
