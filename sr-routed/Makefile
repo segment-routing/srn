@@ -1,7 +1,7 @@
 CC=gcc
-CFLAGS=-Wall -W -O2 -I../lib -Werror
-LDFLAGS=-L../lib -lsr -pthread -ljansson
-SRC=sr-routed.c
+CFLAGS=-Wall -W -O2 -I../lib -Werror -DHAVE_LIBMNL
+LDFLAGS=-L../lib -lsr -pthread -ljansson -lmnl
+SRC=$(wildcard *.c)
 OBJ=$(SRC:.c=.o)
 EXEC=sr-routed
 

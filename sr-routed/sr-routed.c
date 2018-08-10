@@ -14,25 +14,23 @@
 #include "srdb.h"
 #include "hashmap.h"
 #include "atomic.h"
+#include "libnetlink.h"
+#include "seg6_netlink.h"
 
 #define DEFAULT_CONFIG	"sr-routed.conf"
 
 struct config {
 	struct ovsdb_config ovsdb_conf;
-	char iproute[SLEN + 1];
-	char vnhpref[SLEN + 1];
 	char ingress_iface[SLEN + 1];
 
 	struct srdb *srdb;
-	struct in6_addr vnhp;
-	atomic64_t last_vnh;
-	int dns_fd;
 	struct hashmap *routes;
+	__u32 localsid;
+	struct rtnl_handle rth;
 };
 
 struct route {
 	struct in6_addr bsid;
-	struct in6_addr vnh;
 	char *segs;
 };
 
@@ -42,102 +40,42 @@ static struct config _cfg;
 
 static int exec_route_add_encap(const char *route, const char *segments)
 {
-	char cmd[BUFLEN + 1];
-	FILE *fp;
-	int ret;
-
-	snprintf(cmd, BUFLEN, "%s route add %s/128 encap seg6 mode encap "
-		 "segs %s dev %s 2>/dev/null", _cfg.iproute, route, segments,
-		 _cfg.ingress_iface);
-
-	fp = popen(cmd, "r");
-	if (!fp) {
-		perror("popen");
-		return -1;
+	int ret = add_route(&_cfg.rth, route, _cfg.ingress_iface, _cfg.localsid,
+			    segments);
+	if (ret) {
+		fprintf(stderr, "Cannot insert route %s mapping to %s\n", route,
+			segments);
 	}
-
-	ret = pclose(fp);
-	if (ret < 0)
-		perror("pclose");
-
 	return ret;
 }
 
 static int exec_route_change_encap(const char *route, const char *segments)
 {
-	char cmd[BUFLEN + 1];
-	FILE *fp;
-	int ret;
-
-	snprintf(cmd, BUFLEN, "%s route change %s/128 encap seg6 mode encap "
-		 "segs %s dev %s 2>/dev/null", _cfg.iproute, route, segments,
-		 _cfg.ingress_iface);
-
-	fp = popen(cmd, "r");
-	if (!fp) {
-		perror("popen");
-		return -1;
+	int ret = change_route(&_cfg.rth, route, _cfg.ingress_iface,
+			       _cfg.localsid, segments);
+	if (ret) {
+		fprintf(stderr, "Cannot change route %s mapping to %s\n", route,
+			segments);
 	}
-
-	ret = pclose(fp);
-	if (ret < 0)
-		perror("pclose");
-
 	return ret;
-}
-
-static int exec_sr_set_bsid_map(const char *bsid, const char *vnh)
-{
-	char cmd[BUFLEN + 1];
-	FILE *fp;
-	int ret;
-
-	snprintf(cmd, BUFLEN, "%s sr action set %s %s 0 0",
-		 _cfg.iproute, bsid, vnh);
-
-	fp = popen(cmd, "r");
-	if (!fp) {
-		perror("popen");
-		return -1;
-	}
-
-	ret = pclose(fp);
-	if (ret < 0)
-		perror("pclose");
-
-	return ret;
-}
-
-static void get_vnh(struct in6_addr *res)
-{
-	int64_t vnh;
-
-	vnh = atomic_inc(&_cfg.last_vnh);
-	vnh = htobe64(vnh);
-
-	memcpy(res, &_cfg.vnhp, 8);
-	memcpy((char *)res + 8, &vnh, 8);
 }
 
 static void add_fib_entry(struct route *rt)
 {
 	char bsid[INET6_ADDRSTRLEN];
-	char vnh[INET6_ADDRSTRLEN];
 
-	inet_ntop(AF_INET6, &rt->vnh, vnh, INET6_ADDRSTRLEN);
 	inet_ntop(AF_INET6, &rt->bsid, bsid, INET6_ADDRSTRLEN);
 
-	exec_route_add_encap(vnh, rt->segs);
-	exec_sr_set_bsid_map(bsid, vnh);
+	exec_route_add_encap(bsid, rt->segs);
 }
 
 static void update_fib_entry(struct route *rt)
 {
-	char vnh[INET6_ADDRSTRLEN];
+	char bsid[INET6_ADDRSTRLEN];
 
-	inet_ntop(AF_INET6, &rt->vnh, vnh, INET6_ADDRSTRLEN);
+	inet_ntop(AF_INET6, &rt->bsid, bsid, INET6_ADDRSTRLEN);
 
-	exec_route_change_encap(vnh, rt->segs);
+	exec_route_change_encap(bsid, rt->segs);
 }
 
 static int set_status(struct srdb_flow_entry *flow_entry, enum flow_status st)
@@ -172,9 +110,7 @@ static int read_flowstate(struct srdb_entry *entry)
 		return 0;
 	}
 
-	/* to dns fifo: <bsid_1,bsid_2,...> (LAST OPERATION)
-	 * to kernel: map bsid_i -> vnh && route vnh/128 -> encap seg6
-	 */
+	/* route bsid -> encap seg6 */
 
 	json_array_foreach(segment_lists, i, segs) {
 		unsigned int k = 0;
@@ -182,7 +118,6 @@ static int read_flowstate(struct srdb_entry *entry)
 		rt = malloc(sizeof(*rt));
 		inet_pton(AF_INET6, json_string_value(json_array_get(bsids, i)),
 			  &rt->bsid);
-		get_vnh(&rt->vnh);
 
 		json_array_foreach(segs, j, segment) {
 			k += snprintf(segs_str + k, SLEN + 1 - k, "%s%s",
@@ -198,6 +133,8 @@ static int read_flowstate(struct srdb_entry *entry)
 
 		add_fib_entry(rt);
 	}
+
+	/* Warn the DNS proxy */
 
 	set_status(flow_entry, FLOW_STATUS_RUNNING);
 
@@ -258,6 +195,7 @@ static int update_flowstate(struct srdb_entry *entry,
 
 #define READ_STRING(b, arg, dst) sscanf(b, #arg " \"%[^\"]\"", (dst)->arg)
 #define READ_INT(b, arg, dst) sscanf(b, #arg " %i", &(dst)->arg)
+#define READ_UINT(b, arg, dst) sscanf(b, #arg " %u", &(dst)->arg)
 
 int load_args(int argc, char **argv, const char **conf, int *dryrun)
 {
@@ -289,10 +227,9 @@ static void config_set_defaults(struct config *cfg)
 	strcpy(cfg->ovsdb_conf.ovsdb_client, "ovsdb-client");
 	strcpy(cfg->ovsdb_conf.ovsdb_server, "tcp:[::1]:6640");
 	strcpy(cfg->ovsdb_conf.ovsdb_database, "SR_test");
-	strcpy(cfg->iproute, "ip -6");
-	strcpy(cfg->vnhpref, "2001:db8::");
-	strcpy(cfg->ingress_iface, "lo");
+	strcpy(cfg->ingress_iface, "eth0"); // Non-loopback device
 	cfg->ovsdb_conf.ntransacts = 1;
+	cfg->localsid = RT_TABLE_MAIN;
 }
 
 static int load_config(const char *fname, struct config *cfg)
@@ -318,12 +255,8 @@ static int load_config(const char *fname, struct config *cfg)
 				cfg->ovsdb_conf.ntransacts = 1;
 			continue;
 		}
-		if (READ_STRING(buf, iproute, cfg))
+		if (READ_UINT(buf, localsid, cfg))
 			continue;
-		if (READ_STRING(buf, vnhpref, cfg)) {
-			inet_pton(AF_INET6, cfg->vnhpref, &cfg->vnhp);
-			continue;
-		}
 		if (READ_STRING(buf, ingress_iface, cfg))
 			continue;
 		pr_err("parse error: unknown line `%s'.", buf);
@@ -368,17 +301,27 @@ int main(int argc, char **argv)
 		return -1;
 	}
 
+	if (rtnl_open(&_cfg.rth, 0) < 0) {
+		pr_err("Cannot open netlink socket.");
+		srdb_destroy(_cfg.srdb);
+		return -1;
+	}
+
 	if (srdb_monitor(_cfg.srdb, "FlowState", MON_INSERT | MON_UPDATE,
 	                 read_flowstate, update_flowstate, NULL, false, true)
 	    != MON_STATUS_RUNNING) {
 		pr_err("failed to start FlowState monitor.");
+		rtnl_close(&_cfg.rth);
 		srdb_destroy(_cfg.srdb);
 		return -1;
 	}
 
 	srdb_monitor_join_all(_cfg.srdb);
 
+	rtnl_close(&_cfg.rth);
+
 	srdb_destroy(_cfg.srdb);
 
 	return 0;
 }
+
