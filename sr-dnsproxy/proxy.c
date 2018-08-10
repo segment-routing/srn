@@ -20,8 +20,6 @@ pthread_t server_producer_thread;
 pthread_t server_consumer_thread;
 pthread_t client_producer_thread;
 pthread_t client_consumer_thread;
-pthread_t monitor_flowreqs_thread;
-pthread_t monitor_flows_thread;
 
 volatile sig_atomic_t stop;
 
@@ -40,18 +38,9 @@ void inthand(int signum)
 		pthread_kill(server_consumer_thread, SIGUSR1);
 		pthread_kill(client_producer_thread, SIGUSR1);
 		pthread_kill(client_consumer_thread, SIGUSR1);
-		pthread_kill(monitor_flowreqs_thread, SIGUSR1);
-		pthread_kill(monitor_flows_thread, SIGUSR1);
 
 	} else if (signum == SIGUSR1) {
 		print_debug("Thread is stopped gracefully\n");
-		if (pthread_equal(monitor_flowreqs_thread, pthread_self()) ||
-		    pthread_equal(monitor_flows_thread, pthread_self())) {
-			/* The other threads will stop because of the "stop" variable
-			 * This interruption allows them to leave blocking calls
-			 */
-			pthread_exit(NULL);
-		}
 	} else {
 		fprintf(stderr, "Does not understand signal number %d\n", signum);
 	}
@@ -150,8 +139,6 @@ int main(int argc, char *argv[])
 	pthread_join(server_producer_thread, NULL);
 	pthread_join(client_consumer_thread, NULL);
 	pthread_join(client_producer_thread, NULL);
-	pthread_join(monitor_flowreqs_thread, NULL);
-	pthread_join(monitor_flows_thread, NULL);
 
 	print_debug("All the threads returned\n");
 
