@@ -8,6 +8,7 @@
 #include <poll.h>
 #include <errno.h>
 #include <assert.h>
+#include <sys/eventfd.h>
 
 #include <jansson.h>
 
@@ -29,6 +30,18 @@ static int echo_reply(int fd)
 	const char reply[] = "{\"id\":\"echo\",\"result\":[],\"error\":null}";
 
 	return send(fd, reply, sizeof(reply) - 1, 0);
+}
+
+static void wakeup_tr_workers(struct srdb *srdb)
+{
+	uint64_t event = 1;
+	int i;
+
+	for (i = 0; i < srdb->conf->ntransacts; i++) {
+		if (write(srdb->tr_workers[i].event_fd, &event, sizeof(event))
+		    != sizeof(event))
+			pr_err("failed to warn the transaction workers.");
+	}
 }
 
 static int parse_ovsdb_update_tables(json_t *table_updates,
@@ -349,6 +362,7 @@ static struct transaction *ovsdb_update(struct srdb *srdb, const char *table,
 	}
 
 	sbuf_push(srdb->transactions, tr);
+	wakeup_tr_workers(srdb);
 
 	return tr;
 }
@@ -392,6 +406,7 @@ static struct transaction *ovsdb_insert(struct srdb *srdb, const char *table,
 	}
 
 	sbuf_push(srdb->transactions, tr);
+	wakeup_tr_workers(srdb);
 
 	return tr;
 }
@@ -1354,6 +1369,7 @@ struct srdb *srdb_new(struct ovsdb_config *conf)
 {
 	struct srdb *srdb;
 	int i;
+	int envent_inits = 0;
 
 	srdb = malloc(sizeof(*srdb));
 	if (!srdb)
@@ -1364,27 +1380,35 @@ struct srdb *srdb_new(struct ovsdb_config *conf)
 		goto out_free_srdb;
 
 	srdb->conf = conf;
-	srdb->tr_workers = malloc(conf->ntransacts * sizeof(pthread_t));
+	srdb->tr_workers = malloc(conf->ntransacts * sizeof(*srdb->tr_workers));
 	if (!srdb->tr_workers)
 		goto out_free_tables;
+	for (i = 0; i < conf->ntransacts; i++, envent_inits++) {
+		srdb->tr_workers[i].srdb = srdb;
+		srdb->tr_workers[i].event_fd = eventfd(0, 0);
+		if (srdb->tr_workers[i].event_fd < 0)
+			goto out_close_events;
+	}
 
 	srdb->monitors = llist_node_alloc();
 	if (!srdb->monitors)
-		goto out_free_workers;
+		goto out_close_events;
 
 	srdb->transactions = sbuf_new(2 * conf->ntransacts);
 	if (!srdb->transactions)
 		goto out_free_monitors;
 
 	for (i = 0; i < conf->ntransacts; i++)
-		pthread_create(&srdb->tr_workers[i], NULL, transaction_worker,
-			       srdb);
+		pthread_create(&srdb->tr_workers[i].thread, NULL,
+			       transaction_worker, &srdb->tr_workers[i]);
 
 	return srdb;
 
 out_free_monitors:
 	llist_node_destroy(srdb->monitors);
-out_free_workers:
+out_close_events:
+	for (i = 0; i < envent_inits; i++)
+		close(srdb->tr_workers[i].event_fd);
 	free(srdb->tr_workers);
 out_free_tables:
 	srdb_free_tables(srdb->tables);
@@ -1401,9 +1425,12 @@ void srdb_destroy(struct srdb *srdb)
 
 	for (i = 0; i < srdb->conf->ntransacts; i++)
 		sbuf_push(srdb->transactions, NULL);
+	wakeup_tr_workers(srdb);
 
-	for (i = 0; i < srdb->conf->ntransacts; i++)
-		pthread_join(srdb->tr_workers[i], NULL);
+	for (i = 0; i < srdb->conf->ntransacts; i++) {
+		pthread_join(srdb->tr_workers[i].thread, NULL);
+		close(srdb->tr_workers[i].event_fd);
+	}
 
 	llist_node_foreach(srdb->monitors, iter) {
 		md = iter->data;
@@ -1565,32 +1592,38 @@ static void *transaction_worker(void *args)
 {
 	struct transaction *tr = NULL;
 	unsigned int transact_id = 0;
-	struct srdb *srdb = args;
+	struct tr_thread *thread = args;
+	struct srdb *srdb = thread->srdb;
+	int event_fd = thread->event_fd;
 	bool pending = false;
-	struct pollfd pfd;
+	struct pollfd pfd[2];
 	int fd, ready;
 	json_t *json;
+	uint64_t event = 0;
 
 	fd = ovsdb_socket(srdb->conf);
 	if (fd < 0)
 		return NULL;
 
-	pfd.fd = fd;
-	pfd.events = POLLIN | POLLPRI;
+	pfd[0].fd = fd;
+	pfd[0].events = POLLIN | POLLPRI;
+	pfd[1].fd = event_fd;
+	pfd[1].events = POLLIN;
 
 	for (;;) {
-		ready = poll(&pfd, 1, 0);
+		ready = poll(pfd, 2, -1);
 		if (ready < 0) {
 			perror("poll");
 			break;
 		}
 
-		if (ready) {
-			if (pfd.revents & POLLERR) {
-				perror("poll_revents");
-				break;
-			}
+		if (ready && (pfd[0].revents & POLLERR
+			      || pfd[1].revents & POLLERR)) {
+			perror("poll_revents");
+			break;
+		}
 
+		if (ready && pfd[0].revents & (POLLIN | POLLPRI)) {
 			json = fetch_transaction_result(fd);
 			if (json && !pending) {
 				pr_err("received unknown transaction result.");
@@ -1599,6 +1632,12 @@ static void *transaction_worker(void *args)
 				sbuf_push(tr->result, json);
 				pending = false;
 			}
+		}
+
+		if (ready && pfd[1].revents & POLLIN
+		    && read(event_fd, &event, sizeof(event)) != sizeof(event)) {
+			pr_err("cannot read event fd");
+			break;
 		}
 
 		/* process new transaction only if no result is pending */

@@ -105,11 +105,18 @@ enum {
 	MON_STATUS_READERR      = -5, /* Failed read or poll or non empty error queue */
 };
 
+struct srdb;
+struct tr_thread {
+	pthread_t thread;
+	int event_fd;
+	struct srdb *srdb;
+};
+
 struct srdb {
 	struct ovsdb_config *conf;
 	struct srdb_table *tables;
 	struct sbuf *transactions;
-	pthread_t *tr_workers;
+	struct tr_thread *tr_workers;
 	struct llist_node *monitors;
 };
 
