@@ -245,6 +245,7 @@ int init_client(int optmask, struct ares_addr_node *servers,
 	memset(&options, 0, sizeof(struct ares_options));
 
 	/* Create pipe between the client and the server */
+	remove(cfg.client_server_fifo);
 	if (mkfifo(cfg.client_server_fifo, 0640)) {
 		perror("mkfifo failed");
 		goto out_err;
