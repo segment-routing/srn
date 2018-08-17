@@ -323,6 +323,42 @@ out:
 	return NULL;
 }
 
+static struct transaction *ovsdb_delete(struct srdb *srdb, const char *table,
+					const char *uuid)
+{
+	char *json_buf;
+	struct transaction *tr;
+	json_t *json_delete;
+
+	json_buf = malloc(JSON_BUFLEN);
+	if (!json_buf)
+		return NULL;
+
+	snprintf(json_buf, JSON_BUFLEN, OVSDB_DELETE_FORMAT,
+		 srdb->conf->ovsdb_database, table, uuid);
+
+	json_delete = json_loads(json_buf, 0, NULL);
+	if (!json_delete) {
+		pr_err("failed to build json object.");
+		free(json_buf);
+		return NULL;
+	}
+
+	free(json_buf);
+
+	tr = create_transaction(json_delete);
+	if (!tr) {
+		pr_err("failed to build transaction object.");
+		json_decref(json_delete);
+		return NULL;
+	}
+
+	sbuf_push(srdb->transactions, tr);
+	wakeup_tr_workers(srdb);
+
+	return tr;
+}
+
 static struct transaction *ovsdb_update(struct srdb *srdb, const char *table,
 					const char *uuid, json_t *fields)
 {
@@ -1173,6 +1209,24 @@ static void write_desc_data(json_t *row, const struct srdb_descriptor *desc,
 				    json_string(*(char **)data));
 		break;
 	}
+}
+
+struct transaction *srdb_delete(struct srdb *srdb, struct srdb_table *tbl,
+				struct srdb_entry *entry)
+{
+	return ovsdb_delete(srdb, tbl->name, entry->row);
+}
+
+int srdb_delete_sync(struct srdb *srdb, struct srdb_table *tbl,
+		     struct srdb_entry *entry, int *count)
+{
+	struct transaction *tr;
+
+	tr = srdb_delete(srdb, tbl, entry);
+	if (!tr)
+		return -1;
+
+	return srdb_update_result(tr, count);
 }
 
 struct srdb_update_transact *srdb_update_prepare(struct srdb *srdb,

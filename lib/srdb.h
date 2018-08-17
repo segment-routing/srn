@@ -79,6 +79,11 @@ struct transaction {
 	"{\"%s\":[{\"select\":{\"modify\":%s,\"initial\":%s,"		\
 	"\"insert\":%s,\"delete\":%s}}]}]}"
 
+#define OVSDB_DELETE_FORMAT						\
+	"{\"method\":\"transact\",\"params\":[\"%s\",{"			\
+	"\"table\":\"%s\",\"op\":\"delete\","				\
+	"\"where\":[[\"_uuid\",\"==\",[\"uuid\",\"%s\"]]]}]}"
+
 #define MON_INITIAL	1 << 0
 #define MON_INSERT	1 << 1
 #define MON_UPDATE	1 << 2
@@ -353,6 +358,10 @@ void srdb_update_append_mask(struct srdb_update_transact *tr,
 			     unsigned int index_mask);
 int srdb_insert_sync(struct srdb *srdb, struct srdb_table *tbl,
 		     struct srdb_entry *entry, char *uuid);
+struct transaction *srdb_delete(struct srdb *srdb, struct srdb_table *tbl,
+				struct srdb_entry *entry);
+int srdb_delete_sync(struct srdb *srdb, struct srdb_table *tbl,
+		     struct srdb_entry *entry, int *count);
 
 struct transaction *create_transaction(json_t *json);
 void free_transaction(struct transaction *tr);
