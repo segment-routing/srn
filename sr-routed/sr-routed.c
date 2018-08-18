@@ -21,6 +21,7 @@
 
 struct config {
 	struct ovsdb_config ovsdb_conf;
+	char router_name[SLEN + 1];
 	char ingress_iface[SLEN + 1];
 
 	struct srdb *srdb;
@@ -99,6 +100,10 @@ static int read_flowstate(struct srdb_entry *entry)
 	unsigned int j = 0;
 	struct route *rt;
 
+	if (strcmp(flow_entry->router, _cfg.router_name)) {
+		return 0; /* Do not consider irrelevant flows */
+	}
+
 	json_t *segment_lists = json_loads(flow_entry->segments, 0, NULL);
 	if (!segment_lists) {
 		fprintf(stderr, "Invalid json format for segment lists: %s\n", flow_entry->segments);
@@ -153,6 +158,10 @@ static int update_flowstate(struct srdb_entry *entry,
 	char segs_str[SLEN + 1];
 	unsigned int j;
 	int i;
+
+	if (strcmp(flow_entry->router, _cfg.router_name)) {
+		return 0; /* Do not consider irrelevant flows */
+	}
 
 	if (!(fmask & ENTRY_MASK(FE_SEGMENTS)))
 		return 0;
@@ -224,6 +233,7 @@ int load_args(int argc, char **argv, const char **conf, int *dryrun)
 
 static void config_set_defaults(struct config *cfg)
 {
+	strcpy(cfg->router_name, "access");
 	strcpy(cfg->ovsdb_conf.ovsdb_client, "ovsdb-client");
 	strcpy(cfg->ovsdb_conf.ovsdb_server, "tcp:[::1]:6640");
 	strcpy(cfg->ovsdb_conf.ovsdb_database, "SR_test");
@@ -249,6 +259,8 @@ static int load_config(const char *fname, struct config *cfg)
 		if (READ_STRING(buf, ovsdb_server, &cfg->ovsdb_conf))
 			continue;
 		if (READ_STRING(buf, ovsdb_database, &cfg->ovsdb_conf))
+			continue;
+		if (READ_STRING(buf, router_name, cfg))
 			continue;
 		if (READ_INT(buf, ntransacts, &cfg->ovsdb_conf)) {
 			if (!cfg->ovsdb_conf.ntransacts)
