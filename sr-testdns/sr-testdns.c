@@ -70,26 +70,57 @@ int main(int argc, char **argv)
 {
 	struct flowreq freq;
 	int type = 0;
+	int c;
+	char *ptr = NULL;
 
-	if (argc != 5) {
-		fprintf(stderr, "Usage: %s dns|sr cnt remotename dns_server\n", argv[0]);
-		return -1;
-	}
-
-	freq.dst = argv[3];
-	freq.dns_server = argv[4];
 	freq.src = "client";
 	freq.bw = 0;
 	freq.delay = 0;
+	while ((c = getopt(argc, argv, "d:b:")) != -1) {
+		switch (c) {
+		case 'd':
+			freq.delay = strtol(optarg, &ptr, 10);
+			if (*ptr != '\0' || freq.delay < 0) {
+				fprintf(stderr, "Invalid delay value given\n");
+				return -1;
+			}
+			break;
+		case 'b':
+			freq.bw = strtol(optarg, &ptr, 10);
+			if (*ptr != '\0' || freq.bw < 0) {
+				fprintf(stderr, "Invalid bandwidth value given\n");
+				return -1;
+			}
+			break;
+		case '?':
+			if (optopt == 'd' || optopt == 'b')
+				fprintf(stderr, "Option -%c requires an argument.\n",
+					optopt);
+			else
+				fprintf(stderr, "Unknown option character `\\x%x'.\n",
+					optopt);
+		default:
+			return -1;
+		}
+	}
 
-	if (!strcmp(argv[1], "dns"))
-		type = REQ_DNS;
-	else if (!strcmp(argv[1], "sr"))
-		type = REQ_FLOW;
-	else {
-		fprintf(stderr, "Invalid type `%s'.\n", argv[1]);
+	if (argc - optind != 4) {
+		fprintf(stderr, "Usage: %s [-d delay] [-b bandwidth] dns|sr cnt remotename dns_server\n",
+			argv[0]);
 		return -1;
 	}
 
-	run(&freq, atoi(argv[2]), type);
+	freq.dst = argv[optind + 2];
+	freq.dns_server = argv[optind + 3];
+
+	if (!strcmp(argv[optind], "dns"))
+		type = REQ_DNS;
+	else if (!strcmp(argv[optind], "sr"))
+		type = REQ_FLOW;
+	else {
+		fprintf(stderr, "Invalid type `%s'.\n", argv[optind]);
+		return -1;
+	}
+
+	run(&freq, atoi(argv[optind + 1]), type);
 }
