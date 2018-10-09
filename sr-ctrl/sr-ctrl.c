@@ -89,6 +89,26 @@ static void net_state_unlock(struct netstate *ns)
 	pthread_rwlock_unlock(&ns->lock);
 }
 
+static unsigned int hash_sym_nodepair(void *key)
+{
+	struct nodepair *p = key;
+
+	if (p->local->id > p->remote->id)
+		return hashint((p->local->id << 16) | p->remote->id);
+	else
+		return hashint((p->remote->id << 16) | p->local->id);
+}
+
+static int compare_sym_nodepair(void *k1, void *k2)
+{
+	struct nodepair *p1 = k1, *p2 = k2;
+
+	return !((p1->local->id == p2->local->id &&
+		  p1->remote->id == p2->remote->id)
+		 || (p1->local->id == p2->remote->id &&
+		     p1->remote->id == p2->local->id));
+}
+
 static void config_set_defaults(struct config *cfg)
 {
 	strcpy(cfg->rules_file, "rules.conf");
@@ -163,6 +183,269 @@ static void mark_graph_dirty(void)
 	_cfg.ns.graph_staging->dirty = true;
 }
 
+static void free_flow_paths(struct flow_paths *fl)
+{
+	struct path *paths;
+	unsigned int i;
+
+	if (!fl)
+		return;
+
+	paths = fl->paths;
+	if (paths) {
+		for (i = 0; i < fl->nb_paths; i++) {
+			if (paths[i].segs)
+				free_segments(paths[i].segs);
+			if (paths[i].epath)
+				destroy_edgepath(paths[i].epath);
+		}
+		free(paths);
+	}
+	free(fl);
+}
+
+static json_t *segs_to_json(struct llist_node *segs)
+{
+	char ip[INET6_ADDRSTRLEN];
+	json_t *json_segs;
+	struct llist_node *iter;
+
+	json_segs = json_array();
+	llist_node_foreach(segs, iter) {
+		struct segment *s = iter->data;
+		struct in6_addr *addr;
+
+		addr = segment_addr(s);
+		inet_ntop(AF_INET6, addr, ip, INET6_ADDRSTRLEN);
+		json_array_append_new(json_segs, json_string(ip));
+	}
+	return json_segs;
+}
+
+static void flowpaths_to_pathentry(struct flow_paths *fl,
+				   struct srdb_path_entry *pe,
+				   unsigned int fields)
+{
+	struct in6_addr *addr1, *addr2;
+	json_t *jsegs_all, *jaddrs;
+	char ip[INET6_ADDRSTRLEN];
+	unsigned int i;
+
+	memset(pe, 0, sizeof(struct srdb_path_entry));
+
+	/* [addr1,addr2] */
+	if (fields & ENTRY_MASK(PA_FLOW)) {
+		if (memcmp(&fl->addr1, &fl->addr2, sizeof(struct in6_addr)) < 0) {
+			addr1 = &fl->addr1;
+			addr2 = &fl->addr2;
+		} else {
+			addr1 = &fl->addr2;
+			addr2 = &fl->addr1;
+		}
+
+		jaddrs = json_array();
+		inet_ntop(AF_INET6, addr1, ip, INET6_ADDRSTRLEN);
+		json_array_append_new(jaddrs, json_string(ip));
+		inet_ntop(AF_INET6, addr2, ip, INET6_ADDRSTRLEN);
+		json_array_append_new(jaddrs, json_string(ip));
+
+		pe->flow = json_dumps(jaddrs, JSON_COMPACT);
+
+		json_decref(jaddrs);
+	}
+
+	/* segments: [[S1_1,S1_2,S1_3],[S2_1,S2_2]] */
+	if (fields & ENTRY_MASK(PA_SEGMENTS)) {
+		jsegs_all = json_array();
+		for (i = 0; i < fl->nb_paths; i++) {
+			json_t *segs;
+			segs = segs_to_json(fl->paths[i].segs);
+			json_array_append_new(jsegs_all, segs);
+		}
+		pe->segments = json_dumps(jsegs_all, JSON_COMPACT);
+		json_decref(jsegs_all);
+	}
+}
+
+static int commit_path(struct flow_paths *fl)
+{
+	struct srdb_path_entry *pe;
+	struct srdb_table *tbl;
+	int ret;
+
+	pe = malloc(sizeof(*pe));
+	if (!pe)
+		return -1;
+
+	tbl = srdb_table_by_name(_cfg.srdb->tables, "Paths");
+	if (!tbl)
+		return -1;
+
+	flowpaths_to_pathentry(fl, pe, PA_ALL);
+
+	ret =  srdb_insert_sync(_cfg.srdb, tbl,
+				(struct srdb_entry *)pe, fl->uuid);
+
+	free_srdb_entry(tbl->desc, (struct srdb_entry *)pe);
+
+	return ret;
+}
+
+/* Computes a disjoint path between two nodes if the previous computation
+ * was invalidated by a new router or link
+ *
+ * TODO This always recompute the disjoint paths because there is no way for
+ * the function to know if we added new equipment or lost some
+ */
+static void precompute_disjoint_paths(struct graph *g, struct node *node1,
+				      struct node *node2)
+{
+	struct hashmap *forbidden;
+	struct router *rt1, *rt2;
+	struct llist_node *epath;
+	struct llist_node *segs;
+	struct llist_node *iter;
+	struct pathspec pspec;
+	struct flow_paths *fl;
+	struct nodepair pair;
+	struct rule *rule1;
+	struct rule *rule2;
+	unsigned int i;
+
+	pair.local = node1;
+	pair.remote = node2;
+	fl = hmap_get(g->paths, &pair);
+	if (fl) {
+		hmap_delete(g->paths, &pair);
+		// TODO Delete OVSDB entry pointed by fl->uuid
+		free_flow_paths(fl);
+	}
+
+	rt1 = node1->data;
+	rt2 = node2->data;
+
+	/* Check rules in both directions */
+	rule1 = match_rules(_cfg.rules, rt1->name, rt2->name);
+	if (!rule1)
+		rule1 = _cfg.defrule;
+	rule2 = match_rules(_cfg.rules, rt2->name, rt1->name);
+	if (!rule2)
+		rule2 = _cfg.defrule;
+
+	if (rule1->type != RULE_ALLOW || rule2->type != RULE_ALLOW) {
+		pr_err("Rules prevents the creation of disjoint paths between %s and %s\n",
+		       rt1->name, rt2->name);
+		return;
+	}
+
+	forbidden = hmap_new(hash_sym_nodepair, compare_sym_nodepair);
+	if (!forbidden) {
+		pr_err("failed to allocate a hmap\n");
+		return;
+	}
+
+	fl = calloc(1, sizeof(*fl));
+	if (!fl) {
+		pr_err("failed to allocate a flow\n");
+		goto free_forbidden;
+	}
+
+	fl->addr1 = rt1->addr; // TODO What would be really interesting are the LAN prefixes
+	fl->addr2 = rt2->addr;
+	fl->idle = 0; // Flow is up-to-date
+	fl->srcrt = rt1;
+	fl->dstrt = rt2;
+
+	net_state_read_lock(&_cfg.ns);
+
+	memset(&pspec, 0, sizeof(pspec));
+	pspec.src = node1;
+	pspec.dst = node2;
+	pspec.via = rule1->path; // TODO We assume here that rules1 and rules2 have the same requirements on the middleboxes
+	pspec.data = fl;
+	pspec.prune = NULL;
+
+	fl->paths = malloc(sizeof(*fl->paths) * 5); // TODO Hardcoded value -> should be in config file and "< 0"
+	if (!fl->paths) {
+		pr_err("failed to allocate a set of paths\n");
+		goto free_flow;
+	}
+
+	/* Generate disjoint paths */
+	for (i=0; i < 5; i++) { // TODO Hardcoded value -> should be in config file and "< 0"
+		epath = NULL;
+		segs = build_disjoint_segpath(g, &pspec, &epath, forbidden);
+		if (!segs) {
+			destroy_edgepath(epath);
+			if (!i) // No path found
+				goto free_segs;
+			break; // Max number of disjoint paths reached
+		}
+
+		/* Add new forbidden edges */
+		llist_node_foreach(epath, iter) {
+			struct edge *edge = iter->data;
+			hmap_set(forbidden, edge, edge);
+		}
+
+		fl->paths[i].segs = segs;
+		fl->paths[i].epath = epath;
+		fl->nb_paths++;
+	}
+
+	fl->timestamp = time(NULL);
+	fl->refcount = 1;
+	hmap_destroy(forbidden);
+
+	// TODO Commit flow to OVSDB !
+	if (commit_path(fl))
+		pr_err("Cannot insert entry to OVSDB\n");
+	return;
+
+free_segs:
+	for (i = 0; i < fl->nb_paths; i++) {
+		free_segments(fl->paths[i].segs);
+		destroy_edgepath(fl->paths[i].epath);
+	}
+	free(fl->paths);
+free_flow:
+	free(fl);
+	net_state_unlock(&_cfg.ns);
+free_forbidden:
+	hmap_destroy(forbidden);
+}
+
+/* Pre-computes the disjoint paths between each pair of access routers
+ *
+ * Note: This function assumes this graph is not yet used
+ * Therefore, it does not take any lock
+ */
+static void precompute_all_paths(struct graph *g)
+{
+	struct llist_node *iter1;
+	struct llist_node *iter2;
+	struct node *node1;
+	struct node *node2;
+	struct router *rt1;
+	struct router *rt2;
+
+	llist_node_foreach(g->nodes, iter1) {
+		node1 = iter1->data;
+		rt1 = node1->data;
+		if (rt1->access_router) {
+			llist_node_foreach(g->nodes, iter2) {
+				node2 = iter2->data;
+				rt2 = node2->data;
+				// We only compute symetric paths => only once
+				// for each pair
+				if (rt2->access_router && node1->id < node2->id)
+					precompute_disjoint_paths(g, node1,
+								  node2);
+			}
+		}
+	}
+}
+
 static int netstate_graph_sync(struct netstate *ns)
 {
 	struct graph *g, *old_g;
@@ -186,6 +469,7 @@ static int netstate_graph_sync(struct netstate *ns)
 
 	graph_finalize(g);
 	graph_build_cache(g);
+	precompute_all_paths(g);
 
 	old_g = ns->graph;
 	ns->graph = g;
@@ -271,25 +555,14 @@ static json_t *pref_srcips_to_json(struct flow *fl)
 
 static json_t *pref_segs_to_json(struct flow *fl)
 {
-	char ip[INET6_ADDRSTRLEN];
-	struct llist_node *iter;
 	unsigned int i;
 	json_t *json;
-
 	json = json_array();
 
 	for (i = 0; i < fl->nb_prefixes; i++) {
 		json_t *segs;
 
-		segs = json_array();
-		llist_node_foreach(fl->src_prefixes[i].segs, iter) {
-			struct segment *s = iter->data;
-			struct in6_addr *addr;
-
-			addr = segment_addr(s);
-			inet_ntop(AF_INET6, addr, ip, INET6_ADDRSTRLEN);
-			json_array_append_new(segs, json_string(ip));
-		}
+		segs = segs_to_json(fl->src_prefixes[i].segs);
 		json_array_append_new(json, segs);
 	}
 
@@ -456,7 +729,7 @@ static uint32_t delay_below_cost(uint32_t cur_cost, struct edge *e, void *state,
 	struct link *l;
 
 	l = e->data;
-	cur_delay = (uintptr_t)hmap_get(dist, e->local);
+	cur_delay = (uintptr_t)hmap_get(dist, e->p_local);
 
 	if (cur_delay + l->delay > fl->delay)
 		return UINT32_MAX;
@@ -471,8 +744,8 @@ static void delay_update(struct edge *e, void *state, void *data __unused__)
 	struct link *l;
 
 	l = e->data;
-	cur_delay = (uintptr_t)hmap_get(dist, e->local);
-	hmap_set(dist, e->remote, (void *)(uintptr_t)(cur_delay + l->delay));
+	cur_delay = (uintptr_t)hmap_get(dist, e->p_local);
+	hmap_set(dist, e->p_remote, (void *)(uintptr_t)(cur_delay + l->delay));
 }
 
 struct d_ops delay_below_ops = {
@@ -798,6 +1071,8 @@ static int nodestate_read(struct srdb_entry *entry)
 		lpm_insert(_cfg.ns.prefixes, &p->addr, p->len, rt);
 	}
 	free(vargs);
+
+	rt->access_router = node_entry->accessRouter;
 
 	graph_write_lock(_cfg.ns.graph_staging);
 

@@ -75,6 +75,10 @@ struct graph *graph_new(struct graph_ops *ops)
 	if (!g->dcache)
 		goto out_free_neighs;
 
+	g->paths = hmap_new(hash_nodepair, compare_nodepair);
+	if (!g->paths)
+		goto out_free_dcache;
+
 	pthread_rwlock_init(&g->lock, NULL);
 
 	g->last_node = 0;
@@ -84,6 +88,8 @@ struct graph *graph_new(struct graph_ops *ops)
 
 	return g;
 
+out_free_dcache:
+	hmap_destroy(g->dcache);
 out_free_neighs:
 	hmap_destroy(g->neighs);
 out_free_minedges:
@@ -116,6 +122,7 @@ void graph_destroy(struct graph *g, bool shallow)
 
 	hmap_destroy(g->min_edges);
 	hmap_destroy(g->neighs);
+	hmap_destroy(g->paths);
 
 	llist_node_foreach_safe(g->edges, iter, tmp) {
 		e = iter->data;
@@ -171,8 +178,8 @@ void graph_remove_node(struct graph *g, struct node *node)
 	llist_node_foreach_safe(g->edges, iter, tmp) {
 		struct edge *e = iter->data;
 
-		if (g->ops->node_equals(e->local, node) ||
-		    g->ops->node_equals(e->remote, node))
+		if (g->ops->node_equals(e->p_local, node) ||
+		    g->ops->node_equals(e->p_remote, node))
 			graph_remove_edge(g, e);
 	}
 
@@ -265,8 +272,8 @@ struct edge *graph_add_edge(struct graph *g, struct node *local,
 		return NULL;
 
 	edge->id = ++g->last_edge;
-	edge->local = local;
-	edge->remote = remote;
+	edge->p_local = local;
+	edge->p_remote = remote;
 	edge->metric = metric;
 	edge->data = data;
 	edge->destroy = g->ops->edge_destroy;
@@ -309,8 +316,8 @@ static struct edge *graph_get_minimal_edge(struct graph *g, struct node *local,
 	llist_node_foreach(g->edges, iter) {
 		edge = iter->data;
 
-		if (edge->local->id != local->id ||
-		    edge->remote->id != remote->id)
+		if (edge->p_local->id != local->id ||
+		    edge->p_remote->id != remote->id)
 			continue;
 
 		if (edge->metric < metric) {
@@ -360,16 +367,16 @@ static struct llist_node *graph_compute_neighbors(struct graph *g,
 	llist_node_foreach(g->edges, iter) {
 		edge = iter->data;
 
-		if (edge->local->id != node->id)
+		if (edge->p_local->id != node->id)
 			continue;
 
 		if (edge->metric == UINT32_MAX)
 			continue;
 
-		if (llist_node_exist(neighs, edge->remote))
+		if (llist_node_exist(neighs, edge->p_remote))
 			continue;
 
-		llist_node_insert_tail(neighs, edge->remote);
+		llist_node_insert_tail(neighs, edge->p_remote);
 	}
 
 	return neighs;
@@ -454,8 +461,8 @@ struct graph *graph_deepcopy(struct graph *g)
 		e2 = malloc(sizeof(*e2));
 		e2->id = edge->id;
 		e2->metric = edge->metric;
-		e2->local = graph_get_node(g_copy, edge->local->id);
-		e2->remote = graph_get_node(g_copy, edge->remote->id);
+		e2->p_local = graph_get_node(g_copy, edge->p_local->id);
+		e2->p_remote = graph_get_node(g_copy, edge->p_remote->id);
 		e2->destroy = g->ops->edge_destroy;
 		e2->data = g->ops->edge_data_copy(edge->data);
 		e2->orphan = false;
@@ -515,7 +522,8 @@ static void destroy_pathres(struct llist_node *p)
 }
 
 void graph_dijkstra(const struct graph *g, struct node *src, struct dres *res,
-		    struct d_ops *ops, void *data)
+		    struct d_ops *ops, void *data,
+		    struct hashmap *forbidden_edges)
 {
 	struct hashmap *dist, *prev, *path;
 	struct llist_node *Q, *iter;
@@ -596,8 +604,11 @@ void graph_dijkstra(const struct graph *g, struct node *src, struct dres *res,
 
 			pair.local = u;
 			pair.remote = v;
-			min_edge = hmap_get(g->min_edges, &pair);
+			/* If we want a disjoint path */
+			if (forbidden_edges && hmap_get(forbidden_edges, &pair))
+				continue;
 
+			min_edge = hmap_get(g->min_edges, &pair);
 			assert(min_edge);
 			if (!min_edge)
 				continue;
@@ -811,7 +822,7 @@ int graph_build_cache_one(struct graph *g, struct node *node)
 	 * because it can unpredictably affect the result
 	 * and yield wrong cache entries.
 	 */
-	graph_dijkstra(g, node, res, NULL, NULL);
+	graph_dijkstra(g, node, res, NULL, NULL, NULL);
 
 	old_res = hmap_get(g->dcache, node);
 	if (old_res)
@@ -879,12 +890,12 @@ int graph_minseg(struct graph *g, struct llist_node *path,
 		if (cache_res_i)
 			res_i = *cache_res_i;
 		else
-			graph_dijkstra(g, node_i, &res_i, NULL, NULL);
+			graph_dijkstra(g, node_i, &res_i, NULL, NULL, NULL);
 
 		if (cache_res_r)
 			res_r = *cache_res_r;
 		else
-			graph_dijkstra(g, node_r, &res_r, NULL, NULL);
+			graph_dijkstra(g, node_r, &res_r, NULL, NULL, NULL);
 
 		prev = hmap_get(res_r.prev, node_ii);
 		if (!llist_node_exist(prev, node_i)) { /* MinSegECMP:4 */
@@ -1007,8 +1018,10 @@ struct llist_node *copy_edgepath(struct llist_node *path)
 	return res;
 }
 
-struct llist_node *build_segpath(struct graph *g, struct pathspec *pspec,
-				 struct llist_node **epath)
+struct llist_node *build_disjoint_segpath(struct graph *g,
+					  struct pathspec *pspec,
+					  struct llist_node **epath,
+					  struct hashmap *forbidden_edges)
 {
 	struct llist_node *res, *path, *iter, *fpath = NULL;
 	struct node *cur_node;
@@ -1056,7 +1069,8 @@ struct llist_node *build_segpath(struct graph *g, struct pathspec *pspec,
 
 		tmp_node = iter->data;
 
-		graph_dijkstra(gc, cur_node, &gres, pspec->d_ops, pspec->data);
+		graph_dijkstra(gc, cur_node, &gres, pspec->d_ops, pspec->data,
+			       forbidden_edges);
 		tmp_paths = hmap_get(gres.path, tmp_node);
 		if (llist_node_empty(tmp_paths))
 			goto out_error;
@@ -1078,7 +1092,7 @@ struct llist_node *build_segpath(struct graph *g, struct pathspec *pspec,
 		 * segment for the last hop (i.e. breaking link bundle)
 		 */
 		s = llist_node_last_entry(res)->data;
-		if (!s || !(s->adjacency && s->edge->remote == tmp_node))
+		if (!s || !(s->adjacency && s->edge->p_remote == tmp_node))
 			insert_node_segment(tmp_node, res);
 
 		llist_node_destroy(rev_path);
@@ -1109,3 +1123,10 @@ out_error:
 	free_segments(res);
 	return NULL;
 }
+
+struct llist_node *build_segpath(struct graph *g, struct pathspec *pspec,
+				 struct llist_node **epath)
+{
+	return build_disjoint_segpath(g, pspec, epath, NULL);
+}
+

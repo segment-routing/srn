@@ -137,6 +137,7 @@ struct srdb_namemap_entry {
 	char addr[SLEN + 1];
 	char *prefix;
 	char pbsid[SLEN + 1];
+	int accessRouter; // 1 if it is an access router (If not set, OVSDB defaults this value to 0)
 };
 
 enum {
@@ -145,9 +146,10 @@ enum {
 	ME_ADDR,
 	ME_PREFIX,
 	ME_PBSID,
+	ME_ACCESS_ROUTER,
 };
 
-#define ME_LAST ME_PBSID
+#define ME_LAST ME_ACCESS_ROUTER
 #define ME_ALL ENTRY_MASK_ALL(RTE_LAST)
 
 struct srdb_router_entry {
@@ -254,6 +256,21 @@ enum flowreq_status {
 	REQ_STATUS_NOPREFIX	= 7,
 };
 
+struct srdb_path_entry {
+	struct srdb_entry entry;
+	char *flow;  /* A json list of the endpoint router addresses (the first one is the lower according to memcmp(3)) */
+	char *segments; /* A json list of possible lists of intermediate segments */
+};
+
+/* path entry fields */
+enum {
+	PA_FLOW = 1,
+	PA_SEGMENTS,
+};
+
+#define PA_LAST	PA_SEGMENTS
+#define PA_ALL ENTRY_MASK_ALL(PA_LAST)
+
 struct srdb_linkstate_entry {
 	struct srdb_entry entry;
 	char name1[SLEN + 1];
@@ -286,6 +303,7 @@ struct srdb_nodestate_entry {
 	char addr[SLEN + 1];
 	char *prefix;
 	char pbsid[SLEN + 1];
+	int accessRouter; // 1 if it is an access router (If not set, OVSDB defaults this value to 0)
 };
 
 enum {
@@ -293,9 +311,10 @@ enum {
 	NODE_ADDR,
 	NODE_PREFIX,
 	NODE_PBSID,
+	NODE_ACCESS_ROUTER,
 };
 
-#define NODE_LAST NODE_PBSID
+#define NODE_LAST NODE_ACCESS_ROUTER
 #define NODE_ALL ENTRY_MASK_ALL(NODE_LAST)
 
 struct srdb_update_transact {

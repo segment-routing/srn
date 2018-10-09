@@ -34,20 +34,21 @@ struct node {
 	atomic_t refcount __refcount_aligned;
 };
 
-struct edge {
+struct nodepair {
 	struct node *local;
 	struct node *remote;
+};
+
+struct edge {
+	struct nodepair __node_pair;
+#define p_local		__node_pair.local
+#define p_remote	__node_pair.remote
 	unsigned int id;
 	uint32_t metric;
 	void *data;
 	void (*destroy)(struct edge *edge);
 	bool orphan;
 	atomic_t refcount __refcount_aligned;
-};
-
-struct nodepair {
-	struct node *local;
-	struct node *remote;
 };
 
 struct segment {
@@ -83,8 +84,8 @@ static inline void edge_release(struct edge *edge)
 	if (atomic_dec(&edge->refcount) == 0) {
 		if (edge->destroy)
 			edge->destroy(edge);
-		node_release(edge->local);
-		node_release(edge->remote);
+		node_release(edge->p_local);
+		node_release(edge->p_remote);
 		free(edge);
 	}
 }
@@ -110,6 +111,7 @@ struct graph {
 	struct hashmap *min_edges;
 	struct hashmap *neighs;
 	struct hashmap *dcache;
+	struct hashmap *paths;
 	pthread_rwlock_t lock;
 	bool dirty;
 	struct graph_ops *ops;
@@ -148,7 +150,8 @@ void graph_compute_minimal_edges(struct graph *g);
 void graph_compute_all_neighbors(struct graph *g);
 struct graph *graph_clone(struct graph *g);
 void graph_dijkstra(const struct graph *g, struct node *src, struct dres *res,
-		    struct d_ops *d_ops, void *data);
+		    struct d_ops *d_ops, void *data,
+		    struct hashmap *forbidden_edges);
 void graph_dijkstra_free(struct dres *res);
 unsigned int graph_prune(struct graph *g,
 			 bool (*prune)(struct edge *e, void *arg), void *_arg);
@@ -174,6 +177,9 @@ struct pathspec {
 	void *data;
 };
 
+struct llist_node *build_disjoint_segpath(struct graph *g, struct pathspec *pspec,
+					  struct llist_node **epath,
+					  struct hashmap *forbidden);
 struct llist_node *build_segpath(struct graph *g, struct pathspec *pspec,
 				 struct llist_node **epath);
 
@@ -210,3 +216,4 @@ static inline unsigned int hash_node(void *key)
 }
 
 #endif
+

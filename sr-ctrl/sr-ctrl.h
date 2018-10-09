@@ -36,6 +36,7 @@ struct router {
 	struct prefix pbsid;
 	struct llist_node *prefixes;
 	unsigned int node_id;
+	int access_router;
 	atomic_t refcount __refcount_aligned;
 };
 
@@ -108,6 +109,27 @@ struct flow {
 	enum flow_status status;
 	char proxy[SLEN + 1];
 	char request_id[SLEN + 1];
+	atomic_t refcount __refcount_aligned;
+};
+
+struct path {
+	struct llist_node *segs;
+	struct llist_node *epath;
+};
+
+struct flow_paths {
+	char uuid[SLEN + 1];
+	struct in6_addr addr1;
+	struct in6_addr addr2;
+	struct path *paths;
+	unsigned int nb_paths;
+	struct router *srcrt;
+	struct router *dstrt;
+	uint32_t bw;
+	uint32_t delay;
+	uint32_t ttl;
+	uint32_t idle;
+	time_t timestamp;
 	atomic_t refcount __refcount_aligned;
 };
 

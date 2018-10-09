@@ -1,134 +1,224 @@
-{ "name": "SR_test",
-  "version": "0.0.1",
-  "tables": {
-    "NameIdMapping": {
-      "columns": {
-        "routerName": {
-          "type": "string"},
-        "routerId": {
-          "type": "integer"},
-        "addr": {
-          "type": "string"},
-        "prefix": {
-          "type": "string"},
-        "pbsid": {
-          "type": "string"}},
-    "isRoot": true},
-    "AvailableLink": {
-      "columns": {
-        "name1": {
-          "type": "string"},
-        "addr1": {
-          "type": "string"},
-        "routerId1": {
-          "type": "integer"},
-        "name2": {
-          "type": "string"},
-        "addr2": {
-          "type": "string"},
-        "routerId2": {
-          "type": "integer"},
-        "metric": {
-          "type": "integer"},
-        "bw": {
-          "type": "integer"},
-        "ava_bw": {
-          "type": "integer"},
-        "delay": {
-          "type": "integer"}},
-    "isRoot": true},
-    "RouterIds": {
-      "columns": {
-        "router": {
-          "type": "string"}},
-    "isRoot": true},
-    "FlowState": {
-      "columns": {
-        "destination": {
-          "type": "string"},
-        "dstaddr": {
-          "type": "string"},
-        "bsid": {
-          "type": "string"},
-        "segments": {
-          "type": "string"},
-        "bandwidth": {
-          "type": "integer"},
-        "delay": {
-          "type": "integer"},
-        "policing": {
-          "type": "integer"},
-        "source": {
-          "type": "string"},
-        "sourceIPs" : {
-          "type": "string"},
-        "router": {
-          "type": "string"},
-        "proxy": {
-          "type": "string"},
-        "interface": {
-          "type": "string"},
-        "reverseFlow": {
-          "type": "string"},
-        "request": {
-          "type": "string"},
-        "ttl": {
-          "type": "integer"},
-        "idle": {
-          "type": "integer"},
-        "timestamp": {
-          "type": "integer"},
-        "status": {
-          "type": "integer"}},
-    "isRoot": true},
-    "FlowReq": {
-      "columns": {
-        "req_id": {
-          "type": "string"},
-        "destination": {
-          "type": "string"},
-        "dstaddr": {
-          "type": "string"},
-        "source": {
-          "type": "string"},
-        "srcaddr": {
-          "type": "string"},
-        "bandwidth": {
-          "type": "integer"},
-        "delay": {
-          "type": "integer"},
-        "proxy": {
-          "type": "string"},
-        "status": {
-          "type": "integer"}},
-    "isRoot": true},
-    "LinkState": {
-      "columns": {
-        "name1": {
-          "type": "string"},
-        "addr1": {
-          "type": "string"},
-        "name2": {
-          "type": "string"},
-        "addr2": {
-          "type": "string"},
-        "metric": {
-          "type": "integer"},
-        "bw": {
-          "type": "integer"},
-        "ava_bw": {
-          "type": "integer"},
-        "delay": {
-          "type": "integer"}},
-    "isRoot": true},
-    "NodeState": {
-      "columns": {
-        "name": {
-          "type": "string"},
-        "addr": {
-          "type": "string"},
-        "prefix": {
-          "type": "string"},
-        "pbsid": {
-          "type": "string"}},
-    "isRoot": true}}}
+{
+   "name":"SR_test",
+   "version":"0.0.1",
+   "tables":{
+      "NameIdMapping":{
+         "columns":{
+            "routerName":{
+               "type":"string"
+            },
+            "routerId":{
+               "type":"integer"
+            },
+            "addr":{
+               "type":"string"
+            },
+            "prefix":{
+               "type":"string"
+            },
+            "pbsid":{
+               "type":"string"
+            },
+	    "accessRouter":{
+               "type":"integer"
+            }
+         },
+         "isRoot":true
+      },
+      "AvailableLink":{
+         "columns":{
+            "name1":{
+               "type":"string"
+            },
+            "addr1":{
+               "type":"string"
+            },
+            "routerId1":{
+               "type":"integer"
+            },
+            "name2":{
+               "type":"string"
+            },
+            "addr2":{
+               "type":"string"
+            },
+            "routerId2":{
+               "type":"integer"
+            },
+            "metric":{
+               "type":"integer"
+            },
+            "bw":{
+               "type":"integer"
+            },
+            "ava_bw":{
+               "type":"integer"
+            },
+            "delay":{
+               "type":"integer"
+            }
+         },
+         "isRoot":true
+      },
+      "RouterIds":{
+         "columns":{
+            "router":{
+               "type":"string"
+            }
+         },
+         "isRoot":true
+      },
+      "FlowState":{
+         "columns":{
+            "destination":{
+               "type":"string"
+            },
+            "dstaddr":{
+               "type":"string"
+            },
+            "bsid":{
+               "type":"string"
+            },
+            "segments":{
+               "type":"string"
+            },
+            "bandwidth":{
+               "type":"integer"
+            },
+            "delay":{
+               "type":"integer"
+            },
+            "policing":{
+               "type":"integer"
+            },
+            "source":{
+               "type":"string"
+            },
+            "sourceIPs":{
+               "type":"string"
+            },
+            "router":{
+               "type":"string"
+            },
+            "proxy":{
+               "type":"string"
+            },
+            "interface":{
+               "type":"string"
+            },
+            "reverseFlow":{
+               "type":"string"
+            },
+            "request":{
+               "type":"string"
+            },
+            "ttl":{
+               "type":"integer"
+            },
+            "idle":{
+               "type":"integer"
+            },
+            "timestamp":{
+               "type":"integer"
+            },
+            "status":{
+               "type":"integer"
+            }
+         },
+         "isRoot":true
+      },
+      "FlowReq":{
+         "columns":{
+            "req_id":{
+               "type":"string"
+            },
+            "destination":{
+               "type":"string"
+            },
+            "dstaddr":{
+               "type":"string"
+            },
+            "source":{
+               "type":"string"
+            },
+            "srcaddr":{
+               "type":"string"
+            },
+            "bandwidth":{
+               "type":"integer"
+            },
+            "delay":{
+               "type":"integer"
+            },
+            "proxy":{
+               "type":"string"
+            },
+            "status":{
+               "type":"integer"
+            }
+         },
+         "isRoot":true
+      },
+      "Paths":{
+         "columns":{
+            "flow":{
+               "type":"string"
+            },
+            "segments":{
+               "type":"string"
+            }
+         },
+	 "isRoot":true
+      },
+      "LinkState":{
+         "columns":{
+            "name1":{
+               "type":"string"
+            },
+            "addr1":{
+               "type":"string"
+            },
+            "name2":{
+               "type":"string"
+            },
+            "addr2":{
+               "type":"string"
+            },
+            "metric":{
+               "type":"integer"
+            },
+            "bw":{
+               "type":"integer"
+            },
+            "ava_bw":{
+               "type":"integer"
+            },
+            "delay":{
+               "type":"integer"
+            }
+         },
+         "isRoot":true
+      },
+      "NodeState":{
+         "columns":{
+            "name":{
+               "type":"string"
+            },
+            "addr":{
+               "type":"string"
+            },
+            "prefix":{
+               "type":"string"
+            },
+            "pbsid":{
+               "type":"string"
+            },
+	    "accessRouter":{
+               "type":"integer"
+            }
+         },
+         "isRoot":true
+      }
+   }
+}
+

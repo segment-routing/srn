@@ -596,6 +596,12 @@ static struct srdb_descriptor namemap_desc_tmpl[] = {
 			.index	= ME_PBSID,
 	},
 	{
+			.name	= "accessRouter",
+			.type	= SRDB_INT,
+			.offset	= OFFSET_NAMEMAP(accessRouter),
+			.index	= ME_ACCESS_ROUTER,
+	},
+	{
 			.name	= NULL,
 	},
 };
@@ -816,6 +822,29 @@ static struct srdb_descriptor flowstate_desc_tmpl[] = {
 	},
 };
 
+#define OFFSET_PATH(NAME)	offsetof(struct srdb_path_entry, NAME)
+static struct srdb_descriptor path_desc_tmpl[] = {
+	SRDB_BUILTIN_ENTRIES(),
+
+	{
+		.name	= "flow",
+		.type	= SRDB_VARSTR,
+		.maxlen	= SLEN,
+		.offset	= OFFSET_PATH(flow),
+		.index	= PA_FLOW,
+	},
+	{
+		.name	= "segments",
+		.type	= SRDB_VARSTR,
+		.maxlen	= BUFLEN,
+		.offset	= OFFSET_PATH(segments),
+		.index	= PA_SEGMENTS,
+	},
+	{
+		.name	= NULL,
+	}
+};
+
 #define OFFSET_LINKSTATE(NAME)	offsetof(struct srdb_linkstate_entry, NAME)
 static struct srdb_descriptor linkstate_desc_tmpl[] = {
 	SRDB_BUILTIN_ENTRIES(),
@@ -908,6 +937,12 @@ static struct srdb_descriptor nodestate_desc_tmpl[] = {
 		.maxlen	= SLEN,
 		.offset	= OFFSET_NODESTATE(pbsid),
 		.index	= NODE_PBSID,
+	},
+	{
+		.name	= "accessRouter",
+		.type	= SRDB_INT,
+		.offset	= OFFSET_NODESTATE(accessRouter),
+		.index	= NODE_ACCESS_ROUTER,
 	},
 	{
 		.name	= NULL,
@@ -1011,6 +1046,12 @@ static struct srdb_table srdb_tables[] = {
 		.entry_size	= sizeof(struct srdb_flow_entry),
 		.desc_tmpl	= flowstate_desc_tmpl,
 		.desc_size	= sizeof(flowstate_desc_tmpl),
+	},
+	{
+		.name		= "Paths",
+		.entry_size	= sizeof(struct srdb_path_entry),
+		.desc_tmpl	= path_desc_tmpl,
+		.desc_size	= sizeof(path_desc_tmpl),
 	},
 	{
 		.name		= "LinkState",
