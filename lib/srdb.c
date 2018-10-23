@@ -834,6 +834,13 @@ static struct srdb_descriptor path_desc_tmpl[] = {
 		.index	= PA_FLOW,
 	},
 	{
+		.name	= "prefixes",
+		.type	= SRDB_VARSTR,
+		.maxlen	= BUFLEN,
+		.offset	= OFFSET_PATH(prefixes),
+		.index	= PA_PREFIXES,
+	},
+	{
 		.name	= "segments",
 		.type	= SRDB_VARSTR,
 		.maxlen	= BUFLEN,

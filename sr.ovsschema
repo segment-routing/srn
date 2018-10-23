@@ -166,6 +166,9 @@
             },
             "segments":{
                "type":"string"
+            },
+            "prefixes":{
+               "type":"string"
             }
          },
 	 "isRoot":true

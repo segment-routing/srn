@@ -222,13 +222,31 @@ static json_t *segs_to_json(struct llist_node *segs)
 	return json_segs;
 }
 
+static json_t *prefixes_to_json(struct llist_node *prefixes)
+{
+	char ip[INET6_ADDRSTRLEN];
+	json_t *json_prefixes;
+	struct llist_node *iter;
+
+	json_prefixes = json_array();
+	llist_node_foreach(prefixes, iter) {
+		struct prefix *prefix = iter->data;
+		inet_ntop(AF_INET6, &prefix->addr, ip, INET6_ADDRSTRLEN);
+		json_array_append_new(json_prefixes,
+				      json_pack("{s:s, s:i}", "address", ip,
+						"prefixlen", prefix->len));
+	}
+	return json_prefixes;
+}
+
 static void flowpaths_to_pathentry(struct flow_paths *fl,
 				   struct srdb_path_entry *pe,
 				   unsigned int fields)
 {
 	struct in6_addr *addr1, *addr2;
-	json_t *jsegs_all, *jaddrs;
+	json_t *jsegs_all, *jaddrs, *jprefixes_all;
 	char ip[INET6_ADDRSTRLEN];
+	bool invert = false;
 	unsigned int i;
 
 	memset(pe, 0, sizeof(struct srdb_path_entry));
@@ -241,6 +259,7 @@ static void flowpaths_to_pathentry(struct flow_paths *fl,
 		} else {
 			addr1 = &fl->addr2;
 			addr2 = &fl->addr1;
+			invert = true;
 		}
 
 		jaddrs = json_array();
@@ -252,6 +271,27 @@ static void flowpaths_to_pathentry(struct flow_paths *fl,
 		pe->flow = json_dumps(jaddrs, JSON_COMPACT);
 
 		json_decref(jaddrs);
+	}
+
+	/* prefixes: [[rt1_LAN_prefix1, rt1_LAN_prefix2],[rt2_LAN_prefix1, rt2_LAN_prefix2]] */
+	if (fields & ENTRY_MASK(PA_PREFIXES)) {
+		jprefixes_all = json_array();
+		
+		json_t *prefixes;
+		if (!invert)
+			prefixes = prefixes_to_json(fl->srcrt->prefixes);
+		else
+			prefixes = prefixes_to_json(fl->dstrt->prefixes);
+		json_array_append_new(jprefixes_all, prefixes);
+
+		if (invert)
+			prefixes = prefixes_to_json(fl->srcrt->prefixes);
+		else
+			prefixes = prefixes_to_json(fl->dstrt->prefixes);
+		json_array_append_new(jprefixes_all, prefixes);
+
+		pe->prefixes = json_dumps(jprefixes_all, JSON_COMPACT);
+		json_decref(jprefixes_all);
 	}
 
 	/* segments: [[S1_1,S1_2,S1_3],[S2_1,S2_2]] */
@@ -283,8 +323,11 @@ static int commit_path(struct flow_paths *fl)
 
 	flowpaths_to_pathentry(fl, pe, PA_ALL);
 
-	ret =  srdb_insert_sync(_cfg.srdb, tbl,
-				(struct srdb_entry *)pe, fl->uuid);
+	ret = srdb_insert_sync(_cfg.srdb, tbl,
+			       (struct srdb_entry *)pe, fl->uuid);
+
+	if (ret)
+		pr_err("Insertion failed");
 
 	free_srdb_entry(tbl->desc, (struct srdb_entry *)pe);
 
@@ -399,7 +442,7 @@ static void precompute_disjoint_paths(struct graph *g, struct node *node1,
 
 	// TODO Commit flow to OVSDB !
 	if (commit_path(fl))
-		pr_err("Cannot insert entry to OVSDB\n");
+		pr_err("Cannot insert entry to OVSDB");
 	return;
 
 free_segs:
