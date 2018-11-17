@@ -424,6 +424,8 @@ static void precompute_disjoint_paths(struct graph *g, struct node *node1,
 				goto free_segs;
 			break; // Max number of disjoint paths reached
 		}
+		/* Remove destination router from segments */
+		llist_node_remove(segs, llist_node_last_entry(segs));
 
 		/* Add new forbidden edges */
 		llist_node_foreach(epath, iter) {
