@@ -53,11 +53,13 @@ int parse_args(int argc, char * const argv[], struct client_conf *conf)
       break;
     case 'C':
       conf->no_cache = 1;
+      break;
     case '?':
       if (optopt == 's' || optopt == 'S' || optopt == 'n' || optopt == 'p' || optopt == 'R')
         fprintf(stderr, "Option -%c requires an argument.\n", optopt);
       else
         fprintf(stderr, "Unknown option character `\\x%x'.\n", optopt);
+      return -1;
     default:
       return -1;
     }

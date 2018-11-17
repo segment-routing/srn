@@ -29,6 +29,7 @@ void config_set_defaults()
 	strcpy(cfg.proxy_listen_addr, "::");
 	cfg.ovsdb_conf.ntransacts = 1;
 	cfg.max_queries = 50;
+	*cfg.zlog_conf_file = '\0';
 }
 
 int load_args(int argc, char **argv, const char **conf, int *dryrun)
@@ -102,6 +103,8 @@ int load_config(const char *fname, int *optmask, struct ares_addr_node **servers
 				cfg.max_queries = 1;
 			continue;
 		}
+		if (READ_STRING(buf, zlog_conf_file, &cfg))
+			continue;
 		if (sscanf(buf, "dns_server \"%[^\"]\"", dns_server)) {
 			srvr = malloc(sizeof(struct ares_addr_node));
 			if (!srvr) {

@@ -19,6 +19,15 @@ struct queue_thread replies_waiting_controller;
 
 struct srdb *srdb;
 
+static int srdb_print(const char *fmt, ...)
+{
+	va_list args;
+	va_start(args, fmt);
+	vzlog_error(zc, fmt, args);
+	va_end(args);
+	return 0;
+}
+
 static int read_flowreq(struct srdb_entry *entry,
 			struct srdb_entry *diff __unused__,
 			unsigned int fmask)
@@ -31,15 +40,15 @@ static int read_flowreq(struct srdb_entry *entry,
 	if (!(fmask & ENTRY_MASK(FREQ_STATUS)))
 		return -1;
 
-	print_debug("A modified entry in the flowreq table is considered with id %s and status %d\n", flowreq->request_id, flowreq->status);
+	zlog_debug(zc, "A modified entry in the flowreq table is considered with id %s and status %d\n", flowreq->request_id, flowreq->status);
 
 	if (flowreq->status != REQ_STATUS_PENDING && flowreq->status != REQ_STATUS_ALLOWED) {
-		print_debug("Check if the rejected reply is for this router\n");
+		zlog_debug(zc, "Check if the rejected reply is for this router\n");
 		/* Check if its not our request */
 		mqueue_walk_safe(&replies_waiting_controller, reply, tmp, struct reply *) {
-			print_debug("Check an entry with uuid %s\n", reply->ovsdb_req_uuid);
+			zlog_debug(zc, "Check an entry with uuid %s\n", reply->ovsdb_req_uuid);
 			if (!strncmp(flowreq->request_id, reply->ovsdb_req_uuid, SLEN + 1)) {
-				print_debug("A matching with a pending reply was found\n");
+				zlog_debug(zc, "A matching with a pending reply was found\n");
 				mqueue_remove(&replies_waiting_controller, (struct llnode *) reply);
 				break;
 			}
@@ -57,11 +66,12 @@ static int read_flowreq(struct srdb_entry *entry,
 		for (i = 0; reply->data[DNS_HEADER_LENGTH + i] != 0; i++);
 		reply->data_length = DNS_HEADER_LENGTH + i + 1 + 4; /* 4 bytes of Type and Class */
 
-		print_debug("A DNS reject is going to be sent to the application\n");
+		zlog_debug(zc, "A DNS reject is going to be sent to the application\n");
 		if (sendto(server_sfd, reply->data, reply->data_length, 0,
 			   (struct sockaddr *) &reply->addr, reply->addr_len) != (int) reply->data_length) {
 			/* Drop the reject */
-			perror("Error sending the DNS reject to the client");
+			zlog_warn(zc, "%s: Error sending the DNS reject to the client",
+				  strerror(errno));
 		}
 
 		FREE_POINTER(reply);
@@ -82,11 +92,12 @@ static int read_flowstate(struct srdb_entry *entry,
 	char *srh_rr = NULL;
 	char *name = NULL;
 
-	print_debug("A new entry in the flow state table is considered\n");
+	zlog_debug(zc, "A new entry in the flow state table is considered\n");
 #if DEBUG_PERF
 	struct timespec controller_reply_time;
 	if (clock_gettime(CLOCK_MONOTONIC, &controller_reply_time)) {
-		perror("Cannot get controller_reply time");
+		zlog_error(zc, "%s: Cannot get controller_reply time",
+			   strerror(errno));
 	}
 #endif
 
@@ -97,7 +108,7 @@ static int read_flowstate(struct srdb_entry *entry,
 	/* Find the concerned reply */
 	mqueue_walk_safe(&replies_waiting_controller, reply, tmp, struct reply *) {
 		if (!strncmp(flowstate->request_id, reply->ovsdb_req_uuid, SLEN + 1)) {
-			print_debug("A matching with a pending reply was found\n");
+			zlog_debug(zc, "A matching with a pending reply was found\n");
 			mqueue_remove(&replies_waiting_controller, (struct llnode *) reply);
 			break;
 		}
@@ -117,10 +128,10 @@ static int read_flowstate(struct srdb_entry *entry,
 		if (!json_is_integer(json_array_get(provider, 0)) ||
 		    !json_is_string(json_array_get(provider, 1)) ||
 		    !json_is_integer(json_array_get(provider, 2))) {
-			fprintf(stderr, "Malformed Provider %dth field: %s\n", i, flowstate->sourceIPs);
+			zlog_error(zc, "Malformed Provider %dth field: %s\n", i, flowstate->sourceIPs);
 			goto free_json;
 		}  else if (!json_is_string(json_array_get(bsids, i))) {
-			fprintf(stderr, "Malformed bsid %dth field: %s\n", i, flowstate->bsid);
+			zlog_error(zc, "Malformed bsid %dth field: %s\n", i, flowstate->bsid);
 			goto free_json;
 		}
 
@@ -152,14 +163,14 @@ static int read_flowstate(struct srdb_entry *entry,
 		DNS__SET16BIT(srh_rr, prefix_priority);
 		srh_rr += 2;
 		if (inet_pton(AF_INET6, prefix_addr_str, srh_rr) != 1) {
-			fprintf(stderr, "Not a valid IPv6 address received as Provider prefix: %s\n", prefix_addr_str);
+			zlog_error(zc, "Not a valid IPv6 address received as Provider prefix: %s\n", prefix_addr_str);
 			goto free_json;
 		}
 		srh_rr += 16;
 		*srh_rr = prefix_length;
 		srh_rr++;
 		if (inet_pton(AF_INET6, bsid_str, srh_rr) != 1) {
-			fprintf(stderr, "Not a valid IPv6 address received as BSID: %s\n", bsid_str);
+			zlog_error(zc, "Not a valid IPv6 address received as BSID: %s\n", bsid_str);
 			goto free_json;
 		}
 		srh_rr += 16;
@@ -169,7 +180,7 @@ static int read_flowstate(struct srdb_entry *entry,
 
 #if DEBUG_PERF
 	if (clock_gettime(CLOCK_MONOTONIC, &reply->reply_forward_time)) {
-		perror("Cannot get reply_forward time");
+		zlog_error(zc, "%s: Cannot get reply_forward time", strerror(errno));
 	}
 	struct timespec result;
 	clock_getres(CLOCK_MONOTONIC, &result);
@@ -197,12 +208,13 @@ static int read_flowstate(struct srdb_entry *entry,
 #endif
 
 	/* Send reply to the client */
-	print_debug("A reply is going to be sent to the application\n");
+	zlog_debug(zc, "A reply is going to be sent to the application\n");
 	if (sendto(server_sfd, reply->data, reply->data_length, 0,
 		   (struct sockaddr *) &reply->addr,
 		   reply->addr_len) != (int) reply->data_length) {
 		/* Drop the reply */
-		perror("Error sending the reply to the client");
+		zlog_warn(zc, "%s: Error sending the reply to the client",
+			  strerror(errno));
 	}
 
 free_json:
@@ -231,7 +243,7 @@ int init_monitor(void)
 
 	status = getaddrinfo(cfg.proxy_listen_addr, cfg.proxy_listen_port, &hints, &result);
 	if (status != 0) {
-		fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(status));
+		zlog_error(zc, "getaddrinfo: %s\n", gai_strerror(status));
 		goto out_err;
 	}
 
@@ -249,15 +261,15 @@ int init_monitor(void)
 	freeaddrinfo(result);
 
 	if (rp == NULL) {
-		fprintf(stderr, "Could not bind\n");
+		zlog_error(zc, "Could not bind\n");
 		goto out_err;
 	}
 
 	/* Init ovsdb monitoring */
 	cfg.ovsdb_conf.ntransacts = 1;
-	srdb = srdb_new(&cfg.ovsdb_conf);
+	srdb = srdb_new(&cfg.ovsdb_conf, srdb_print);
 	if (!srdb) {
-		fprintf(stderr, "Cannot connect to the database\n");
+		zlog_error(zc, "Cannot connect to the database\n");
 		goto out_err;
 	}
 

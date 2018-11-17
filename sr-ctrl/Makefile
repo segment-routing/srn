@@ -1,6 +1,6 @@
 CC=gcc
 CFLAGS=-Wall -W -O2 -I../lib -Wall -Werror
-LDFLAGS=-L../lib -lsr -pthread -ljansson
+LDFLAGS=-L../lib -lsr -pthread -ljansson -lzlog
 SRC=graph.c rules.c sr-ctrl.c
 OBJ=$(SRC:.c=.o)
 EXEC=sr-ctrl

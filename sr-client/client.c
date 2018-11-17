@@ -113,7 +113,7 @@ int main(int argc, char * const argv[])
   int i = 0, status = -1;
   char directories [STR_LEN + 1];
   char parent_directory [STR_LEN + 1];
-  char file_path [STR_LEN + 1];
+  char file_path [2*STR_LEN + 1];
   if (parse_args(argc, argv, &conf)) {
     fprintf(stderr, "Usage: %s [-CDr] [-S output_file_suffix] [-s servername] [-n number_req] [-R request_rate] [-p probe_rate] dst port\n", argv[0]);
     return -1;
@@ -172,7 +172,7 @@ int main(int argc, char * const argv[])
                                 .tv_nsec = (long) (1000000000 / conf.request_rate)};
   sleep_time.tv_nsec = sleep_time.tv_nsec - sleep_time.tv_sec * 1000000000;
 
-  snprintf(file_path, STR_LEN + 1, "%s/latencies_%s.log", parent_directory,
+  snprintf(file_path, 2*STR_LEN + 1, "%s/latencies_%s.log", parent_directory,
            conf.custom_file_suffix ? conf.file_suffix : "");
   conf.logs = fopen(file_path, "w");
   if (!conf.logs) {

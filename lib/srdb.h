@@ -370,7 +370,7 @@ struct srdb_table *srdb_get_tables(void);
 void srdb_free_tables(struct srdb_table *tbl);
 struct srdb_table *srdb_table_by_name(struct srdb_table *tables,
 				      const char *name);
-struct srdb *srdb_new(struct ovsdb_config *conf);
+struct srdb *srdb_new(struct ovsdb_config *conf, int (*print) (const char *, ...));
 void srdb_destroy(struct srdb *srdb);
 void free_srdb_entry(struct srdb_descriptor *desc,
  		     struct srdb_entry *entry);

@@ -26,14 +26,14 @@ int client_pipe_fd;
 void client_callback(void *arg, int status, __attribute__((unused)) int timeouts, unsigned char *abuf, int alen)
 {
 	if (status != ARES_SUCCESS) {
-		fprintf(stderr, "DNS server error: %s\n", ares_strerror(status));
+		zlog_error(zc, "DNS server error: %s\n", ares_strerror(status));
 		goto out;
 	}
 
 	struct callback_args *call_args = (struct callback_args *) arg;
 	struct reply *reply = malloc(REPLY_ALLOC);
 	if (!reply) {
-		fprintf(stderr, "Out of memory !\n"); /* Ignore reply */
+		zlog_error(zc, "Out of memory !\n"); /* Ignore reply */
 	} else {
 		reply->data_length = alen;
 		reply->buffer_size = REPLY_ALLOC;
@@ -48,7 +48,8 @@ void client_callback(void *arg, int status, __attribute__((unused)) int timeouts
 		reply->query_rcv_time = call_args->query_rcv_time;
 		reply->query_forward_time = call_args->query_forward_time;
 		if (clock_gettime(CLOCK_MONOTONIC, &reply->reply_rcv_time)) {
-			perror("Cannot get reply_rcv time");
+			zlog_error(zc, "%s: Cannot get reply_rcv time",
+				   strerror(errno));
 		}
 #endif
 		DNS_HEADER_SET_QID((char *) reply->data, call_args->qid);
@@ -70,7 +71,7 @@ static int parse_aaaa_reply(struct reply *reply)
 	}
 	strncpy(reply->destination, host->h_name, SLEN +1);
 	inet_ntop(AF_INET6, host->h_addr_list[0], reply->destination_addr, SLEN + 1);
-	print_debug("DNS matching : %s -> %s\n", reply->destination, reply->destination_addr);
+	zlog_debug(zc, "DNS matching : %s -> %s\n", reply->destination, reply->destination_addr);
 	ares_free_hostent(host);
 	return 0;
 }
@@ -81,7 +82,7 @@ static int push_to_dns_cache(struct reply *dns_reply)
 	int err = 0;
 	struct reply *stored_reply = malloc(REPLY_ALLOC);
 	if (!stored_reply) {
-		fprintf(stderr, "Out of memory\n");
+		zlog_error(zc, "Out of memory\n");
 		return -1;
 	}
 	memcpy(stored_reply, dns_reply, sizeof(*dns_reply) + dns_reply->data_length);
@@ -105,15 +106,15 @@ static void *client_producer_main(__attribute__((unused)) void *args)
 	struct reply *reply = NULL;
 	char pipe_buffer [1000];
 
-	print_debug("A client producer thread has started\n");
+	zlog_debug(zc, "A client producer thread has started\n");
 
 	client_pipe_fd = open(cfg.client_server_fifo, O_RDONLY);
 	if (client_pipe_fd < 0) {
-		perror("Cannot open pipe");
+		zlog_error(zc, "%s: Cannot open pipe", strerror(errno));
 		return NULL;
 	}
 
-	print_debug("Pipe opened on client side\n");
+	zlog_debug(zc, "Pipe opened on client side\n");
 
 	queue_init(&inner_queue);
 	while (!stop) {
@@ -126,15 +127,16 @@ static void *client_producer_main(__attribute__((unused)) void *args)
 		nfds = nfds > client_pipe_fd ? nfds : client_pipe_fd + 1;
 		err = select(nfds, &read_fds, &write_fds, NULL, &timeout);
 		if (err < 0) {
-			perror("Select fail");
+			zlog_error(zc, "%s: Select fail", strerror(errno));
 			break;
 		}
 
 		if (FD_ISSET(client_pipe_fd, &read_fds) && read(client_pipe_fd, pipe_buffer, 1000) < 0)
-			perror("Cannot read pipe");
+			zlog_warn(zc, "%s: Cannot read pipe", strerror(errno));
 
 		if (pthread_mutex_lock(&channel_mutex)) {
-			perror("Cannot lock the mutex in client producer");
+			zlog_error(zc, "%s: Cannot lock the mutex in client producer",
+				   strerror(errno));
 			break;
 		}
 		ares_process(channel, &read_fds, &write_fds);
@@ -144,12 +146,12 @@ static void *client_producer_main(__attribute__((unused)) void *args)
 		queue_walk_dequeue(&inner_queue, reply, struct reply *) {
 			/* Get back the DNS name and its resolved IPv6 address */
 			if (parse_aaaa_reply(reply)) {
-				print_debug("Invalid DNS reply received\n");
+				zlog_debug(zc, "Invalid DNS reply received\n");
 				/* Dropping reply */
 				FREE_POINTER(reply);
 				continue;
 			}
-			print_debug("Client producer will append a reply to the appropriate queue\n");
+			zlog_debug(zc, "Client producer will append a reply to the appropriate queue\n");
 			if (mqueue_append(&replies, (struct llnode *) reply)) {
 				/* Dropping reply */
 				FREE_POINTER(reply);
@@ -157,16 +159,16 @@ static void *client_producer_main(__attribute__((unused)) void *args)
 			}
 #if USE_DNS_CACHE
 			/* Place in cache */
-			print_debug("Client producer will push the reply to the DNS cache\n");
+			zlog_debug(zc, "Client producer will push the reply to the DNS cache\n");
 			if (push_to_dns_cache(reply)) {
-				fprintf(stderr, "Cannot insert entry in the DNS cache\n");
+				zlog_error(zc, "Cannot insert entry in the DNS cache\n");
 				/* Ignores this error */
 			}
 #endif
 		}
 	}
 	queue_destroy(&inner_queue);
-	print_debug("A client producer thread has finished\n");
+	zlog_debug(zc, "A client producer thread has finished\n");
 	return NULL;
 }
 
@@ -185,26 +187,26 @@ static void *client_consumer_main(__attribute__((unused)) void *args)
 
 	struct reply *reply = NULL;
 
-	print_debug("A client consumer thread has started\n");
+	zlog_debug(zc, "A client consumer thread has started\n");
 
 	/* Get the OpenFlow ID of this thread */
 	strncpy(router_entry.router, cfg.router_name, SLEN + 1);
 	if (srdb_insert_sync(srdb, router_tbl, (struct srdb_entry *) &router_entry, thread_id)) {
-		fprintf(stderr, "Problem during extraction of thread ID -> stop thread\n");
+		zlog_error(zc, "Problem during extraction of thread ID -> stop thread\n");
 		return NULL;
 	}
 
-	print_debug("This client consumer thread got the ID %s\n", thread_id);
+	zlog_debug(zc, "This client consumer thread got the ID %s\n", thread_id);
 
 	mqueue_walk_dequeue(&replies, reply, struct reply *) {
-		print_debug("Client consumer dequeues a reply\n");
+		zlog_debug(zc, "Client consumer dequeues a reply\n");
 
 		snprintf(reply->ovsdb_req_uuid, SLEN + 1, "%s-%ld", thread_id, req_counter);
 		if (mqueue_append(&replies_waiting_controller, (struct llnode *) reply)) {
 			FREE_POINTER(reply);
 			break;
 		}
-		print_debug("Client consumer forwards a reply to the monitor's queue with id %s\n", reply->ovsdb_req_uuid);
+		zlog_debug(zc, "Client consumer forwards a reply to the monitor's queue with id %s\n", reply->ovsdb_req_uuid);
 
 		strncpy(entry.destination, reply->destination, SLEN + 1);
 		strncpy(entry.dstaddr, reply->destination_addr, SLEN + 1);
@@ -217,22 +219,24 @@ static void *client_consumer_main(__attribute__((unused)) void *args)
 
 #if DEBUG_PERF
 		if (clock_gettime(CLOCK_MONOTONIC, &reply->controller_query_time)) {
-			perror("Cannot get controller_query time");
+			zlog_error(zc, "%s: Cannot get controller_query time",
+				   strerror(errno));
 		}
 #endif
 
 		srdb_insert_sync(srdb, tbl, (struct srdb_entry *) &entry, NULL);
-		print_debug("Client consumer makes the insertion in the OVSDB table\n");
+		zlog_debug(zc, "Client consumer makes the insertion in the OVSDB table\n");
 
 #if DEBUG_PERF
 		if (clock_gettime(CLOCK_MONOTONIC, &reply->controller_after_query_time)) {
-			perror("Cannot get controller_after_query time");
+			zlog_error(zc, "%s: Cannot get controller_after_query time",
+				   strerror(errno));
 		}
 #endif
 
 		req_counter++; /* The next request will have another id */
 	}
-	print_debug("A client consumer thread has finished\n");
+	zlog_debug(zc, "A client consumer thread has finished\n");
 	return NULL;
 }
 
@@ -247,13 +251,13 @@ int init_client(int optmask, struct ares_addr_node *servers,
 	/* Create pipe between the client and the server */
 	remove(cfg.client_server_fifo);
 	if (mkfifo(cfg.client_server_fifo, 0640)) {
-		perror("mkfifo failed");
+		zlog_error(zc, "%s: mkfifo failed", strerror(errno));
 		goto out_err;
 	}
 
 	status = ares_library_init(ARES_LIB_INIT_ALL);
 	if (status != ARES_SUCCESS) {
-		fprintf(stderr, "ares_library_init: %s\n", ares_strerror(status));
+		zlog_error(zc, "ares_library_init: %s\n", ares_strerror(status));
 		goto out_err;
 	}
 
@@ -262,14 +266,14 @@ int init_client(int optmask, struct ares_addr_node *servers,
 	options.flags |= ARES_FLAG_NOCHECKRESP; /* In order not to ignore REFUSED DNS replies */
 	status = ares_init_options(&channel, &options, optmask);
 	if (status != ARES_SUCCESS) {
-		fprintf(stderr, "ares_init_options: %s\n", ares_strerror(status));
+		zlog_error(zc, "ares_init_options: %s\n", ares_strerror(status));
 		goto out_cleanup_cares;
 	}
 
 	if(servers) {
 		status = ares_set_servers(channel, servers);
 		if (status != ARES_SUCCESS) {
-			fprintf(stderr, "ares_set_servers: %s\n", ares_strerror(status));
+			zlog_error(zc, "ares_set_servers: %s\n", ares_strerror(status));
 			goto out_cleanup_cares;
 		}
 	}
@@ -279,7 +283,7 @@ int init_client(int optmask, struct ares_addr_node *servers,
 	dns_cache = hmap_new(hash_str, compare_str);
 	if (!dns_cache) {
 		status = -1;
-		fprintf(stderr, "Cannot initalize dns cache\n");
+		zlog_error(zc, "Cannot initalize dns cache\n");
 		goto out_cleanup_cares;
 	}
 #endif
@@ -291,12 +295,14 @@ int init_client(int optmask, struct ares_addr_node *servers,
 	/* Thread launching */
 	status = pthread_create(client_consumer_thread, NULL, client_consumer_main, NULL);
 	if (status) {
-		perror("Cannot create client consumer thread");
+		zlog_error(zc, "%s: Cannot create client consumer thread",
+			   strerror(errno));
 		goto out_cleanup_queue_mutex;
 	}
 	status = pthread_create(client_producer_thread, NULL, client_producer_main, NULL);
 	if (status) {
-		perror("Cannot create client producer thread");
+		zlog_error(zc, "%s: Cannot create client producer thread",
+			   strerror(errno));
 		goto out_cleanup_queue_mutex;
 	}
 

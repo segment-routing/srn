@@ -38,7 +38,7 @@ static int dns_parse_edns(struct query *query, char **name)
 	nscount = DNS_HEADER_NSCOUNT(aptr);
 	arcount = DNS_HEADER_ARCOUNT(aptr);
 	if (qdcount != 1 || ancount != 0 || nscount != 0 || arcount > 1) {
-		fprintf(stderr, "Unexpected number of records for a DNS query: \
+		zlog_error(zc, "Unexpected number of records for a DNS query: \
 			qdcount = %d - ancount = %d - nscount = %d - arcount = %d\n",
 			qdcount, ancount, nscount, arcount);
 		return -1;
@@ -47,14 +47,14 @@ static int dns_parse_edns(struct query *query, char **name)
 	aptr = aptr + DNS_HEADER_LENGTH;
 	status = ares_expand_name(aptr, (unsigned char *) query->data, query->length, name, &len);
 	if (status != ARES_SUCCESS) {
-		fprintf(stderr, "ERROR Expanding name: %s\n", ares_strerror(status));
+		zlog_error(zc, "ERROR Expanding name: %s\n", ares_strerror(status));
 		return -1;
 	}
 	aptr += len + DNS_FIXED_HEADER_QUERY;
 
 	if (arcount == 0) {
 		/* No special request for the controller */
-		print_debug("A DNS request without information\n");
+		zlog_debug(zc, "A DNS request without information\n");
 		inet_ntop(AF_INET6, &query->addr.sin6_addr, query->app_name_req, SLEN + 1);
 		return 0;
 	}
@@ -62,7 +62,7 @@ static int dns_parse_edns(struct query *query, char **name)
 	/* Examine the EDNS RR */
 	aptr++;
 	if (DNS_RR_TYPE(aptr) != T_OPT) {
-		fprintf(stderr, "The additional record of the request is not an OPT record\n");
+		zlog_error(zc, "The additional record of the request is not an OPT record\n");
 	}
 	// TODO We could use max_udp_size //uint16_t max_udp_size = DNS_RR_CLASS(q);
 	uint16_t edns_length = DNS_RR_LEN(aptr);
@@ -86,14 +86,14 @@ static int dns_parse_edns(struct query *query, char **name)
 			query->latency_req = DNS__32BIT(aptr + i + 4);
 			break;
 		default: /* Unknown values are skipped */
-			print_debug("Unknown option code %d in a T_OPT RR of a DNS query\n", option_code);
+			zlog_debug(zc, "Unknown option code %d in a T_OPT RR of a DNS query\n", option_code);
 			break;
 		}
 	}
 
 	/* Use the IPv6 address if the application name was not given */
 	if (*query->app_name_req == '\0') {
-		print_debug("No application name received -> we use the IPv6 address\n");
+		zlog_debug(zc, "No application name received -> we use the IPv6 address\n");
 		inet_ntop(AF_INET6, &query->addr.sin6_addr, query->app_name_req, SLEN + 1);
 	}
 
@@ -106,12 +106,12 @@ static void server_producer_process(fd_set *read_fds)
 	int length = 0;
 
 	if (FD_ISSET(server_sfd, read_fds)) {
-		print_debug("A server producer thread will read the server socket\n");
+		zlog_debug(zc, "A server producer thread will read the server socket\n");
 
 		/* Read request */
 		query = malloc(QUERY_ALLOC);
 		if (!query) {
-			fprintf(stderr, "Out of memory !\n");
+			zlog_error(zc, "Out of memory !\n");
 			return; /* Drop request */
 		}
 
@@ -121,13 +121,15 @@ static void server_producer_process(fd_set *read_fds)
 				  (struct sockaddr *) &(query->addr),
 				  &(query->addr_len));
 		if (length == -1) {
-			perror("Error reading request"); /* Drop the request */
+			zlog_error(zc, "%s: Error reading request",
+				   strerror(errno)); /* Drop the request */
 			FREE_POINTER(query);
 		} else {
 			query->length = (uint16_t) length;
 #if DEBUG_PERF
 			if (clock_gettime(CLOCK_MONOTONIC, &query->query_rcv_time)) {
-				perror("Cannot get query_rcv time");
+				zlog_error(zc, "%s: Cannot get query_rcv time",
+					   strerror(errno));
 			}
 #endif
 			if (mqueue_append(&queries, (struct llnode *) query)) {
@@ -141,7 +143,7 @@ static void server_producer_process(fd_set *read_fds)
 
 static void *server_producer_main(__attribute__((unused)) void *args)
 {
-	print_debug("A server producer thread has started\n");
+	zlog_debug(zc, "A server producer thread has started\n");
 
 	int err = 0;
 	fd_set read_fds;
@@ -154,14 +156,14 @@ static void *server_producer_main(__attribute__((unused)) void *args)
 		timeout.tv_usec = 0;
 		err = select(server_sfd + 1, &read_fds, NULL, NULL, &timeout);
 		if (err < 0) {
-			perror("Select fail");
+			zlog_error(zc, "%s: Select fail", strerror(errno));
 			goto out;
 		}
 		server_producer_process(&read_fds);
 	}
 
 out:
-	print_debug("A server producer thread has finished\n");
+	zlog_debug(zc, "A server producer thread has finished\n");
 	return NULL;
 }
 
@@ -180,7 +182,7 @@ static struct reply *get_from_dns_cache(char *dns_name)
 	if (stored_reply) {
 		dns_reply = malloc(REPLY_ALLOC);
 		if (!dns_reply) {
-			fprintf(stderr, "Out of memory\n");
+			zlog_error(zc, "Out of memory\n");
 		}
 		memcpy(dns_reply, stored_reply, sizeof(*stored_reply) + stored_reply->data_length);
 	}
@@ -190,7 +192,7 @@ static struct reply *get_from_dns_cache(char *dns_name)
 
 static void *server_consumer_main(__attribute__((unused)) void *_arg)
 {
-	print_debug("A server consumer thread has started\n");
+	zlog_debug(zc, "A server consumer thread has started\n");
 
 	int err = 0;
 	struct query *query = NULL;
@@ -199,24 +201,25 @@ static void *server_consumer_main(__attribute__((unused)) void *_arg)
 
 	server_pipe_fd = open(cfg.client_server_fifo, O_WRONLY);
 	if (server_pipe_fd < 0) {
-		perror("Cannot open pipe");
+		zlog_error(zc, "%s: Cannot open pipe", strerror(errno));
 		return NULL;
 	}
-	print_debug("Pipe opened on server side\n");
+	zlog_debug(zc, "Pipe opened on server side\n");
 
 	mqueue_walk_dequeue(&queries, query, struct query *) {
 
-		print_debug("A server consumer thread dequeues a query\n");
+		zlog_debug(zc, "A server consumer thread dequeues a query\n");
 
 #if DEBUG_PERF
 		if (clock_gettime(CLOCK_MONOTONIC, &query->query_forward_time)) {
-			perror("Cannot get query_forward time");
+			zlog_error(zc, "%s: Cannot get query_forward time",
+				   strerror(errno));
 		}
 #endif
 
 		/* Parse Query and EDNS0 RR */
 		if (dns_parse_edns(query, &name)) {
-			fprintf(stderr, "A query was not parsed correctly and hence dropped\n");
+			zlog_error(zc, "A query was not parsed correctly and hence dropped\n");
 			goto free_query;
 		}
 
@@ -227,11 +230,11 @@ static void *server_consumer_main(__attribute__((unused)) void *_arg)
 #endif
 		if (!reply) {
 			/* Makes a new request to the controller */
-			print_debug("DNS cache miss !\n");
+			zlog_debug(zc, "DNS cache miss !\n");
 
 			args = malloc(sizeof(struct callback_args));
 			if (!args) {
-				fprintf(stderr, "Out of memory !\n");
+				zlog_error(zc, "Out of memory !\n");
 				goto err_free_ares_string;
 			}
 
@@ -247,25 +250,28 @@ static void *server_consumer_main(__attribute__((unused)) void *_arg)
 #endif
 
 			if ((err = pthread_mutex_lock(&channel_mutex))) {
-				perror("Cannot lock the mutex to append");
+				zlog_error(zc, "%s: Cannot lock the mutex to append",
+					   strerror(errno));
 				goto err_free_args;
 			}
 			ares_query(channel, name, C_IN, T_AAAA, client_callback, (void *) args);
 			pthread_mutex_unlock(&channel_mutex);
 			if (write(server_pipe_fd, "1", 1) != 1) {
-				perror("Problem writing to pipe");
+				zlog_error(zc, "%s: Problem writing to pipe",
+					   strerror(errno));
 			}
 #if DEBUG_PERF
 			if (clock_gettime(CLOCK_MONOTONIC, &query->query_after_query_time)) {
-				perror("Cannot get query_after_query time");
+				zlog_error(zc, "%s: Cannot get query_after_query time",
+					   strerror(errno));
 			}
-			printf("Query %d has finished to send the query at %ld.%ld\n", args->qid,
-			       query->query_after_query_time.tv_sec, query->query_after_query_time.tv_nsec);
+			zlog_debuf(zc, "Query %d has finished to send the query at %ld.%ld\n", args->qid,
+				   query->query_after_query_time.tv_sec, query->query_after_query_time.tv_nsec);
 #endif
 
 		} else {
 			/* Bypass the interactions the DNS server and the client producer */
-			print_debug("DNS cache hit !\n");
+			zlog_debug(zc, "DNS cache hit !\n");
 			reply->addr = query->addr;
 			reply->addr_len = query->addr_len;
 			reply->bandwidth_req = query->bandwidth_req;
@@ -277,7 +283,8 @@ static void *server_consumer_main(__attribute__((unused)) void *_arg)
 			reply->query_rcv_time = query->query_rcv_time;
 			reply->query_forward_time = query->query_forward_time;
 			if (clock_gettime(CLOCK_MONOTONIC, &reply->reply_rcv_time)) {
-				perror("Cannot get reply_rcv time (cache hit)");
+				zlog_error(zc, "%s: Cannot get reply_rcv time (cache hit)",
+					   strerror(errno));
 			}
 #endif
 			if (mqueue_append(&replies, (struct llnode *) reply)) {
@@ -300,7 +307,7 @@ err_free_ares_string:
 		goto free_query;
 	}
 
-	print_debug("A server consumer thread has finished\n");
+	zlog_debug(zc, "A server consumer thread has finished\n");
 
 	return NULL;
 }
@@ -314,13 +321,15 @@ int init_server(pthread_t *server_consumer_thread, pthread_t *server_producer_th
 	/* Thread launching */
 	status = pthread_create(server_consumer_thread, NULL, server_consumer_main, NULL);
 	if (status) {
-		perror("Cannot create consumer server thread");
+		zlog_error(zc, "%s: Cannot create consumer server thread",
+			   strerror(errno));
 		goto out_err;
 	}
 
 	status = pthread_create(server_producer_thread, NULL, server_producer_main, NULL);
 	if (status) {
-		perror("Cannot create producer server thread");
+		zlog_error(zc, "%s: Cannot create producer server thread",
+			   strerror(errno));
 		goto out_err;
 	}
 

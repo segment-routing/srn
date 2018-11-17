@@ -22,6 +22,8 @@
 #define READ_OVSDB_SERVER(b, addr, port) sscanf(b, "tcp:[%[^]]]:%hu", addr, port)
 #define BOOL_TO_STR(boolean) ((boolean) ? "true" : "false")
 
+static int (*srdb_err) (const char *, ...);
+
 static void *transaction_worker(void *args);
 static int srdb_read(const char *uuid, json_t *json, struct srdb_table *tbl);
 
@@ -40,7 +42,7 @@ static void wakeup_tr_workers(struct srdb *srdb)
 	for (i = 0; i < srdb->conf->ntransacts; i++) {
 		if (write(srdb->tr_workers[i].event_fd, &event, sizeof(event))
 		    != sizeof(event))
-			pr_err("failed to warn the transaction workers.");
+			srdb_err("failed to warn the transaction workers.");
 	}
 }
 
@@ -66,13 +68,13 @@ static int parse_ovsdb_monitor_reply(json_t *monitor_reply,
 
 	if (!json_is_null(json_object_get(monitor_reply, "error"))) {
 		char * err = json_dumps(json_object_get(monitor_reply, "error"), 0);
-		fprintf(stderr, "There is a non-null error message in the monitor reply: %s\n", err);
+		srdb_err("There is a non-null error message in the monitor reply: %s\n", err);
 		free(err);
 		return -1;
 	}
 	json_t *updates = json_object_get(monitor_reply, "result");
 	if (!updates) {
-		fprintf(stderr, "Monitor reply parsing issue: No result found\n");
+		srdb_err("Monitor reply parsing issue: No result found\n");
 		return -1;
 	}
 	json_t *table_updates = json_object_get(updates, tbl->name);
@@ -90,24 +92,24 @@ static int parse_ovsdb_update(json_t *update, struct srdb_table *tbl)
 
 	params = json_object_get(update, "params");
 	if (!params) {
-		pr_err("no params object in json.");
+		srdb_err("no params object in json.");
 		return -1;
 	}
 
 	if (json_array_size(params) < 2) {
-		pr_err("params object has invalid array size.");
+		srdb_err("params object has invalid array size.");
 		return -1;
 	}
 
 	updates = json_array_get(params, 1);
 	if (!updates) {
-		pr_err("cannot fetch updates from params array.");
+		srdb_err("cannot fetch updates from params array.");
 		return -1;
 	}
 
 	table_updates = json_object_get(updates, tbl->name);
 	if (!table_updates) {
-		pr_err("cannot fetch updates for table %s.", tbl->name);
+		srdb_err("cannot fetch updates for table %s.", tbl->name);
 		return -1;
 	}
 
@@ -149,14 +151,13 @@ static int ovsdb_socket(const struct ovsdb_config *conf)
 	while ((err = connect(fd, (struct sockaddr *) &addr, sizeof(addr)))
 	       && errno == ENETUNREACH);
 	if (err < 0) {
-		fprintf(stderr, "error %d\n", errno);
-		perror("connect to ovsdb server");
+		srdb_err("%s: connect to ovsdb server", strerror(errno));
 		goto close_fd;
 	}
 
 	int i = 1;
 	if (setsockopt(fd, SOL_TCP, TCP_NODELAY, &i, sizeof(i)) < 0) {
-		perror("setsockopt");
+		srdb_err("%s: setsockopt", strerror(errno));
 		goto close_fd;
 	}
 
@@ -209,7 +210,7 @@ static void *ovsdb_monitor(void *_args)
 	ret = send(fd, buf, len, 0);
 	if (ret < 0) {
 		desc->mon_status = MON_STATUS_REQFAIL;
-		pr_err("failed to send monitor request (%s).", strerror(errno));
+		srdb_err("failed to send monitor request (%s).", strerror(errno));
 		goto out_close;
 	}
 
@@ -223,7 +224,7 @@ static void *ovsdb_monitor(void *_args)
 
 		ready = poll(&pfd, 1, 1);
 		if (ready < 0) {
-			pr_err("poll (%s).", strerror(errno));
+			srdb_err("poll (%s).", strerror(errno));
 			desc->mon_status = MON_STATUS_READERR;
 			goto out_close;
 		}
@@ -237,21 +238,21 @@ static void *ovsdb_monitor(void *_args)
 		}
 
 		if (pfd.revents & POLLERR) {
-			pr_err("poll_revents (%s).", strerror(errno));
+			srdb_err("poll_revents (%s).", strerror(errno));
 			desc->mon_status = MON_STATUS_READERR;
 			goto out_close;
 		}
 
 		ret = recv(fd, buf + len, cur_buflen - len, 0);
 		if (ret < 0) {
-			pr_err("failed to read from monitor socket (%s).",
+			srdb_err("failed to read from monitor socket (%s).",
 				strerror(errno));
 			desc->mon_status = MON_STATUS_READERR;
 			goto out_close;
 		}
 
 		if (!ret) {
-			pr_err("ovsdb server closed the connection.");
+			srdb_err("ovsdb server closed the connection.");
 			desc->mon_status = MON_STATUS_CONNCLOSED;
 			goto out_close;
 		}
@@ -268,8 +269,8 @@ static void *ovsdb_monitor(void *_args)
 
 			if (is_echo(json)) {
 				if (echo_reply(fd) < 0) {
-					pr_err("failed to send echo reply (%s)",
-						strerror(errno));
+					srdb_err("failed to send echo reply (%s)",
+						 strerror(errno));
 				}
 			} else {
 				if (json_is_integer(json_object_get(json, "id")))
@@ -295,16 +296,16 @@ static void *ovsdb_monitor(void *_args)
 
 		/* abort if buffer is full and no processing was possible */
 		if (len == JSON_BUFLEN_MONMAX) {
-			pr_err("max recvq exceeded.");
+			srdb_err("max recvq exceeded.");
 			desc->mon_status = MON_STATUS_NOMEM;
 			goto out_close;
 		} else if (len == cur_buflen) {
-			pr_err("cur recvq exceeded, increasing to %lu.",
+			srdb_err("cur recvq exceeded, increasing to %lu.",
 				cur_buflen * 2);
 			cur_buflen *= 2;
 			buf = realloc(buf, cur_buflen);
 			if (!buf) {
-				pr_err("failed to increase json buffer.");
+				srdb_err("failed to increase json buffer.");
 				desc->mon_status = MON_STATUS_NOMEM;
 				goto out_close;
 			}
@@ -339,7 +340,7 @@ static struct transaction *ovsdb_delete(struct srdb *srdb, const char *table,
 
 	json_delete = json_loads(json_buf, 0, NULL);
 	if (!json_delete) {
-		pr_err("failed to build json object.");
+		srdb_err("failed to build json object.");
 		free(json_buf);
 		return NULL;
 	}
@@ -348,7 +349,7 @@ static struct transaction *ovsdb_delete(struct srdb *srdb, const char *table,
 
 	tr = create_transaction(json_delete);
 	if (!tr) {
-		pr_err("failed to build transaction object.");
+		srdb_err("failed to build transaction object.");
 		json_decref(json_delete);
 		return NULL;
 	}
@@ -372,7 +373,7 @@ static struct transaction *ovsdb_update(struct srdb *srdb, const char *table,
 
 	str_fields = json_dumps(fields, 0);
 	if (!str_fields) {
-		pr_err("failed to dump json fields.");
+		srdb_err("failed to dump json fields.");
 		free(json_buf);
 		return NULL;
 	}
@@ -383,7 +384,7 @@ static struct transaction *ovsdb_update(struct srdb *srdb, const char *table,
 
 	json_update = json_loads(json_buf, 0, NULL);
 	if (!json_update) {
-		pr_err("failed to build json object.");
+		srdb_err("failed to build json object.");
 		free(json_buf);
 		return NULL;
 	}
@@ -392,7 +393,7 @@ static struct transaction *ovsdb_update(struct srdb *srdb, const char *table,
 
 	tr = create_transaction(json_update);
 	if (!tr) {
-		pr_err("failed to build transaction object.");
+		srdb_err("failed to build transaction object.");
 		json_decref(json_update);
 		return NULL;
 	}
@@ -416,7 +417,7 @@ static struct transaction *ovsdb_insert(struct srdb *srdb, const char *table,
 
 	str_fields = json_dumps(fields, 0);
 	if (!str_fields) {
-		pr_err("failed to dump json fields.");
+		srdb_err("failed to dump json fields.");
 		free(json_buf);
 		return NULL;
 	}
@@ -427,7 +428,7 @@ static struct transaction *ovsdb_insert(struct srdb *srdb, const char *table,
 
 	json_insert = json_loads(json_buf, 0, NULL);
 	if (!json_insert) {
-		pr_err("failed to build json object.");
+		srdb_err("failed to build json object.");
 		free(json_buf);
 		return NULL;
 	}
@@ -436,7 +437,7 @@ static struct transaction *ovsdb_insert(struct srdb *srdb, const char *table,
 
 	tr = create_transaction(json_insert);
 	if (!tr) {
-		pr_err("failed to build transaction object.");
+		srdb_err("failed to build transaction object.");
 		json_decref(json_insert);
 		return NULL;
 	}
@@ -491,8 +492,8 @@ static unsigned int fill_srdb_entry(struct srdb_descriptor *desc,
 		switch (desc[i].type) {
 		case SRDB_STR:
 			if (!json_is_string(column_value)) {
-				pr_err("type str mismatch for field name `%s'.",
-					desc[i].name);
+				srdb_err("type str mismatch for field name `%s'.",
+					 desc[i].name);
 			} else {
 				strncpy((char *)data,
 					json_string_value(column_value),
@@ -501,16 +502,16 @@ static unsigned int fill_srdb_entry(struct srdb_descriptor *desc,
 			break;
 		case SRDB_INT:
 			if (!json_is_integer(column_value)) {
-				pr_err("type int mismatch for field name `%s'.",
-					desc[i].name);
+				srdb_err("type int mismatch for field name `%s'.",
+					 desc[i].name);
 			} else {
 				*(int *)data = json_integer_value(column_value);
 			}
 			break;
 		case SRDB_VARSTR:
 			if (!json_is_string(column_value)) {
-				pr_err("type str mismatch for field name `%s'.",
-					desc[i].name);
+				srdb_err("type str mismatch for field name `%s'.",
+					 desc[i].name);
 			} else {
 				*(char **)data = strndup(json_string_value(column_value),
 							 desc[i].maxlen);
@@ -1101,7 +1102,7 @@ static int srdb_read(const char *uuid, json_t *json, struct srdb_table *tbl)
 		op = OP_DELETE;
 
 	if (!op) {
-		pr_err("unknown row data configuration.");
+		srdb_err("unknown row data configuration.");
 		return -1;
 	}
 
@@ -1419,7 +1420,11 @@ out_error:
 	goto out_free;
 }
 
-struct srdb *srdb_new(struct ovsdb_config *conf)
+/**
+ * print - a function used to communicate errors as 'printf' would.
+ * This arguments allows to use any logger.
+ */
+struct srdb *srdb_new(struct ovsdb_config *conf, int (*print) (const char *, ...))
 {
 	struct srdb *srdb;
 	int i;
@@ -1428,6 +1433,8 @@ struct srdb *srdb_new(struct ovsdb_config *conf)
 	srdb = malloc(sizeof(*srdb));
 	if (!srdb)
 		return NULL;
+
+	srdb_err = print ? print : printf;
 
 	srdb->tables = srdb_get_tables();
 	if (!srdb->tables)
@@ -1562,13 +1569,13 @@ static int send_transaction(int fd, json_t *json, unsigned int id)
 
 	ret = send(fd, json_buf, len, 0);
 	if (ret < 0) {
-		pr_err("failed to send transaction (%s).", strerror(errno));
+		srdb_err("failed to send transaction (%s).", strerror(errno));
 		goto out_err;
 	}
 
 	if (ret != len) {
-		pr_err("partial send (%ld < %ld) for transaction id %u.", ret,
-		       len, id);
+		srdb_err("partial send (%ld < %ld) for transaction id %u.", ret,
+			 len, id);
 		goto out_err;
 	}
 
@@ -1625,8 +1632,8 @@ static json_t *fetch_transaction_result(int fd)
 	/* ping */
 	if (is_echo(json)) {
 		if (echo_reply(fd) < 0) {
-			pr_err("failed to send echo reply (%s).",
-				strerror(errno));
+			srdb_err("failed to send echo reply (%s).",
+				 strerror(errno));
 		}
 
 		json_decref(json);
@@ -1667,20 +1674,20 @@ static void *transaction_worker(void *args)
 	for (;;) {
 		ready = poll(pfd, 2, -1);
 		if (ready < 0) {
-			perror("poll");
+			srdb_err("%s: poll", strerror(errno));
 			break;
 		}
 
 		if (ready && (pfd[0].revents & POLLERR
 			      || pfd[1].revents & POLLERR)) {
-			perror("poll_revents");
+			srdb_err("%s: poll_revents", strerror(errno));
 			break;
 		}
 
 		if (ready && pfd[0].revents & (POLLIN | POLLPRI)) {
 			json = fetch_transaction_result(fd);
 			if (json && !pending) {
-				pr_err("received unknown transaction result.");
+				srdb_err("received unknown transaction result.");
 				json_decref(json);
 			} else if (json) {
 				sbuf_push(tr->result, json);
@@ -1690,7 +1697,7 @@ static void *transaction_worker(void *args)
 
 		if (ready && pfd[1].revents & POLLIN
 		    && read(event_fd, &event, sizeof(event)) != sizeof(event)) {
-			pr_err("cannot read event fd");
+			srdb_err("cannot read event fd");
 			break;
 		}
 
@@ -1703,8 +1710,8 @@ static void *transaction_worker(void *args)
 				break;
 
 			if (send_transaction(fd, tr->json, ++transact_id) < 0) {
-				pr_err("failed to send transaction id %u\n",
-				       transact_id);
+				srdb_err("failed to send transaction id %u\n",
+					 transact_id);
 				break;
 			}
 

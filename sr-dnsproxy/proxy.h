@@ -7,6 +7,8 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <signal.h>
+#include <errno.h>
+#include <zlog.h>
 
 #include <ares.h>
 
@@ -25,16 +27,8 @@
 	x = -1;\
 }
 
-#define DEBUG 0
 #define DEBUG_PERF 0
 #define USE_DNS_CACHE 0
-
-#if DEBUG
-	#define print_debug(fmt, args...)					\
-                fprintf(stderr, __FILE__ ": %s: " fmt, __func__ , ##args);
-#else
-	#define print_debug(fmt, args...)
-#endif
 
 #define TIMEOUT_LOOP 1 /* (sec) */
 
@@ -104,6 +98,7 @@ struct config {
 	char proxy_listen_port[SLEN + 1];
 	char proxy_listen_addr[SLEN + 1];
 	char dns_server_port[SLEN + 1];
+	char zlog_conf_file[SLEN + 1];
 };
 
 extern volatile sig_atomic_t stop;
@@ -117,6 +112,7 @@ extern ares_channel channel;
 extern int server_sfd;
 extern struct hashmap *dns_cache;
 extern struct srdb *srdb;
+extern zlog_category_t *zc;
 
 extern struct queue_thread transact_input;
 extern struct queue_thread transact_output;

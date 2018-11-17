@@ -7,6 +7,7 @@
 #include <sys/socket.h>
 #include <netdb.h>
 #include <errno.h>
+#include <zlog.h>
 
 #include <ares.h>
 #include <ares_dns.h>
@@ -21,13 +22,15 @@ pthread_t server_consumer_thread;
 pthread_t client_producer_thread;
 pthread_t client_consumer_thread;
 
+zlog_category_t *zc;
+
 volatile sig_atomic_t stop;
 
 void inthand(int signum)
 {
 	if (signum == SIGINT) {
 		stop = 1;
-		print_debug("SIGINT received\n");
+		zlog_debug(zc, "SIGINT received\n");
 		/* Unblocking threads waiting for these queues */
 		mqueue_close(&queries, 1, 1);
 		mqueue_close(&replies, 1, 1);
@@ -40,9 +43,9 @@ void inthand(int signum)
 		pthread_kill(client_consumer_thread, SIGUSR1);
 
 	} else if (signum == SIGUSR1) {
-		print_debug("Thread is stopped gracefully\n");
+		zlog_debug(zc, "Thread is stopped gracefully\n");
 	} else {
-		fprintf(stderr, "Does not understand signal number %d\n", signum);
+		zlog_error(zc, "Does not understand signal number %d\n", signum);
 	}
 }
 
@@ -70,8 +73,21 @@ int main(int argc, char *argv[])
 		goto out_err;
 	}
 
+	/* Logs setup */
+	int rc = zlog_init(*cfg.zlog_conf_file ? cfg.zlog_conf_file : NULL);
+	if (rc) {
+		fprintf(stderr, "Initiating logs failed\n");
+		goto out_err_free_args;
+	}
+	zc = zlog_get_category("sr-dnsproxy");
+	if (!zc) {
+		fprintf(stderr, "Initiating main log category failed\n");
+		goto out_err_logs;
+	}
+
 	if (dryrun) {
-		printf("Configuration file is correct");
+		zlog_info(zc, "Configuration file is correct");
+		zlog_fini();
 		destroy_addr_list(servers);
 		return 0;
 	}
@@ -81,8 +97,8 @@ int main(int argc, char *argv[])
 	sigaddset(&set, SIGINT);
 	err = pthread_sigmask(SIG_BLOCK, &set, NULL);
 	if (err) {
-		perror("Cannot block SIGINT");
-		goto out_err_free_args;
+		zlog_error(zc, "%s: Cannot block SIGINT", strerror(errno));
+		goto out_err_logs;
 	}
 
 	/* Allow threads to be interrupted by SIGUSR1 */
@@ -90,26 +106,27 @@ int main(int argc, char *argv[])
 	sa.sa_flags = 0;
 	sigemptyset(&sa.sa_mask);
 	if (sigaction(SIGUSR1, &sa, NULL) == -1) {
-		perror("Cannot change handling of SIGUSR1 signal");
-		goto out_err;
+		zlog_error(zc, "%s: Cannot change handling of SIGUSR1 signal",
+			   strerror(errno));
+		goto out_err_logs;
 	}
 
 	/* Setup of the controller monitoring */
 	err = init_monitor();
 	if (err) {
-		goto out_err_free_args;
+		goto out_err_logs;
 	}
 
 	/* Setup of the client threads */
 	err = init_client(optmask, servers, &client_consumer_thread, &client_producer_thread);
 	if (err) {
-		goto out_err_free_args;
+		goto out_err_logs;
 	}
 
 	/* Setup of the server threads */
 	err = init_server(&server_consumer_thread, &server_producer_thread);
 	if (err) {
-		goto out_err_free_args;
+		goto out_err_logs;
 	}
 
 	/* Get rid of memory allocated for arguments */
@@ -121,18 +138,19 @@ int main(int argc, char *argv[])
 	sigaddset(&set, SIGINT);
 	err = pthread_sigmask(SIG_UNBLOCK, &set, NULL);
 	if (err) {
-		perror("Cannot unblock SIGINT");
-		goto out_err;
+		zlog_error(zc, "%s: Cannot unblock SIGINT", strerror(errno));
+		goto out_err_logs;
 	}
 
 	/* Gracefully kill the program when SIGINT is received */
 	sa.sa_flags = SA_RESTART;
 	if (sigaction(SIGINT, &sa, NULL) == -1) {
-		perror("Cannot change handling of SIGINT signal");
-		goto out_err;
+		zlog_error(zc, "%s: Cannot change handling of SIGINT signal",
+			   strerror(errno));
+		goto out_err_logs;
 	}
 
-	print_debug("Everything was launched\n");
+	zlog_debug(zc, "Everything was launched\n");
 
 	/* Wait fo threads to finish */
 	pthread_join(server_consumer_thread, NULL);
@@ -140,16 +158,20 @@ int main(int argc, char *argv[])
 	pthread_join(client_consumer_thread, NULL);
 	pthread_join(client_producer_thread, NULL);
 
-	print_debug("All the threads returned\n");
+	zlog_debug(zc, "All the threads returned\n");
 
 	close_server();
 	close_client();
 	close_monitor();
+	zlog_fini();
 
 out:
 	exit(err);
+out_err_logs:
+	zlog_fini();
 out_err_free_args:
-	destroy_addr_list(servers);
+	if (servers)
+		destroy_addr_list(servers);
 	servers = NULL;
 out_err:
 	err = EXIT_FAILURE;

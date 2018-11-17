@@ -5,6 +5,7 @@
 #include <arpa/inet.h>
 #include <time.h>
 #include <assert.h>
+#include <zlog.h>
 
 #include "llist.h"
 #include "misc.h"
@@ -50,6 +51,7 @@ struct config {
 	unsigned int req_buffer_size;
 	struct provider *providers;
 	unsigned int nb_providers;
+	char zlog_conf_file[SLEN + 1];
 
 	/* internal data */
 	struct srdb *srdb;
@@ -61,6 +63,16 @@ struct config {
 };
 
 static struct config _cfg;
+static zlog_category_t *zc;
+
+static int srdb_print(const char *fmt, ...)
+{
+	va_list args;
+	va_start(args, fmt);
+	vzlog_error(zc, fmt, args);
+	va_end(args);
+	return 0;
+}
 
 static void net_state_read_lock(struct netstate *ns)
 {
@@ -88,6 +100,7 @@ static void config_set_defaults(struct config *cfg)
 	cfg->req_buffer_size = 16;
 	cfg->providers = &internal_provider;
 	cfg->nb_providers = 1;
+	*cfg->zlog_conf_file = '\0';
 }
 
 static int init_netstate(struct netstate *ns)
@@ -595,7 +608,7 @@ static void process_request(struct srdb_entry *entry)
 
 	if (rstat == REQ_STATUS_DENIED) {
 		if (set_flowreq_status(req, rstat) < 0)
-			pr_err("failed to update row uuid %s to status %d\n",
+			zlog_error(zc, "failed to update row uuid %s to status %d\n",
 			       req->_row, rstat);
 		return;
 	}
@@ -654,7 +667,7 @@ static void process_request(struct srdb_entry *entry)
 	 */
 	if (select_providers(fl) <= 0) {
 		if (set_flowreq_status(req, REQ_STATUS_ERROR) < 0)
-			pr_err("failed to update row uuid %s to status %d\n",
+			zlog_error(zc, "failed to update row uuid %s to status %d\n",
 			       req->_row, REQ_STATUS_ERROR);
 		goto free_flow;
 	}
@@ -757,7 +770,7 @@ static int nodestate_read(struct srdb_entry *entry)
 
 	rt = hmap_get(_cfg.ns.routers, node_entry->name);
 	if (rt) {
-		pr_err("duplicate router entry `%s'.", node_entry->name);
+		zlog_error(zc, "duplicate router entry `%s'.", node_entry->name);
 		goto out_err;
 	}
 
@@ -831,7 +844,7 @@ static int linkstate_read(struct srdb_entry *entry)
 	rt1 = hmap_get(_cfg.ns.routers, link_entry->name1);
 	rt2 = hmap_get(_cfg.ns.routers, link_entry->name2);
 	if (!rt1 || !rt2) {
-		pr_err("unknown router entry for link (`%s', `%s').",
+		zlog_error(zc, "unknown router entry for link (`%s', `%s').",
 		       link_entry->name1, link_entry->name2);
 
 		goto out_free;
@@ -856,7 +869,7 @@ static int linkstate_read(struct srdb_entry *entry)
 	graph_write_lock(_cfg.ns.graph_staging);
 
 	if (graph_get_edge_data(_cfg.ns.graph_staging, link)) {
-		pr_err("duplicate link entry %s -> %s.", link_entry->addr1,
+		zlog_error(zc, "duplicate link entry %s -> %s.", link_entry->addr1,
 		       link_entry->addr2);
 
 		graph_unlock(_cfg.ns.graph_staging);
@@ -864,7 +877,7 @@ static int linkstate_read(struct srdb_entry *entry)
 	}
 
 	if (graph_get_edge_data(_cfg.ns.graph_staging, link2)) {
-		pr_err("duplicate link entry %s -> %s.", link_entry->addr2,
+		zlog_error(zc, "duplicate link entry %s -> %s.", link_entry->addr2,
 		       link_entry->addr1);
 
 		graph_unlock(_cfg.ns.graph_staging);
@@ -964,7 +977,7 @@ static int linkstate_update(struct srdb_entry *entry,
 	graph_unlock(_cfg.ns.graph_staging);
 
 	if (fmask)
-		pr_err("non-empty field mask after update (%u).", fmask);
+		zlog_error(zc, "non-empty field mask after update (%u).", fmask);
 
 out:
 	return ret;
@@ -1026,6 +1039,8 @@ static int load_config(const char *fname, struct config *cfg)
 			continue;
 		if (READ_STRING(buf, ovsdb_database, &cfg->ovsdb_conf))
 			continue;
+		if (READ_STRING(buf, zlog_conf_file, cfg))
+			continue;
 		if (READ_INT(buf, ntransacts, &cfg->ovsdb_conf)) {
 			if (!cfg->ovsdb_conf.ntransacts)
 				cfg->ovsdb_conf.ntransacts = 1;
@@ -1068,7 +1083,7 @@ static int load_config(const char *fname, struct config *cfg)
 			}
 			continue;
 		}
-		pr_err("parse error: unknown line `%s'.", buf);
+		fprintf(stderr, "parse error: unknown line `%s'.", buf);
 		ret = -1;
 		break;
 	}
@@ -1211,7 +1226,7 @@ static void recompute_flow(struct flow *fl)
 	tr = srdb_update_commit(utr);
 
 	if (srdb_update_result(tr, NULL) < 0)
-		pr_err("failed to commit recomputed segments.");
+		zlog_error(zc, "failed to commit recomputed segments.");
 
 out_unlock:
 	net_state_unlock(&_cfg.ns);
@@ -1265,7 +1280,7 @@ static void recompute_flows(void)
 	hmap_unlock(_cfg.flows);
 	net_state_unlock(&_cfg.ns);
 
-	// printf("%lu affected flows.\n", llist_node_size(nhead));
+	zlog_debug(zc, "%lu affected flows.\n", llist_node_size(nhead));
 
 	llist_node_foreach(nhead, iter) {
 		fl = iter->data;
@@ -1312,7 +1327,7 @@ static void *thread_netmon(void *arg)
 		if (getmsdiff(&now, &_cfg.ns.gs_mod) > GSYNC_SOFT_TIMEOUT ||
 		    getmsdiff(&now, &_cfg.ns.gs_dirty) > GSYNC_HARD_TIMEOUT) {
 			if (netstate_graph_sync(ns) < 0) {
-				pr_err("failed to synchronize staging network "
+				zlog_error(zc, "failed to synchronize staging network "
 					"graph.");
 				goto next;
 			}
@@ -1335,14 +1350,14 @@ static int launch_srdb(void)
 
 	if (srdb_monitor(_cfg.srdb, "NodeState", mon_flags, nodestate_read,
 			 NULL, NULL, false, true) < 0) {
-		pr_err("failed to start NodeState monitor.");
+		zlog_error(zc, "failed to start NodeState monitor.");
 		return -1;
 	}
 
 
 	if (srdb_monitor(_cfg.srdb, "LinkState", mon_flags, linkstate_read,
 			 linkstate_update, linkstate_delete, false, true) < 0) {
-		pr_err("failed to start LinkState monitor.");
+		zlog_error(zc, "failed to start LinkState monitor.");
 		return -1;
 	}
 
@@ -1350,7 +1365,7 @@ static int launch_srdb(void)
 
 	if (srdb_monitor(_cfg.srdb, "FlowReq", mon_flags, flowreq_read, NULL,
 			 NULL, true, true) < 0) {
-		pr_err("failed to start FlowReq monitor.");
+		zlog_error(zc, "failed to start FlowReq monitor.");
 		return -1;
 	}
 
@@ -1400,52 +1415,66 @@ int main(int argc, char **argv)
 	config_set_defaults(&_cfg);
 
 	if (load_config(conf, &_cfg) < 0) {
-		pr_err("failed to load configuration file.");
+		fprintf(stderr, "failed to load configuration file.");
 		return -1;
 	}
 
 	_cfg.rules = load_rules(_cfg.rules_file, &_cfg.defrule);
 	if (!_cfg.rules) {
-		pr_err("failed to load rules file.");
+		fprintf(stderr, "failed to load rules file.");
 		ret = -1;
 		goto free_conf;
 	}
 
-	if (dryrun) {
-		printf("Configuration and rules files are correct\n");
-		goto free_rules;
+	/* Logs setup */
+	int rc = zlog_init(*_cfg.zlog_conf_file ? _cfg.zlog_conf_file : NULL);
+	if (rc) {
+		fprintf(stderr, "Initiating logs failed\n");
+		ret = -1;
+ 		goto free_rules;
+ 	}
+	zc = zlog_get_category("sr-ctrl");
+	if (!zc) {
+		fprintf(stderr, "Initiating main log category failed\n");
+		ret = -1;
+		goto free_logs;
 	}
 
-	_cfg.srdb = srdb_new(&_cfg.ovsdb_conf);
+	if (dryrun) {
+		zlog_info(zc, "Configuration and rules files are correct\n");
+		goto free_logs;
+	}
+
+	_cfg.srdb = srdb_new(&_cfg.ovsdb_conf, srdb_print);
 	if (!_cfg.srdb) {
-		pr_err("failed to initialize SRDB.");
+		zlog_error(zc, "failed to initialize SRDB.");
 		ret = -1;
-		goto free_rules;
+		goto free_logs;
 	}
 
 	if (init_netstate(&_cfg.ns) < 0) {
-		pr_err("failed to initialize network state.");
+		zlog_error(zc, "failed to initialize network state.");
 		ret = -1;
 		goto free_srdb;
 	}
 
 	_cfg.flows = hmap_new(hash_in6, compare_in6);
 	if (!_cfg.flows) {
-		pr_err("failed to initialize flow map.\n");
+		zlog_error(zc, "failed to initialize flow map.\n");
 		ret = -1;
 		goto free_srdb;
 	}
 
 	_cfg.req_buffer = sbuf_new(_cfg.req_buffer_size);
 	if (!_cfg.req_buffer) {
-		pr_err("failed to initialize request queue.\n");
+		zlog_error(zc, "failed to initialize request queue.\n");
 		ret = -1;
 		goto free_flows;
 	}
 
 	workers = malloc(_cfg.worker_threads * sizeof(pthread_t));
 	if (!workers) {
-		pr_err("failed to allocate space for worker threads.\n");
+		zlog_error(zc, "failed to allocate space for worker threads.\n");
 		ret = -1;
 		goto free_req_buffer;
 	}
@@ -1454,7 +1483,7 @@ int main(int argc, char **argv)
 		pthread_create(&workers[i], NULL, thread_worker, NULL);
 
 	if (launch_srdb() < 0) {
-		pr_err("failed to start srdb monitors.");
+		zlog_error(zc, "failed to start srdb monitors.");
 		goto free_workers;
 	}
 
@@ -1483,6 +1512,8 @@ free_flows:
 	hmap_destroy(_cfg.flows);
 free_srdb:
 	srdb_destroy(_cfg.srdb);
+free_logs:
+	zlog_fini();
 free_rules:
 	destroy_rules(_cfg.rules, _cfg.defrule);
 free_conf:

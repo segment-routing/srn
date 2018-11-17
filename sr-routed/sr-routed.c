@@ -7,6 +7,7 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <pthread.h>
+#include <zlog.h>
 
 #include <jansson.h>
 
@@ -28,6 +29,8 @@ struct config {
 	struct hashmap *routes;
 	__u32 localsid;
 	struct rtnl_handle rth;
+
+	char zlog_conf_file[SLEN + 1];
 };
 
 struct route {
@@ -36,15 +39,25 @@ struct route {
 };
 
 static struct config _cfg;
+static zlog_category_t *zc;
 
 #define BUFLEN 1024
+
+static int srdb_print(const char *fmt, ...)
+{
+	va_list args;
+	va_start(args, fmt);
+	vzlog_error(zc, fmt, args);
+	va_end(args);
+	return 0;
+}
 
 static int exec_route_add_encap(const char *route, const char *segments)
 {
 	int ret = add_route(&_cfg.rth, route, _cfg.ingress_iface, _cfg.localsid,
 			    segments);
 	if (ret) {
-		fprintf(stderr, "Cannot insert route %s mapping to %s\n", route,
+		zlog_error(zc, "Cannot insert route %s mapping to %s\n", route,
 			segments);
 	}
 	return ret;
@@ -55,7 +68,7 @@ static int exec_route_change_encap(const char *route, const char *segments)
 	int ret = change_route(&_cfg.rth, route, _cfg.ingress_iface,
 			       _cfg.localsid, segments);
 	if (ret) {
-		fprintf(stderr, "Cannot change route %s mapping to %s\n", route,
+		zlog_error(zc, "Cannot change route %s mapping to %s\n", route,
 			segments);
 	}
 	return ret;
@@ -106,12 +119,12 @@ static int read_flowstate(struct srdb_entry *entry)
 
 	json_t *segment_lists = json_loads(flow_entry->segments, 0, NULL);
 	if (!segment_lists) {
-		fprintf(stderr, "Invalid json format for segment lists: %s\n", flow_entry->segments);
+		zlog_error(zc, "Invalid json format for segment lists: %s\n", flow_entry->segments);
 		return 0;
 	}
 	json_t *bsids = json_loads(flow_entry->bsid, 0, NULL);
 	if (!bsids) {
-		fprintf(stderr, "Invalid json format for bsids: %s\n", flow_entry->bsid);
+		zlog_error(zc, "Invalid json format for bsids: %s\n", flow_entry->bsid);
 		return 0;
 	}
 
@@ -218,7 +231,8 @@ int load_args(int argc, char **argv, const char **conf, int *dryrun)
 				*dryrun = 1;
 				break;
 			case '?':
-				fprintf(stderr, "Unknown option `-%c'.\n", optopt);
+				fprintf(stderr, "Unknown option `-%c'.\n",
+					optopt);
 				return -1;
 			default:
 				return -1;
@@ -240,6 +254,7 @@ static void config_set_defaults(struct config *cfg)
 	strcpy(cfg->ingress_iface, "eth0"); // Non-loopback device
 	cfg->ovsdb_conf.ntransacts = 1;
 	cfg->localsid = RT_TABLE_MAIN;
+	*cfg->zlog_conf_file = '\0';
 }
 
 static int load_config(const char *fname, struct config *cfg)
@@ -271,7 +286,9 @@ static int load_config(const char *fname, struct config *cfg)
 			continue;
 		if (READ_STRING(buf, ingress_iface, cfg))
 			continue;
-		pr_err("parse error: unknown line `%s'.", buf);
+		if (READ_STRING(buf, zlog_conf_file, cfg))
+			continue;
+		fprintf(stderr, "parse error: unknown line `%s'.", buf);
 		ret = -1;
 		break;
 	}
@@ -284,56 +301,77 @@ int main(int argc, char **argv)
 {
 	const char *conf = DEFAULT_CONFIG;
 	int dryrun = 0;
+	int rc;
+	int ret;
 
 	if (load_args(argc, argv, &conf, &dryrun)) {
 		fprintf(stderr, "Usage: %s [-d] [configfile]\n", argv[0]);
-		return -1;
+		ret = -1;
+		goto out;
 	}
 
 	config_set_defaults(&_cfg);
 	if (load_config(conf, &_cfg) < 0) {
-		pr_err("failed to load configuration file.");
-		return -1;
+		fprintf(stderr, "failed to load configuration file.");
+		ret = -1;
+		goto out;
+	}
+
+	rc = zlog_init(*_cfg.zlog_conf_file ? _cfg.zlog_conf_file : NULL);
+	if (rc) {
+		fprintf(stderr, "Initiating logs failed\n");
+		ret = -1;
+		goto out;
+	}
+	zc = zlog_get_category("sr-routed");
+	if (!zc) {
+		fprintf(stderr, "Initiating main log category failed\n");
+		ret = -1;
+		goto out_logs;
 	}
 
 	if (dryrun) {
-		printf("Configuration file is correct");
-		return 0;
+		zlog_info(zc, "Configuration file is correct");
+		ret = 0;
+		goto out_logs;
 	}
 
 	_cfg.routes = hmap_new(hash_in6, compare_in6);
 	if (!_cfg.routes) {
-		pr_err("failed to initialize route map.");
-		return -1;
+		zlog_error(zc, "failed to initialize route map.");
+		ret = -1;
+		goto out_logs;
 	}
 
-	_cfg.srdb = srdb_new(&_cfg.ovsdb_conf);
+	_cfg.srdb = srdb_new(&_cfg.ovsdb_conf, srdb_print);
 	if (!_cfg.srdb) {
-		pr_err("failed to initialize SRDB.");
-		return -1;
+		zlog_error(zc, "failed to initialize SRDB.");
+		ret = -1;
+		goto out_logs;
 	}
 
 	if (rtnl_open(&_cfg.rth, 0) < 0) {
-		pr_err("Cannot open netlink socket.");
-		srdb_destroy(_cfg.srdb);
-		return -1;
+		zlog_error(zc, "Cannot open netlink socket.");
+		ret = -1;
+		goto out_srdb;
 	}
 
 	if (srdb_monitor(_cfg.srdb, "FlowState", MON_INSERT | MON_UPDATE,
 	                 read_flowstate, update_flowstate, NULL, false, true)
 	    != MON_STATUS_RUNNING) {
-		pr_err("failed to start FlowState monitor.");
-		rtnl_close(&_cfg.rth);
-		srdb_destroy(_cfg.srdb);
-		return -1;
+		zlog_error(zc, "failed to start FlowState monitor.");
+		ret = -1;
+		goto out_rtnl;
 	}
 
 	srdb_monitor_join_all(_cfg.srdb);
-
+out_rtnl:
 	rtnl_close(&_cfg.rth);
-
+out_srdb:
 	srdb_destroy(_cfg.srdb);
-
-	return 0;
+out_logs:
+	zlog_fini();
+out:
+	return ret;
 }
 
