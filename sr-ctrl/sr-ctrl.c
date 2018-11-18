@@ -327,7 +327,7 @@ static int commit_path(struct flow_paths *fl)
 			       (struct srdb_entry *)pe, fl->uuid);
 
 	if (ret)
-		pr_err("Insertion failed");
+		zlog_error(zc, "Insertion failed");
 
 	free_srdb_entry(tbl->desc, (struct srdb_entry *)pe);
 
@@ -376,20 +376,20 @@ static void precompute_disjoint_paths(struct graph *g, struct node *node1,
 		rule2 = _cfg.defrule;
 
 	if (rule1->type != RULE_ALLOW || rule2->type != RULE_ALLOW) {
-		pr_err("Rules prevents the creation of disjoint paths between %s and %s\n",
-		       rt1->name, rt2->name);
+		zlog_error(zc, "Rules prevents the creation of disjoint paths between %s and %s\n",
+			   rt1->name, rt2->name);
 		return;
 	}
 
 	forbidden = hmap_new(hash_sym_nodepair, compare_sym_nodepair);
 	if (!forbidden) {
-		pr_err("failed to allocate a hmap\n");
+		zlog_error(zc, "failed to allocate a hmap\n");
 		return;
 	}
 
 	fl = calloc(1, sizeof(*fl));
 	if (!fl) {
-		pr_err("failed to allocate a flow\n");
+		zlog_error(zc, "failed to allocate a flow\n");
 		goto free_forbidden;
 	}
 
@@ -398,8 +398,6 @@ static void precompute_disjoint_paths(struct graph *g, struct node *node1,
 	fl->idle = 0; // Flow is up-to-date
 	fl->srcrt = rt1;
 	fl->dstrt = rt2;
-
-	net_state_read_lock(&_cfg.ns);
 
 	memset(&pspec, 0, sizeof(pspec));
 	pspec.src = node1;
@@ -410,7 +408,7 @@ static void precompute_disjoint_paths(struct graph *g, struct node *node1,
 
 	fl->paths = malloc(sizeof(*fl->paths) * 5); // TODO Hardcoded value -> should be in config file and "< 0"
 	if (!fl->paths) {
-		pr_err("failed to allocate a set of paths\n");
+		zlog_error(zc, "failed to allocate a set of paths\n");
 		goto free_flow;
 	}
 
@@ -444,7 +442,7 @@ static void precompute_disjoint_paths(struct graph *g, struct node *node1,
 
 	// TODO Commit flow to OVSDB !
 	if (commit_path(fl))
-		pr_err("Cannot insert entry to OVSDB");
+		zlog_error(zc, "Cannot insert entry to OVSDB");
 	return;
 
 free_segs:
@@ -455,7 +453,6 @@ free_segs:
 	free(fl->paths);
 free_flow:
 	free(fl);
-	net_state_unlock(&_cfg.ns);
 free_forbidden:
 	hmap_destroy(forbidden);
 }
