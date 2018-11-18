@@ -70,7 +70,7 @@ static int read_flowreq(struct srdb_entry *entry,
 		if (sendto(server_sfd, reply->data, reply->data_length, 0,
 			   (struct sockaddr *) &reply->addr, reply->addr_len) != (int) reply->data_length) {
 			/* Drop the reject */
-			zlog_warn(zc, "%s: Error sending the DNS reject to the client",
+			zlog_warn(zc, "%s: Error sending the DNS reject to the client\n",
 				  strerror(errno));
 		}
 
@@ -96,7 +96,7 @@ static int read_flowstate(struct srdb_entry *entry,
 #if DEBUG_PERF
 	struct timespec controller_reply_time;
 	if (clock_gettime(CLOCK_MONOTONIC, &controller_reply_time)) {
-		zlog_error(zc, "%s: Cannot get controller_reply time",
+		zlog_error(zc, "%s: Cannot get controller_reply time\n",
 			   strerror(errno));
 	}
 #endif
@@ -180,7 +180,7 @@ static int read_flowstate(struct srdb_entry *entry,
 
 #if DEBUG_PERF
 	if (clock_gettime(CLOCK_MONOTONIC, &reply->reply_forward_time)) {
-		zlog_error(zc, "%s: Cannot get reply_forward time", strerror(errno));
+		zlog_error(zc, "%s: Cannot get reply_forward time\n", strerror(errno));
 	}
 	struct timespec result;
 	clock_getres(CLOCK_MONOTONIC, &result);
@@ -213,7 +213,7 @@ static int read_flowstate(struct srdb_entry *entry,
 		   (struct sockaddr *) &reply->addr,
 		   reply->addr_len) != (int) reply->data_length) {
 		/* Drop the reply */
-		zlog_warn(zc, "%s: Error sending the reply to the client",
+		zlog_warn(zc, "%s: Error sending the reply to the client\n",
 			  strerror(errno));
 	}
 
@@ -275,13 +275,13 @@ int init_monitor(void)
 
 	if (srdb_monitor(srdb, "FlowReq", MON_UPDATE, NULL, read_flowreq, NULL,
 			 false, true) < 0) {
-		pr_err("failed to start FlowReq monitor.");
+		zlog_error(zc, "failed to start FlowReq monitor.\n");
 		goto out_err;
 	}
 
 	if (srdb_monitor(srdb, "FlowState", MON_UPDATE, NULL, read_flowstate,
 			 NULL, false, true) < 0) {
-		pr_err("failed to start FlowState monitor.");
+		zlog_error(zc, "failed to start FlowState monitor.\n");
 		goto out_err;
 	}
 

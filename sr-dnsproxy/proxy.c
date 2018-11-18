@@ -97,7 +97,7 @@ int main(int argc, char *argv[])
 	sigaddset(&set, SIGINT);
 	err = pthread_sigmask(SIG_BLOCK, &set, NULL);
 	if (err) {
-		zlog_error(zc, "%s: Cannot block SIGINT", strerror(errno));
+		zlog_error(zc, "%s: Cannot block SIGINT\n", strerror(errno));
 		goto out_err_logs;
 	}
 
@@ -106,7 +106,7 @@ int main(int argc, char *argv[])
 	sa.sa_flags = 0;
 	sigemptyset(&sa.sa_mask);
 	if (sigaction(SIGUSR1, &sa, NULL) == -1) {
-		zlog_error(zc, "%s: Cannot change handling of SIGUSR1 signal",
+		zlog_error(zc, "%s: Cannot change handling of SIGUSR1 signal\n",
 			   strerror(errno));
 		goto out_err_logs;
 	}
@@ -138,14 +138,14 @@ int main(int argc, char *argv[])
 	sigaddset(&set, SIGINT);
 	err = pthread_sigmask(SIG_UNBLOCK, &set, NULL);
 	if (err) {
-		zlog_error(zc, "%s: Cannot unblock SIGINT", strerror(errno));
+		zlog_error(zc, "%s: Cannot unblock SIGINT\n", strerror(errno));
 		goto out_err_logs;
 	}
 
 	/* Gracefully kill the program when SIGINT is received */
 	sa.sa_flags = SA_RESTART;
 	if (sigaction(SIGINT, &sa, NULL) == -1) {
-		zlog_error(zc, "%s: Cannot change handling of SIGINT signal",
+		zlog_error(zc, "%s: Cannot change handling of SIGINT signal\n",
 			   strerror(errno));
 		goto out_err_logs;
 	}

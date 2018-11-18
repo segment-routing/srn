@@ -609,7 +609,7 @@ static void process_request(struct srdb_entry *entry)
 	if (rstat == REQ_STATUS_DENIED) {
 		if (set_flowreq_status(req, rstat) < 0)
 			zlog_error(zc, "failed to update row uuid %s to status %d\n",
-			       req->_row, rstat);
+				   req->_row, rstat);
 		return;
 	}
 
@@ -668,7 +668,7 @@ static void process_request(struct srdb_entry *entry)
 	if (select_providers(fl) <= 0) {
 		if (set_flowreq_status(req, REQ_STATUS_ERROR) < 0)
 			zlog_error(zc, "failed to update row uuid %s to status %d\n",
-			       req->_row, REQ_STATUS_ERROR);
+				   req->_row, REQ_STATUS_ERROR);
 		goto free_flow;
 	}
 
@@ -770,7 +770,7 @@ static int nodestate_read(struct srdb_entry *entry)
 
 	rt = hmap_get(_cfg.ns.routers, node_entry->name);
 	if (rt) {
-		zlog_error(zc, "duplicate router entry `%s'.", node_entry->name);
+		zlog_error(zc, "duplicate router entry `%s'.\n", node_entry->name);
 		goto out_err;
 	}
 
@@ -844,8 +844,8 @@ static int linkstate_read(struct srdb_entry *entry)
 	rt1 = hmap_get(_cfg.ns.routers, link_entry->name1);
 	rt2 = hmap_get(_cfg.ns.routers, link_entry->name2);
 	if (!rt1 || !rt2) {
-		zlog_error(zc, "unknown router entry for link (`%s', `%s').",
-		       link_entry->name1, link_entry->name2);
+		zlog_error(zc, "unknown router entry for link (`%s', `%s').\n",
+			   link_entry->name1, link_entry->name2);
 
 		goto out_free;
 	}
@@ -869,16 +869,16 @@ static int linkstate_read(struct srdb_entry *entry)
 	graph_write_lock(_cfg.ns.graph_staging);
 
 	if (graph_get_edge_data(_cfg.ns.graph_staging, link)) {
-		zlog_error(zc, "duplicate link entry %s -> %s.", link_entry->addr1,
-		       link_entry->addr2);
+		zlog_error(zc, "duplicate link entry %s -> %s.\n", link_entry->addr1,
+			   link_entry->addr2);
 
 		graph_unlock(_cfg.ns.graph_staging);
 		goto out_free;
 	}
 
 	if (graph_get_edge_data(_cfg.ns.graph_staging, link2)) {
-		zlog_error(zc, "duplicate link entry %s -> %s.", link_entry->addr2,
-		       link_entry->addr1);
+		zlog_error(zc, "duplicate link entry %s -> %s.\n", link_entry->addr2,
+			   link_entry->addr1);
 
 		graph_unlock(_cfg.ns.graph_staging);
 		goto out_free;
@@ -977,7 +977,7 @@ static int linkstate_update(struct srdb_entry *entry,
 	graph_unlock(_cfg.ns.graph_staging);
 
 	if (fmask)
-		zlog_error(zc, "non-empty field mask after update (%u).", fmask);
+		zlog_error(zc, "non-empty field mask after update (%u).\n", fmask);
 
 out:
 	return ret;
@@ -1226,7 +1226,7 @@ static void recompute_flow(struct flow *fl)
 	tr = srdb_update_commit(utr);
 
 	if (srdb_update_result(tr, NULL) < 0)
-		zlog_error(zc, "failed to commit recomputed segments.");
+		zlog_error(zc, "failed to commit recomputed segments.\n");
 
 out_unlock:
 	net_state_unlock(&_cfg.ns);
@@ -1327,8 +1327,7 @@ static void *thread_netmon(void *arg)
 		if (getmsdiff(&now, &_cfg.ns.gs_mod) > GSYNC_SOFT_TIMEOUT ||
 		    getmsdiff(&now, &_cfg.ns.gs_dirty) > GSYNC_HARD_TIMEOUT) {
 			if (netstate_graph_sync(ns) < 0) {
-				zlog_error(zc, "failed to synchronize staging network "
-					"graph.");
+				zlog_error(zc, "failed to synchronize staging network graph.\n");
 				goto next;
 			}
 
@@ -1350,14 +1349,14 @@ static int launch_srdb(void)
 
 	if (srdb_monitor(_cfg.srdb, "NodeState", mon_flags, nodestate_read,
 			 NULL, NULL, false, true) < 0) {
-		zlog_error(zc, "failed to start NodeState monitor.");
+		zlog_error(zc, "failed to start NodeState monitor.\n");
 		return -1;
 	}
 
 
 	if (srdb_monitor(_cfg.srdb, "LinkState", mon_flags, linkstate_read,
 			 linkstate_update, linkstate_delete, false, true) < 0) {
-		zlog_error(zc, "failed to start LinkState monitor.");
+		zlog_error(zc, "failed to start LinkState monitor.\n");
 		return -1;
 	}
 
@@ -1365,7 +1364,7 @@ static int launch_srdb(void)
 
 	if (srdb_monitor(_cfg.srdb, "FlowReq", mon_flags, flowreq_read, NULL,
 			 NULL, true, true) < 0) {
-		zlog_error(zc, "failed to start FlowReq monitor.");
+		zlog_error(zc, "failed to start FlowReq monitor.\n");
 		return -1;
 	}
 
@@ -1447,7 +1446,7 @@ int main(int argc, char **argv)
 
 	_cfg.srdb = srdb_new(&_cfg.ovsdb_conf, srdb_print);
 	if (!_cfg.srdb) {
-		zlog_error(zc, "failed to initialize SRDB.");
+		zlog_error(zc, "failed to initialize SRDB.\n");
 		ret = -1;
 		goto free_logs;
 	}
@@ -1483,7 +1482,7 @@ int main(int argc, char **argv)
 		pthread_create(&workers[i], NULL, thread_worker, NULL);
 
 	if (launch_srdb() < 0) {
-		zlog_error(zc, "failed to start srdb monitors.");
+		zlog_error(zc, "failed to start srdb monitors.\n");
 		goto free_workers;
 	}
 

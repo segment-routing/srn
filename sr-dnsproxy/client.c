@@ -48,7 +48,7 @@ void client_callback(void *arg, int status, __attribute__((unused)) int timeouts
 		reply->query_rcv_time = call_args->query_rcv_time;
 		reply->query_forward_time = call_args->query_forward_time;
 		if (clock_gettime(CLOCK_MONOTONIC, &reply->reply_rcv_time)) {
-			zlog_error(zc, "%s: Cannot get reply_rcv time",
+			zlog_error(zc, "%s: Cannot get reply_rcv time\n",
 				   strerror(errno));
 		}
 #endif
@@ -110,7 +110,7 @@ static void *client_producer_main(__attribute__((unused)) void *args)
 
 	client_pipe_fd = open(cfg.client_server_fifo, O_RDONLY);
 	if (client_pipe_fd < 0) {
-		zlog_error(zc, "%s: Cannot open pipe", strerror(errno));
+		zlog_error(zc, "%s: Cannot open pipe\n", strerror(errno));
 		return NULL;
 	}
 
@@ -127,15 +127,15 @@ static void *client_producer_main(__attribute__((unused)) void *args)
 		nfds = nfds > client_pipe_fd ? nfds : client_pipe_fd + 1;
 		err = select(nfds, &read_fds, &write_fds, NULL, &timeout);
 		if (err < 0) {
-			zlog_error(zc, "%s: Select fail", strerror(errno));
+			zlog_error(zc, "%s: Select fail\n", strerror(errno));
 			break;
 		}
 
 		if (FD_ISSET(client_pipe_fd, &read_fds) && read(client_pipe_fd, pipe_buffer, 1000) < 0)
-			zlog_warn(zc, "%s: Cannot read pipe", strerror(errno));
+			zlog_warn(zc, "%s: Cannot read pipe\n", strerror(errno));
 
 		if (pthread_mutex_lock(&channel_mutex)) {
-			zlog_error(zc, "%s: Cannot lock the mutex in client producer",
+			zlog_error(zc, "%s: Cannot lock the mutex in client producer\n",
 				   strerror(errno));
 			break;
 		}
@@ -219,7 +219,7 @@ static void *client_consumer_main(__attribute__((unused)) void *args)
 
 #if DEBUG_PERF
 		if (clock_gettime(CLOCK_MONOTONIC, &reply->controller_query_time)) {
-			zlog_error(zc, "%s: Cannot get controller_query time",
+			zlog_error(zc, "%s: Cannot get controller_query time\n",
 				   strerror(errno));
 		}
 #endif
@@ -229,7 +229,7 @@ static void *client_consumer_main(__attribute__((unused)) void *args)
 
 #if DEBUG_PERF
 		if (clock_gettime(CLOCK_MONOTONIC, &reply->controller_after_query_time)) {
-			zlog_error(zc, "%s: Cannot get controller_after_query time",
+			zlog_error(zc, "%s: Cannot get controller_after_query time\n",
 				   strerror(errno));
 		}
 #endif
@@ -251,7 +251,7 @@ int init_client(int optmask, struct ares_addr_node *servers,
 	/* Create pipe between the client and the server */
 	remove(cfg.client_server_fifo);
 	if (mkfifo(cfg.client_server_fifo, 0640)) {
-		zlog_error(zc, "%s: mkfifo failed", strerror(errno));
+		zlog_error(zc, "%s: mkfifo failed\n", strerror(errno));
 		goto out_err;
 	}
 
@@ -295,13 +295,13 @@ int init_client(int optmask, struct ares_addr_node *servers,
 	/* Thread launching */
 	status = pthread_create(client_consumer_thread, NULL, client_consumer_main, NULL);
 	if (status) {
-		zlog_error(zc, "%s: Cannot create client consumer thread",
+		zlog_error(zc, "%s: Cannot create client consumer thread\n",
 			   strerror(errno));
 		goto out_cleanup_queue_mutex;
 	}
 	status = pthread_create(client_producer_thread, NULL, client_producer_main, NULL);
 	if (status) {
-		zlog_error(zc, "%s: Cannot create client producer thread",
+		zlog_error(zc, "%s: Cannot create client producer thread\n",
 			   strerror(errno));
 		goto out_cleanup_queue_mutex;
 	}

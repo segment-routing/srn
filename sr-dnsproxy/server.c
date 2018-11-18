@@ -39,8 +39,8 @@ static int dns_parse_edns(struct query *query, char **name)
 	arcount = DNS_HEADER_ARCOUNT(aptr);
 	if (qdcount != 1 || ancount != 0 || nscount != 0 || arcount > 1) {
 		zlog_error(zc, "Unexpected number of records for a DNS query: \
-			qdcount = %d - ancount = %d - nscount = %d - arcount = %d\n",
-			qdcount, ancount, nscount, arcount);
+			   qdcount = %d - ancount = %d - nscount = %d - arcount = %d\n",
+			   qdcount, ancount, nscount, arcount);
 		return -1;
 	}
 
@@ -121,14 +121,14 @@ static void server_producer_process(fd_set *read_fds)
 				  (struct sockaddr *) &(query->addr),
 				  &(query->addr_len));
 		if (length == -1) {
-			zlog_error(zc, "%s: Error reading request",
+			zlog_error(zc, "%s: Error reading request\n",
 				   strerror(errno)); /* Drop the request */
 			FREE_POINTER(query);
 		} else {
 			query->length = (uint16_t) length;
 #if DEBUG_PERF
 			if (clock_gettime(CLOCK_MONOTONIC, &query->query_rcv_time)) {
-				zlog_error(zc, "%s: Cannot get query_rcv time",
+				zlog_error(zc, "%s: Cannot get query_rcv time\n",
 					   strerror(errno));
 			}
 #endif
@@ -156,7 +156,7 @@ static void *server_producer_main(__attribute__((unused)) void *args)
 		timeout.tv_usec = 0;
 		err = select(server_sfd + 1, &read_fds, NULL, NULL, &timeout);
 		if (err < 0) {
-			zlog_error(zc, "%s: Select fail", strerror(errno));
+			zlog_error(zc, "%s: Select fail\n", strerror(errno));
 			goto out;
 		}
 		server_producer_process(&read_fds);
@@ -201,7 +201,7 @@ static void *server_consumer_main(__attribute__((unused)) void *_arg)
 
 	server_pipe_fd = open(cfg.client_server_fifo, O_WRONLY);
 	if (server_pipe_fd < 0) {
-		zlog_error(zc, "%s: Cannot open pipe", strerror(errno));
+		zlog_error(zc, "%s: Cannot open pipe\n", strerror(errno));
 		return NULL;
 	}
 	zlog_debug(zc, "Pipe opened on server side\n");
@@ -212,7 +212,7 @@ static void *server_consumer_main(__attribute__((unused)) void *_arg)
 
 #if DEBUG_PERF
 		if (clock_gettime(CLOCK_MONOTONIC, &query->query_forward_time)) {
-			zlog_error(zc, "%s: Cannot get query_forward time",
+			zlog_error(zc, "%s: Cannot get query_forward time\n",
 				   strerror(errno));
 		}
 #endif
@@ -250,19 +250,19 @@ static void *server_consumer_main(__attribute__((unused)) void *_arg)
 #endif
 
 			if ((err = pthread_mutex_lock(&channel_mutex))) {
-				zlog_error(zc, "%s: Cannot lock the mutex to append",
+				zlog_error(zc, "%s: Cannot lock the mutex to append\n",
 					   strerror(errno));
 				goto err_free_args;
 			}
 			ares_query(channel, name, C_IN, T_AAAA, client_callback, (void *) args);
 			pthread_mutex_unlock(&channel_mutex);
 			if (write(server_pipe_fd, "1", 1) != 1) {
-				zlog_error(zc, "%s: Problem writing to pipe",
+				zlog_error(zc, "%s: Problem writing to pipe\n",
 					   strerror(errno));
 			}
 #if DEBUG_PERF
 			if (clock_gettime(CLOCK_MONOTONIC, &query->query_after_query_time)) {
-				zlog_error(zc, "%s: Cannot get query_after_query time",
+				zlog_error(zc, "%s: Cannot get query_after_query time\n",
 					   strerror(errno));
 			}
 			zlog_debuf(zc, "Query %d has finished to send the query at %ld.%ld\n", args->qid,
@@ -283,7 +283,7 @@ static void *server_consumer_main(__attribute__((unused)) void *_arg)
 			reply->query_rcv_time = query->query_rcv_time;
 			reply->query_forward_time = query->query_forward_time;
 			if (clock_gettime(CLOCK_MONOTONIC, &reply->reply_rcv_time)) {
-				zlog_error(zc, "%s: Cannot get reply_rcv time (cache hit)",
+				zlog_error(zc, "%s: Cannot get reply_rcv time (cache hit)\n",
 					   strerror(errno));
 			}
 #endif
@@ -321,14 +321,14 @@ int init_server(pthread_t *server_consumer_thread, pthread_t *server_producer_th
 	/* Thread launching */
 	status = pthread_create(server_consumer_thread, NULL, server_consumer_main, NULL);
 	if (status) {
-		zlog_error(zc, "%s: Cannot create consumer server thread",
+		zlog_error(zc, "%s: Cannot create consumer server thread\n",
 			   strerror(errno));
 		goto out_err;
 	}
 
 	status = pthread_create(server_producer_thread, NULL, server_producer_main, NULL);
 	if (status) {
-		zlog_error(zc, "%s: Cannot create producer server thread",
+		zlog_error(zc, "%s: Cannot create producer server thread\n",
 			   strerror(errno));
 		goto out_err;
 	}
