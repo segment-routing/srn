@@ -167,35 +167,35 @@ static int netstate_graph_sync(struct netstate *ns)
 {
 	struct graph *g, *old_g;
 
-	graph_read_lock(ns->graph_staging);
+	net_state_write_lock(ns);
+	graph_write_lock(ns->graph_staging);
 
 	if (!ns->graph_staging->dirty) {
 		graph_unlock(ns->graph_staging);
+		net_state_unlock(ns);
 		return 0;
 	}
 
 	g = graph_deepcopy(ns->graph_staging);
 
-	graph_unlock(ns->graph_staging);
-
-	if (!g)
+	if (!g) {
+		graph_unlock(ns->graph_staging);
+		net_state_unlock(ns);
 		return -1;
+	}
 
 	graph_finalize(g);
 	graph_build_cache(g);
 
-	net_state_write_lock(ns);
-
 	old_g = ns->graph;
 	ns->graph = g;
 
-	net_state_unlock(ns);
-
 	graph_destroy(old_g, false);
 
-	graph_write_lock(ns->graph_staging);
 	ns->graph_staging->dirty = false;
+
 	graph_unlock(ns->graph_staging);
+	net_state_unlock(ns);
 
 	return 0;
 }
