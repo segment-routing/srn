@@ -249,8 +249,6 @@ static void flowpaths_to_pathentry(struct flow_paths *fl,
 	bool invert = false;
 	unsigned int i;
 
-	memset(pe, 0, sizeof(struct srdb_path_entry));
-
 	/* [addr1,addr2] */
 	if (fields & ENTRY_MASK(PA_FLOW)) {
 		if (memcmp(&fl->addr1, &fl->addr2, sizeof(struct in6_addr)) < 0) {
@@ -313,7 +311,7 @@ static int commit_path(struct flow_paths *fl)
 	struct srdb_table *tbl;
 	int ret;
 
-	pe = malloc(sizeof(*pe));
+	pe = calloc(1, sizeof(*pe));
 	if (!pe)
 		return -1;
 
@@ -329,7 +327,71 @@ static int commit_path(struct flow_paths *fl)
 	if (ret)
 		zlog_error(zc, "Insertion failed");
 
-	free_srdb_entry(tbl->desc, (struct srdb_entry *)pe);
+	free_srdb_entry(tbl->desc, (struct srdb_entry *) pe);
+
+	return ret;
+}
+
+static int path_changes(struct flow_paths *fl, struct flow_paths *old_flow)
+{
+	int mask = 0;
+
+	// TODO Prefixes are never updated
+
+	// Segments
+	if (fl->nb_paths != old_flow->nb_paths) {
+		mask |= ENTRY_MASK(PA_SEGMENTS);
+	} else {
+		bool diff = false;
+		for (size_t i = 0; i < fl->nb_paths; i++) {
+			if (!compare_segments(fl->paths[i].segs,
+					      old_flow->paths[i].segs)) {
+				diff = true;
+				break;
+			}
+		}
+		if (!diff)
+			mask |= ENTRY_MASK(PA_SEGMENTS);
+	}
+
+	return mask;
+}
+
+static int update_path(struct flow_paths *fl, struct flow_paths *old_flow)
+{
+	struct srdb_path_entry *pe;
+	struct srdb_table *tbl;
+	struct srdb_update_transact *utr;
+	int ret, count;
+
+	pe = calloc(1, sizeof(*pe));
+	if (!pe)
+		return -1;
+	memcpy(pe->_row, old_flow->uuid, SLEN);
+
+	tbl = srdb_table_by_name(_cfg.srdb->tables, "Paths");
+	if (!tbl)
+		return -1;
+
+	int mask = path_changes(fl, old_flow);
+	if (!mask)
+		return -1;
+
+	flowpaths_to_pathentry(fl, pe, mask);
+
+	utr = srdb_update_prepare(_cfg.srdb, tbl, (struct srdb_entry *)pe);
+
+	srdb_update_append_mask(utr, mask);
+	struct transaction *tr = srdb_update_commit(utr);
+	if (!tr)
+		return -1;
+	ret = srdb_update_result(tr, &count);
+	if (ret)
+		zlog_error(zc, "Update failed");
+	else
+		free_flow_paths(old_flow);
+
+	free_srdb_entry(tbl->desc, (struct srdb_entry *) pe);
 
 	return ret;
 }
@@ -349,7 +411,7 @@ static void precompute_disjoint_paths(struct graph *g, struct node *node1,
 	struct llist_node *segs;
 	struct llist_node *iter;
 	struct pathspec pspec;
-	struct flow_paths *fl;
+	struct flow_paths *fl, *old_flow;
 	struct nodepair pair;
 	struct rule *rule1;
 	struct rule *rule2;
@@ -357,11 +419,9 @@ static void precompute_disjoint_paths(struct graph *g, struct node *node1,
 
 	pair.local = node1;
 	pair.remote = node2;
-	fl = hmap_get(g->paths, &pair);
-	if (fl) {
+	old_flow = hmap_get(g->paths, &pair);
+	if (old_flow) {
 		hmap_delete(g->paths, &pair);
-		// TODO Delete OVSDB entry pointed by fl->uuid
-		free_flow_paths(fl);
 	}
 
 	rt1 = node1->data;
@@ -398,6 +458,7 @@ static void precompute_disjoint_paths(struct graph *g, struct node *node1,
 	fl->idle = 0; // Flow is up-to-date
 	fl->srcrt = rt1;
 	fl->dstrt = rt2;
+	fl->nodepair = pair;
 
 	memset(&pspec, 0, sizeof(pspec));
 	pspec.src = node1;
@@ -440,9 +501,15 @@ static void precompute_disjoint_paths(struct graph *g, struct node *node1,
 	fl->refcount = 1;
 	hmap_destroy(forbidden);
 
-	// TODO Commit flow to OVSDB !
-	if (commit_path(fl))
+	// Commit flow to OVSDB
+	int ret = -1;
+	if (!old_flow && (ret = commit_path(fl)))
 		zlog_error(zc, "Cannot insert entry to OVSDB");
+	else if (old_flow && (ret = update_path(fl, old_flow)))
+		zlog_error(zc, "Cannot update entry of OVSDB");
+
+	if (!ret)
+		hmap_set(g->paths, &fl->nodepair, fl);
 	return;
 
 free_segs:
@@ -511,6 +578,36 @@ static int netstate_graph_sync(struct netstate *ns)
 
 	graph_finalize(g);
 	graph_build_cache(g);
+
+	/* Transfer flow paths to the new graph */
+	struct hmap_entry *he, *tmp;
+	struct llist_node *iter;
+	struct flow_paths *fl;
+	struct node *node;
+	unsigned int local_id, remote_id;
+	hmap_foreach_safe(ns->graph->paths, he, tmp) {
+		fl = he->elem;
+		hmap_delete(ns->graph->paths, he->key);
+
+		local_id = fl->nodepair.local->id;
+		remote_id = fl->nodepair.remote->id;
+		fl->nodepair.local = NULL;
+		fl->nodepair.remote = NULL;
+		llist_node_foreach(ns->graph->nodes, iter) {
+			node = iter->data;
+			if (node->id == local_id)
+				fl->nodepair.local = node;
+			if (node->id == remote_id)
+				fl->nodepair.remote = node;
+		}
+
+		if (!fl->nodepair.local || !fl->nodepair.remote) {
+			free_flow_paths(fl);
+		} else {
+			hmap_set(g->paths, &fl->nodepair, fl);
+		}
+	}
+
 	precompute_all_paths(g);
 
 	old_g = ns->graph;

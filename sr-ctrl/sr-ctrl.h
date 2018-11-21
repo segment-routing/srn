@@ -125,6 +125,7 @@ struct flow_paths {
 	unsigned int nb_paths;
 	struct router *srcrt;
 	struct router *dstrt;
+	struct nodepair nodepair;
 	uint32_t bw;
 	uint32_t delay;
 	uint32_t ttl;
