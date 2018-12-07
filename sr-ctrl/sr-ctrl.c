@@ -367,6 +367,7 @@ static int update_path(struct flow_paths *fl, struct flow_paths *old_flow)
 	pe = calloc(1, sizeof(*pe));
 	if (!pe)
 		return -1;
+	memcpy(fl->uuid, old_flow->uuid, SLEN);
 	memcpy(pe->_row, old_flow->uuid, SLEN);
 
 	tbl = srdb_table_by_name(_cfg.srdb->tables, "Paths");

@@ -1363,6 +1363,7 @@ struct transaction *srdb_update(struct srdb *srdb, struct srdb_table *tbl,
 int srdb_update_result(struct transaction *tr, int *count)
 {
 	json_t *res, *error, *jres, *jcount, *jerr;
+	char *json_dump_str;
 	int ret = 0;
 
 	res = sbuf_pop(tr->result);
@@ -1372,14 +1373,26 @@ int srdb_update_result(struct transaction *tr, int *count)
 
 	error = json_object_get(res, "error");
 
-	if (!error || !json_is_null(error))
+	if (!error || !json_is_null(error)) {
+		const char *err = json_string_value(error);
+		json_dump_str = json_dumps(tr->json, JSON_INDENT(4));
+		srdb_err("There is a non-null error message in the update reply: %s\n"
+			 "Initial request:\n%s\n", err, json_dump_str);
+		free(json_dump_str);
 		goto out_error;
+	}
 
 	jres = json_array_get(json_object_get(res, "result"), 0);
 
 	jerr = json_object_get(jres, "error");
-	if (jerr && !json_is_null(jerr))
+	if (jerr && !json_is_null(jerr)) {
+		const char *err_obj = json_string_value(jerr);
+		json_dump_str = json_dumps(tr->json, JSON_INDENT(4));
+		srdb_err("There is a non-null error message in the update reply: %s\n"
+			 "Initial request:\n%s\n", err_obj, json_dump_str);
+		free(json_dump_str);
 		goto out_error;
+	}
 
 	jcount = json_object_get(jres, "count");
 	if (count)
@@ -1451,8 +1464,11 @@ int srdb_insert_sync(struct srdb *srdb, struct srdb_table *tbl,
 	jres = json_array_get(json_object_get(res, "result"), 0);
 
 	jerr = json_object_get(jres, "error");
-	if (jerr && !json_is_null(jerr))
+	if (jerr && !json_is_null(jerr)) {
+		const char * err = json_string_value(jres);
+		srdb_err("There is a non-null error message in the update reply: %s\n", err);
 		goto out_error;
+	}
 
 	juuid = json_array_get(json_object_get(jres, "uuid"), 1);
 	if (uuid)
