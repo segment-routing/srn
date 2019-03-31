@@ -31,28 +31,58 @@ ovsdb-tool create sr.ovschema SR_test
 ovsdb-server SR_test --remote=ptcp:6640:[::1] --remote=ptcp:6640:[<global-ipv6-address>]
 ```
 
-2. Run your favorite DNS server on one of the nodes.
+2. Fill the OVSDB database with routers and links.
+```
+$ ovsdb-client transact tcp:[::1]:6640 "[\"SR_test\",{\"row\":${row},\"table\":\"NameIdMapping\",\"op\":\"insert\"}]"
 
-3. Run the controller with the command below. Performance will be better if it is located near the OVSDB server. The configuration file options are documented in *sr-ctrl/README.md*.
+with row being one-line string representing a JSON object of the form:
+{
+	"routerName": "RouterA",  # The name of the router
+	"routerId": "0.0.0.1",    # The OSPFv3 Router ID (useful to map link/router loss to the router line in OVSDB)
+	"addr": "fd:1234::1",     # The address on the loopback interface of this router
+	"prefix": "fd:1234:24::/64;fd:1234:10::/64",  # The list of sub-networks prefixes directly connected to the router
+	"pbsid": "fd:1234::/64"   # The range of IP addresses that can be used as Binding SID for this router. You will typically choose the a /64 prefix of a loopback address.
+}
+
+$ ovsdb-client transact tcp:[::1]:6640 "[\"SR_test\",{\"row\":${row},\"table\":\"AvailableLink\",\"op\":\"insert\"}]"
+
+with row being one-line string representing a JSON object of the form:
+{
+	"name1": "RouterA",        # The name of an endpoint of the link
+	"name2": "RouterB",        # The name of the other endpoint
+	"addr1": "fd:1234:24::a",  # The address of RouterA
+	"addr2": "fd:1234:24::b",  # The address of RouterB
+	"routerId1":               # The OSPFv3 Router ID of RouterA
+	"routerId2":               # The OSPFv3 Router ID of RouterB
+	"metric": 1                # The IGP metric of the link
+	"bw": 100000               # Bandwidth (in Mbits)
+	"ava_bw": 100000           # Available bandwidth (in Mbits)
+	"delay": 5                 # Delay (in ms)
+}
+```
+
+3. Run your favorite DNS server on one of the nodes.
+
+4. Run the controller with the command below. Performance will be better if it is located near the OVSDB server. The configuration file options are documented in *sr-ctrl/README.md*.
 ```
 sr-ctrl/sr-ctrl <sr-ctrl_configfile>
 ```
 
-3. Run the DNS proxy on the controller node. Performance will be better if it is located near the OVSDB server and the DNS server. The configuration file options are documented in *sr-dnsproxy/README.md*.
+5. Run the DNS proxy on the controller node. Performance will be better if it is located near the OVSDB server and the DNS server. The configuration file options are documented in *sr-dnsproxy/README.md*.
 ```
 sr-dnsproxy/sr-dnsproxy <sr-dnsproxy_configfile>
 ```
 
-4. Run the sr-routed deamons on each access router. The configuration file and its parameters are documented in *sr-routed* subfolders.
+6. Run the sr-routed deamons on each access router. The configuration file and its parameters are documented in *sr-routed/README.md*.
 ```
 sr-routed/sr-routed <sr-routed_configfile>
 ```
 
-5. Run generated *sr-nsd/zebra* and *sr-nsd/ospf6d* on one of the routers. The following option must be activated in ospf6d Quagga deamon configuration. Performance will be better if the selected router is located nea the OVSDB server.
+7. Run generated *sr-nsd/zebra* and *sr-nsd/ospf6d* on one of the routers. The following option must be activated in ospf6d Quagga deamon configuration. Performance will be better if the selected router is located nea the OVSDB server.
 ```
 router ospf6
   ovsdb_adv tcp <ovsdb-server-ip> 6640 SR_test
 ```
 
-6. Run example applications like *sr-client/client* or *sr-testdns/sr-testdns* by specifying the address of the *sr-dnsproxy* as the DNS resolver
+8. Run example applications like *sr-client/client* or *sr-testdns/sr-testdns* by specifying the address of the *sr-dnsproxy* as the DNS resolver
 
