@@ -52,6 +52,7 @@ struct config {
 	struct provider *providers;
 	unsigned int nb_providers;
 	char zlog_conf_file[SLEN + 1];
+	int maxseg;
 
 	/* internal data */
 	struct srdb *srdb;
@@ -63,7 +64,7 @@ struct config {
 };
 
 static struct config _cfg;
-static zlog_category_t *zc;
+zlog_category_t *zc;
 
 static int srdb_print(const char *fmt, ...)
 {
@@ -121,6 +122,7 @@ static void config_set_defaults(struct config *cfg)
 	cfg->providers = &internal_provider;
 	cfg->nb_providers = 1;
 	*cfg->zlog_conf_file = '\0';
+	cfg->maxseg = -1;
 }
 
 static int init_netstate(struct netstate *ns)
@@ -154,13 +156,42 @@ out_free_graph:
 	return -1;
 }
 
+static void free_flow_paths(struct flow_paths *fl)
+{
+	struct path *paths;
+	unsigned int i;
+
+	if (!fl)
+		return;
+
+	paths = fl->paths;
+	if (paths) {
+		for (i = 0; i < fl->nb_paths; i++) {
+			if (paths[i].segs)
+				free_segments(paths[i].segs);
+			if (paths[i].epath)
+				destroy_edgepath(paths[i].epath);
+		}
+		free(paths);
+	}
+	free(fl);
+}
+
 static void destroy_netstate(void)
 {
 	struct netstate *ns = &_cfg.ns;
-	struct hmap_entry *he;
+	struct hmap_entry *he, *tmp;
+	struct flow_paths *fl;
 
 	hmap_foreach(_cfg.flows, he)
 		flow_release(he->elem);
+
+	/* Free flow paths */
+	hmap_foreach_safe(ns->graph->paths, he, tmp) {
+		fl = he->elem;
+		hmap_delete(ns->graph->paths, he->key);
+		free_flow_paths(fl);
+	}
 
 	graph_destroy(ns->graph, false);
 	graph_destroy(ns->graph_staging, false);
@@ -181,27 +212,6 @@ static void mark_graph_dirty(void)
 	gettimeofday(&_cfg.ns.gs_mod, NULL);
 
 	_cfg.ns.graph_staging->dirty = true;
-}
-
-static void free_flow_paths(struct flow_paths *fl)
-{
-	struct path *paths;
-	unsigned int i;
-
-	if (!fl)
-		return;
-
-	paths = fl->paths;
-	if (paths) {
-		for (i = 0; i < fl->nb_paths; i++) {
-			if (paths[i].segs)
-				free_segments(paths[i].segs);
-			if (paths[i].epath)
-				destroy_edgepath(paths[i].epath);
-		}
-		free(paths);
-	}
-	free(fl);
 }
 
 static json_t *segs_to_json(struct llist_node *segs)
@@ -477,7 +487,7 @@ static void precompute_disjoint_paths(struct graph *g, struct node *node1,
 	/* Generate disjoint paths */
 	for (i=0; i < 5; i++) { // TODO Hardcoded value -> should be in config file and "< 0"
 		epath = NULL;
-		segs = build_disjoint_segpath(g, &pspec, &epath, forbidden);
+		segs = build_disjoint_segpath(g, &pspec, &epath, forbidden, _cfg.maxseg);
 		if (!segs) {
 			destroy_edgepath(epath);
 			if (!i) // No path found
@@ -485,7 +495,10 @@ static void precompute_disjoint_paths(struct graph *g, struct node *node1,
 			break; // Max number of disjoint paths reached
 		}
 		/* Remove destination router from segments */
-		llist_node_remove(segs, llist_node_last_entry(segs));
+		struct llist_node *dest_seg_node = llist_node_last_entry(segs);
+		struct segment *dest_seg = dest_seg_node->data;
+		llist_node_remove(segs, dest_seg_node);
+		free(dest_seg);
 
 		/* Add new forbidden edges */
 		llist_node_foreach(epath, iter) {
@@ -1220,6 +1233,7 @@ static int nodestate_read(struct srdb_entry *entry)
 
 	rt_node = graph_add_node(_cfg.ns.graph_staging, rt);
 	rt->node_id = rt_node->id;
+	zlog_debug(zc, "Router %s has id %d", rt->name, rt->node_id);
 
 	graph_unlock(_cfg.ns.graph_staging);
 
@@ -1459,6 +1473,11 @@ static int load_config(const char *fname, struct config *cfg)
 		if (READ_INT(buf, ntransacts, &cfg->ovsdb_conf)) {
 			if (!cfg->ovsdb_conf.ntransacts)
 				cfg->ovsdb_conf.ntransacts = 1;
+			continue;
+		}
+		if (READ_INT(buf, maxseg, cfg)) {
+			if (!cfg->maxseg)
+				cfg->maxseg = -1;
 			continue;
 		}
 		if (READ_STRING(buf, rules_file, cfg))

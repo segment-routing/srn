@@ -161,7 +161,6 @@ int graph_minseg(struct graph *g, struct llist_node *path,
 void free_segments(struct llist_node *segs);
 struct llist_node *copy_segments(struct llist_node *segs);
 bool compare_segments(struct llist_node *segs1, struct llist_node *segs2);
-int graph_build_cache_one(struct graph *g, struct node *node);
 int graph_build_cache(struct graph *g);
 void graph_flush_cache(struct graph *g);
 struct graph *graph_deepcopy(struct graph *g);
@@ -178,8 +177,7 @@ struct pathspec {
 };
 
 struct llist_node *build_disjoint_segpath(struct graph *g, struct pathspec *pspec,
-					  struct llist_node **epath,
-					  struct hashmap *forbidden);
+					  struct llist_node **epath, struct hashmap *forbidden, int maxseg);
 struct llist_node *build_segpath(struct graph *g, struct pathspec *pspec,
 				 struct llist_node **epath);
 

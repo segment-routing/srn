@@ -5,9 +5,13 @@
 #include <string.h>
 #include <sys/time.h>
 #include <assert.h>
+#include <math.h>
+#include <zlog.h>
 
 #include "graph.h"
 #include "misc.h"
+
+extern zlog_category_t *zc;
 
 static bool node_equals_default(struct node *n1, struct node *n2)
 {
@@ -506,6 +510,50 @@ static void compute_paths(struct llist_node *res, struct hashmap *prev,
 	__compute_paths(res, tmp, prev, u);
 }
 
+/* @res: list(list(node))
+ * @tmp: list(node)
+ */
+static void __compute_paths_from_segments(struct llist_node *res, struct llist_node *tmp,
+					  struct hashmap *prev, struct node *u, struct hashmap *g_cache)
+{
+	struct llist_node *w, *iter, *iter2, *iter3, *subpaths, *first_subpath;
+	struct dres *u_dres;
+	struct node *p, *intermediate_node;
+
+	w = hmap_get(prev, u);
+	if (llist_node_empty(w)) {
+		llist_node_insert_tail(res, tmp);
+		return;
+	}
+
+	llist_node_foreach(w, iter) {
+		p = iter->data;
+		u_dres = hmap_get(g_cache, u); // Dijkstra data with u as source
+		subpaths = hmap_get(u_dres->path, p); // subpaths from u to p
+		llist_node_foreach(subpaths, iter2) {
+			first_subpath = iter2->data; // XXX Do not handle ECMP
+
+			first_subpath = llist_node_copy_reverse(first_subpath);
+			llist_node_foreach(first_subpath, iter3) { // Extend the path by the subpath to reach the intermediate point
+				intermediate_node = iter3->data;
+				llist_node_insert_head(tmp, intermediate_node);
+			}
+			llist_node_destroy(first_subpath);
+			__compute_paths_from_segments(res, tmp, prev, p, g_cache);
+			break; // XXX Do not handle ECMP
+		}
+		break; // XXX Do not handle ECMP
+	}
+}
+static void compute_paths_from_segments(struct llist_node *res, struct hashmap *prev,
+			  struct node *u, struct hashmap *g_cache)
+{
+	struct llist_node *tmp;
+
+	tmp = llist_node_alloc();
+	__compute_paths_from_segments(res, tmp, prev, u, g_cache);
+}
+
 static void destroy_pathres(struct llist_node *p)
 {
 	struct llist_node *pp, *iter;
@@ -859,6 +907,114 @@ void graph_flush_cache(struct graph *g)
 	hmap_flush(g->dcache);
 }
 
+bool path_is_forbidden(struct hashmap *src_paths, struct node *src, struct node *dst, struct hashmap *forbidden_edges)
+{
+	struct llist_node *iter;
+	struct node *intermediate_node, *next_node;
+	struct nodepair pair;
+
+	struct llist_node *subpaths = hmap_get(src_paths, dst);
+	struct llist_node *subpath = llist_node_first_entry(subpaths)->data; // XXX No ECMP Handling
+
+	size_t i = llist_node_size(subpath);
+	llist_node_foreach(subpath, iter) {
+		intermediate_node = iter->data;
+		if (i > 1)
+			next_node = llist_next_entry(iter, head)->data;
+		else
+			next_node = src;
+		pair.local = intermediate_node;
+		pair.remote = next_node;
+		if (hmap_get(forbidden_edges, &pair))
+			return true;
+		i -= 1;
+	}
+	return false;
+}
+
+/* Needs the hashmap cache filled by Dijkstra */
+void graph_shortest_path_maxseg(struct graph *g, struct node *src,
+				struct dres *res, __attribute__((unused)) struct d_ops *ops, __attribute__((unused)) void *data,
+				struct hashmap *forbidden_edges, int maxseg)
+{
+	struct llist_node *iter_cur, *iter_pre;
+	struct hashmap *dist, *prev, *path;
+	struct node *cur, *pre;
+
+	// TODO Cite algo source
+	uint32_t cost[maxseg+1][llist_node_size(g->nodes)];
+	for (int i = 0; i <= maxseg; i++) {
+		for (uint32_t j = 0; j < llist_node_size(g->nodes); j++)
+			cost[i][j] = UINT32_MAX;
+	}
+	cost[0][src->id] = 0;
+
+	struct node *parent[maxseg+1][llist_node_size(g->nodes)];
+	for (int i = 0; i <= maxseg; i++) {
+		for (uint32_t j = 0; j < llist_node_size(g->nodes); j++)
+			parent[i][j] = NULL;
+	}
+
+	for (int i = 1; i <= maxseg; i++) {
+		llist_node_foreach(g->nodes, iter_cur) {
+			cur = iter_cur->data;
+			/* Don't use a new segment (even if limit raises) */
+			cost[i][cur->id] = cost[i - 1][cur->id];
+			parent[i][cur->id] = parent[i - 1][cur->id];
+
+			/* We reach cur by coming from pre */
+			llist_node_foreach(g->nodes, iter_pre) {
+				pre = iter_pre->data;
+				if(pre->id == cur->id)
+					continue;
+
+				/* Use cost and segment in a graph forbidding the forbidden edges */
+				struct dres * pre_res = hmap_get(g->dcache, pre);
+				uint32_t cost_pre_to_cur = (uintptr_t) hmap_get(pre_res->dist, cur);
+				if(cost_pre_to_cur == UINT32_MAX || cost[i - 1][pre->id] == UINT32_MAX || path_is_forbidden(pre_res->path, pre, cur, forbidden_edges))
+					continue;
+
+				uint32_t l = cost[i - 1][pre->id] + cost_pre_to_cur;
+				if(l < cost[i][cur->id]) {
+					cost[i][cur->id] = l;
+					parent[i][cur->id] = pre;
+				}
+				// TODO Add Adjacency segments
+			}
+		}
+	}
+
+	/* Recompute the dist, prev and path hashmaps */
+	dist = hmap_new(hash_node, compare_node);
+	prev = hmap_new(hash_node, compare_node);
+	path = hmap_new(hash_node, compare_node);
+
+	/* Needs the prev hashmap before computing paths */
+	llist_node_foreach(g->nodes, iter_cur) {
+		cur = iter_cur->data;
+		hmap_set(dist, cur, (void *)(uintptr_t) cost[maxseg][cur->id]);
+
+		struct llist_node *l = llist_node_alloc();
+		if (parent[maxseg][cur->id]) {
+			llist_node_insert_tail(l, parent[maxseg][cur->id]);
+		}
+		hmap_set(prev, cur, l);
+	}
+
+	llist_node_foreach(g->nodes, iter_cur) {
+		cur = iter_cur->data;
+		struct llist_node *sublist_paths = llist_node_alloc();
+		if (((uint32_t) (uintptr_t) cost[maxseg][cur->id]) != UINT32_MAX) { // A path exists
+			compute_paths_from_segments(sublist_paths, prev, cur, g->dcache);
+		}
+		hmap_set(path, cur, sublist_paths);
+	}
+
+	res->dist = dist;
+	res->path = path;
+	res->prev = prev;
+}
+
 int graph_minseg(struct graph *g, struct llist_node *path,
 		 struct llist_node *res)
 {
@@ -1021,9 +1177,10 @@ struct llist_node *copy_edgepath(struct llist_node *path)
 struct llist_node *build_disjoint_segpath(struct graph *g,
 					  struct pathspec *pspec,
 					  struct llist_node **epath,
-					  struct hashmap *forbidden_edges)
+					  struct hashmap *forbidden_edges,
+					  int maxseg)
 {
-	struct llist_node *res, *path, *iter, *fpath = NULL;
+	struct llist_node *res, *path, *iter, *debug_iter, *fpath = NULL;
 	struct node *cur_node;
 	struct graph *gc;
 	struct dres gres;
@@ -1069,8 +1226,12 @@ struct llist_node *build_disjoint_segpath(struct graph *g,
 
 		tmp_node = iter->data;
 
-		graph_dijkstra(gc, cur_node, &gres, pspec->d_ops, pspec->data,
-			       forbidden_edges);
+		if (maxseg <= 0)
+			graph_dijkstra(gc, cur_node, &gres, pspec->d_ops, pspec->data,
+					forbidden_edges);
+		else
+			graph_shortest_path_maxseg(gc, cur_node, &gres, pspec->d_ops,
+					   pspec->data, forbidden_edges, maxseg);
 		tmp_paths = hmap_get(gres.path, tmp_node);
 		if (llist_node_empty(tmp_paths))
 			goto out_error;
@@ -1079,8 +1240,24 @@ struct llist_node *build_disjoint_segpath(struct graph *g,
 		 * path selection (e.g., random).
 		 */
 		tmp_path = llist_node_first_entry(tmp_paths)->data;
-		rev_path = llist_node_copy_reverse(tmp_path);
-		llist_node_insert_head(rev_path, cur_node);
+
+		if (maxseg <= 0) { /* Different path format in graph_dijkstra */
+			rev_path = llist_node_copy_reverse(tmp_path);
+			llist_node_insert_head(rev_path, cur_node);
+		} else {
+			rev_path = llist_node_copy(tmp_path);
+			llist_node_insert_tail(rev_path, tmp_node);
+		}
+
+		char buf [1024];
+		char buf2 [1024];
+		snprintf(buf, 1024, "Path from %d to %d is: [", cur_node->id, tmp_node->id);
+		llist_node_foreach(rev_path, debug_iter) {
+			struct node *intermediate_node = debug_iter->data;
+			snprintf(buf2, 1024, " %d ", intermediate_node->id);
+			strncat(buf, buf2, 1023);
+		}
+		zlog_debug(zc, "%s]", buf);
 
 		if (graph_minseg(g, rev_path, res) < 0)
 			goto out_error;
@@ -1127,6 +1304,5 @@ out_error:
 struct llist_node *build_segpath(struct graph *g, struct pathspec *pspec,
 				 struct llist_node **epath)
 {
-	return build_disjoint_segpath(g, pspec, epath, NULL);
+	return build_disjoint_segpath(g, pspec, epath, NULL, -1);
 }
-
