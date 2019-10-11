@@ -260,7 +260,9 @@ struct srdb_path_entry {
 	struct srdb_entry entry;
 	char *flow;  /* A json list of the endpoint router addresses (the first one is the lower according to memcmp(3)) [rt1_addr,rt2_addr] */
 	char *prefixes; /* A list of list of lan prefixes with hosts [[rt1_LAN_prefix1, rt1_LAN_prefix2],[rt2_LAN_prefix1, rt2_LAN_prefix2]]  */
-	char *segments; /* A json list of possible lists of intermediate segments */
+	char *segments; /* A json list of possible objects {"segs": list of intermediate segments,
+	                                                    "ava_bw": available bandwidth on the bottleneck link,
+														"delay": sum of the link delays} */
 };
 
 /* path entry fields */

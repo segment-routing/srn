@@ -115,6 +115,8 @@ struct flow {
 struct path {
 	struct llist_node *segs;
 	struct llist_node *epath;
+	uint32_t bw;
+	uint32_t delay;
 };
 
 struct flow_paths {

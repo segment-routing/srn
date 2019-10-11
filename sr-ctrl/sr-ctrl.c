@@ -302,13 +302,15 @@ static void flowpaths_to_pathentry(struct flow_paths *fl,
 		json_decref(jprefixes_all);
 	}
 
-	/* segments: [[S1_1,S1_2,S1_3],[S2_1,S2_2]] */
+	/* segments: [{segs: [S1_1,S1_2,S1_3], bw: 100, delay: 1}},{segs: [S2_1,S2_2], bw: 100, delay: 1}] */
 	if (fields & ENTRY_MASK(PA_SEGMENTS)) {
 		jsegs_all = json_array();
 		for (i = 0; i < fl->nb_paths; i++) {
-			json_t *segs;
-			segs = segs_to_json(fl->paths[i].segs);
-			json_array_append_new(jsegs_all, segs);
+			json_t *seg_object = json_object();
+			json_object_set_new(seg_object, "segs", segs_to_json(fl->paths[i].segs));
+			json_object_set_new(seg_object, "bw", json_integer((json_int_t) fl->paths[i].bw));
+			json_object_set_new(seg_object, "delay", json_integer((json_int_t) fl->paths[i].delay));
+			json_array_append_new(jsegs_all, seg_object);
 		}
 		pe->segments = json_dumps(jsegs_all, JSON_COMPACT);
 		json_decref(jsegs_all);
@@ -359,6 +361,8 @@ static int path_changes(struct flow_paths *fl, struct flow_paths *old_flow)
 				diff = true;
 				break;
 			}
+			// Update of available bandwidth or delay
+			diff = diff || fl->paths[i].bw != old_flow->paths[i].bw || fl->paths[i].delay != old_flow->paths[i].delay;
 		}
 		if (!diff)
 			mask |= ENTRY_MASK(PA_SEGMENTS);
@@ -490,8 +494,10 @@ static void precompute_disjoint_paths(struct graph *g, struct node *node1,
 		segs = build_disjoint_segpath(g, &pspec, &epath, forbidden, _cfg.maxseg);
 		if (!segs) {
 			destroy_edgepath(epath);
-			if (!i) // No path found
+			if (!i) {// No path found
+				zlog_error(zc, "No path was found between the nodes");
 				goto free_segs;
+			}
 			break; // Max number of disjoint paths reached
 		}
 		/* Remove destination router from segments */
@@ -501,13 +507,21 @@ static void precompute_disjoint_paths(struct graph *g, struct node *node1,
 		free(dest_seg);
 
 		/* Add new forbidden edges */
+		uint32_t bw = UINT32_MAX;
+		uint32_t delay = 0;
+
 		llist_node_foreach(epath, iter) {
 			struct edge *edge = iter->data;
+			struct link *link = (struct link *) edge->data;
+			bw = link->ava_bw < bw ? link->ava_bw : bw;
+			delay += link->delay;
 			hmap_set(forbidden, edge, edge);
 		}
 
 		fl->paths[i].segs = segs;
 		fl->paths[i].epath = epath;
+		fl->paths[i].bw = bw;
+		fl->paths[i].delay = delay;
 		fl->nb_paths++;
 	}
 
