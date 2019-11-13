@@ -442,6 +442,8 @@ static void precompute_disjoint_paths(struct graph *g, struct node *node1,
 	rt1 = node1->data;
 	rt2 = node2->data;
 
+	zlog_debug(zc, "Recomputing path between (%s, %s)", rt1->name, rt2->name);
+
 	/* Check rules in both directions */
 	rule1 = match_rules(_cfg.rules, rt1->name, rt2->name);
 	if (!rule1)
@@ -510,12 +512,16 @@ static void precompute_disjoint_paths(struct graph *g, struct node *node1,
 		uint32_t bw = UINT32_MAX;
 		uint32_t delay = 0;
 
+		zlog_debug(zc, "Path between (%s, %s):", rt1->name, rt2->name);
 		llist_node_foreach(epath, iter) {
 			struct edge *edge = iter->data;
 			struct link *link = (struct link *) edge->data;
 			bw = link->ava_bw < bw ? link->ava_bw : bw;
 			delay += link->delay;
 			hmap_set(forbidden, edge, edge);
+			struct router *esrc = (struct router *) edge->p_local->data;
+			struct router *edst = (struct router *) edge->p_remote->data;
+			zlog_debug(zc, "-> edge (%s, %s):", esrc->name, edst->name);
 		}
 
 		fl->paths[i].segs = segs;
@@ -1247,7 +1253,7 @@ static int nodestate_read(struct srdb_entry *entry)
 
 	rt_node = graph_add_node(_cfg.ns.graph_staging, rt);
 	rt->node_id = rt_node->id;
-	zlog_debug(zc, "Router %s has id %d", rt->name, rt->node_id);
+	zlog_debug(zc, "Just added router %s has id %d", rt->name, rt->node_id);
 
 	graph_unlock(_cfg.ns.graph_staging);
 
@@ -1338,6 +1344,7 @@ static int linkstate_read(struct srdb_entry *entry)
 		       false, link);
 	graph_add_edge(_cfg.ns.graph_staging, rt2_node, rt1_node, metric,
 		       false, link2);
+	zlog_debug(zc, "Just added edge (%s, %s)", rt1->name, rt2->name);
 
 	graph_unlock(_cfg.ns.graph_staging);
 
