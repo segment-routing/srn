@@ -149,7 +149,7 @@ static int ovsdb_socket(const struct ovsdb_config *conf)
 
 	/* Retry because the link-state routing protocols might still be booting */
 	while ((err = connect(fd, (struct sockaddr *) &addr, sizeof(addr)))
-	       && errno == ENETUNREACH);
+	       && (errno == ENETUNREACH || errno == EHOSTUNREACH));
 	if (err < 0) {
 		srdb_err("%s: connect to ovsdb server", strerror(errno));
 		goto close_fd;
