@@ -60,7 +60,7 @@ int load_args(int argc, char **argv, const char **conf, int *dryrun)
 /* Some of the code was taken from the "adig.c" file in the c-ares library */
 int load_config(const char *fname, int *optmask, struct ares_addr_node **servers)
 {
-	char buf[128];
+	char buf[1000];
 	int ret = 0;
 	FILE *fp;
 	char dns_server [SLEN + 1];
@@ -75,7 +75,7 @@ int load_config(const char *fname, int *optmask, struct ares_addr_node **servers
 		return -1;
 	}
 
-	while (fgets(buf, 128, fp)) {
+	while (fgets(buf, 1000, fp)) {
 		strip_crlf(buf);
 		if (READ_STRING(buf, ovsdb_client, &cfg.ovsdb_conf))
 			continue;

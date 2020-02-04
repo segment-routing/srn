@@ -1473,7 +1473,7 @@ static int linkstate_delete(struct srdb_entry *entry)
 
 static int load_config(const char *fname, struct config *cfg)
 {
-	char buf[128];
+	char buf[1000];
 	int ret = 0;
 	FILE *fp;
 
@@ -1481,7 +1481,7 @@ static int load_config(const char *fname, struct config *cfg)
 	if (!fp)
 		return -1;
 
-	while (fgets(buf, 128, fp)) {
+	while (fgets(buf, 1000, fp)) {
 		strip_crlf(buf);
 		if (READ_STRING(buf, ovsdb_client, &cfg->ovsdb_conf))
 			continue;
