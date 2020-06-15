@@ -9,7 +9,7 @@
 
 #include "sbuf.h"
 
-#define SLEN	127
+#define SLEN	255
 #define SLEN_LIST	7 * SLEN
 
 #define ENTRY_MASK(x) (1 << (x))
