@@ -41,7 +41,7 @@ static int test_dns_only(const char *dst, const char *dns_servername)
   }
   struct in6_addr *binding_segment = dest_addr + 1;
 
-  int err = make_srdns_request(dst, dns_servername, "accessA", 5, 5,
+  int err = make_srdns_request(dst, dns_servername, "accessA", 0, 0,
                                (char *) dest_addr, NULL,
                                (char *) binding_segment);
   if (err < 0) {

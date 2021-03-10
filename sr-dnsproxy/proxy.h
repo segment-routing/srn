@@ -28,7 +28,7 @@
 }
 
 #define DEBUG_PERF 0
-#define USE_DNS_CACHE 0
+#define USE_DNS_CACHE 1
 
 #define TIMEOUT_LOOP 1 /* (sec) */
 

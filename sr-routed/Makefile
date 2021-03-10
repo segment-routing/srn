@@ -1,6 +1,6 @@
 CC=gcc
 CFLAGS=-Wall -W -O2 -I../lib -Werror -DHAVE_LIBMNL
-LDFLAGS=-L../lib -lsr -pthread -ljansson -lmnl -lzlog
+LDFLAGS=-static -L../lib -lsr -pthread -ljansson -lmnl -lzlog
 SRC=$(wildcard *.c)
 OBJ=$(SRC:.c=.o)
 EXEC=sr-routed

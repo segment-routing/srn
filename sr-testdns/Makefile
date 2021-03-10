@@ -1,6 +1,6 @@
 CC=gcc
 CFLAGS=-Wall -W -O2 -I../lib -I../lib/c-ares -Werror
-LDFLAGS=-L../lib -L../lib/c-ares/lib -lsrdns -Wl,-Bstatic -lcares -Wl,-Bdynamic -pthread
+LDFLAGS=-static -L../lib -L../lib/c-ares/lib -lsrdns -lcares -pthread
 SRC=sr-testdns.c
 OBJ=$(SRC:.c=.o)
 EXEC=sr-testdns

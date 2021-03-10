@@ -6,8 +6,7 @@ CFLAGS += -Wextra # Enable additional warnings
 CFLAGS += -O2 # -D_FORTIFY_SOURCE=2 # Add canary code, i.e. detect buffer overflows
 #CFLAGS += -fstack-protector-all # Add canary code to detect stack smashing
 CFLAGS += -I../lib/c-ares -I../lib
-LDFLAGS += -L../lib/c-ares/lib -L../lib
-LDFLAGS += -Wl,-Bstatic -lcares -Wl,-Bdynamic -lpthread -lsr -lsrdns -ljansson -lzlog
+LDFLAGS += -static -L../lib/c-ares/lib -L../lib -pthread -lcares -lsr -lsrdns -ljansson -lzlog
 EXEC=sr-dnsproxy
 SRC= $(wildcard *.c)
 OBJ= $(SRC:.c=.o)

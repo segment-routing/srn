@@ -265,7 +265,7 @@ static void *server_consumer_main(__attribute__((unused)) void *_arg)
 				zlog_error(zc, "%s: Cannot get query_after_query time\n",
 					   strerror(errno));
 			}
-			zlog_debuf(zc, "Query %d has finished to send the query at %ld.%ld\n", args->qid,
+			zlog_debug(zc, "Query %d has finished to send the query at %ld.%ld\n", args->qid,
 				   query->query_after_query_time.tv_sec, query->query_after_query_time.tv_nsec);
 #endif
 

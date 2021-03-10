@@ -8,8 +8,7 @@ CFLAGS += -O2 # -D_FORTIFY_SOURCE=2 # Add canary code, i.e. detect buffer overfl
 #CFLAGS += -fstack-protector-all # Add canary code to detect stack smashing
 CFLAGS += -D_POSIX_C_SOURCE=201112L -D_XOPEN_SOURCE # feature_test_macros for getpot and getaddrinfo
 CFLAGS += -I../lib/c-ares -I../lib
-LDFLAGS += -L../lib -L../lib/c-ares/lib
-LDFLAGS += -lsrdns -Wl,-Bstatic -lcares -Wl,-Bdynamic -lpthread
+LDFLAGS += -static -L../lib -L../lib/c-ares/lib -lsrdns -lcares -pthread
 EXEC=client
 SRC= $(wildcard *.c)
 OBJ= $(SRC:.c=.o)
