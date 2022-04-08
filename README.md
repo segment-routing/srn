@@ -10,20 +10,29 @@ to interact with endhosts.
 
 ### Prerequistes
 
-One library must be installed:
-- (jansson)[http://www.digip.org/jansson/]
+Two libraries must be installed:
+- [jansson](https://github.com/akheron/jansson)
+- [zlog](https://hardysimpson.github.io/zlog/)
 
 Several other software are required:
-- DNS server like (bind)[https://www.isc.org/downloads/bind/]
-- (ovsdb)[https://github.com/openvswitch/ovs]
+- DNS server like [bind](https://www.isc.org/downloads/bind/)
+- [ovsdb](https://github.com/openvswitch/ovs)
 
-A modified version of (quagga)[http://www.nongnu.org/quagga/index.html] is used and therefore, a quagga user must be created.
+A modified version of [quagga](http://www.nongnu.org/quagga/index.html) is used and therefore, a quagga user must be created.
 
 ### Compiling
 
-Simply running `make` will compile the code. Note that (jansson)[http://www.digip.org/jansson/] library must be installed and that this repository (submodules)[https://git-scm.com/book/nl/v1/Git-tools-Submodules] must be cloned.
+Simply running `make` will compile the code. Note that [jansson](https://github.com/akheron/jansson/) and [zlog](https://hardysimpson.github.io/zlog/) libraries must be installed and that this repository [submodules](https://git-scm.com/book/nl/v1/Git-tools-Submodules) must be cloned.
 
 ### Deployment of SRN
+
+#### Quick emulation
+
+To quickly emulate an SRN, you can use the library [srnmininet](https://github.com/segment-routing/srnmininet). More information can be found in this repository.
+
+#### Manual setup
+
+If you wish to deploy it in a real environment, you have to perform the following steps.
 
 1. Get the OVSDB server ready by running it on the controller node.
 ```

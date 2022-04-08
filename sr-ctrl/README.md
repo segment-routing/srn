@@ -14,7 +14,7 @@ Meaning that the program only tests the syntax of the configuration file.
 The SRN controller has the following parameters:
 
 - ovsdb_client The command to run to execute ovsdb-client executable
-- ovsdb_server The OVSDB server specification as defined in [ovsdb-client(1)](https://www.systutorials.com/docs/linux/man/1-ovsdb-client/)
+- ovsdb_server The OVSDB server specification as defined in [ovsdb-client\(1)](https://www.systutorials.com/docs/linux/man/1-ovsdb-client/)
 - ovsdb_database The name of the database on the OVSDB server
 - rules_file The name of the rules configuration file
 - worker_threads The number of threads answering to requests from applications
